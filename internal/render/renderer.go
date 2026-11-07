@@ -56,6 +56,16 @@ type RenderOptions struct {
 	RefRoots            map[string]string
 	RefSources          map[string]ResolvedSource
 	ReleaseName         string
+	// HelmSpecError and KustomizeSpecError hold an error in the helm or
+	// kustomize block of the source, such as a kubeVersion that does not
+	// parse. Only the renderer of that tool returns it, so a source that
+	// renders as a plain directory, because argocd-cm turns the tool off,
+	// does not fail on it.
+	HelmSpecError      error
+	KustomizeSpecError error
+	// HelmDefaultNamespace is the namespace that helm uses in the Argo CD
+	// repo-server when no --namespace is given. Empty means "default".
+	HelmDefaultNamespace string
 	// HelmVersion is spec.source.helm.version. Argo CD v3.6.1 accepts "",
 	// "v3", and "v4", and fails the source for any other value.
 	HelmVersion            string

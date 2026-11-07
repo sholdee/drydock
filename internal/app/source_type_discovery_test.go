@@ -78,13 +78,13 @@ func TestDiscoverLocalSourceTypeMatchesUpstream(t *testing.T) {
 			}
 			got, err := discoverLocalSourceType(root, sourceTypeGates{})
 			if err != nil {
-				t.Fatalf("discoverLocalSourceType(, sourceTypeGates{}) error = %v", err)
+				t.Fatalf("discoverLocalSourceType() error = %v", err)
 			}
 			if got == "" {
 				got = argoappv1.ApplicationSourceTypeDirectory
 			}
 			if got != testCase.want {
-				t.Fatalf("discoverLocalSourceType(, sourceTypeGates{}) = %q, upstream %q", got, testCase.want)
+				t.Fatalf("discoverLocalSourceType() = %q, upstream %q", got, testCase.want)
 			}
 		})
 	}

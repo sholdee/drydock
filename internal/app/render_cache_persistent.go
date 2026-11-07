@@ -892,7 +892,7 @@ func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan 
 	}
 	switch renderer.(type) {
 	case render.DirectoryRenderer:
-		paths, err := localDirectoryInputDigestPaths(ctx, plan, sourcePlan, repoRoot)
+		paths, err := localDirectoryInputDigestPaths(ctx, plan, sourcePlan, repoRoot, gates)
 		return paths, false, err
 	case render.HelmRenderer:
 		return localHelmInputDigestPaths(plan, sourcePlan, repoRoot)
@@ -921,11 +921,12 @@ func localKustomizeInputDigestPaths(ctx context.Context, plan PlanResult, source
 	return render.KustomizeInputDigestPaths(ctx, source, opts)
 }
 
-func localDirectoryInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, error) {
+func localDirectoryInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot string, gates sourceTypeGates) ([]gitref.PathDigestPath, error) {
 	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		return nil, err
 	}
+	opts.DirectoryJsonnetDisabled = gates.jsonnetDisabled
 	source := resolvedSourceForPlan(sourcePlan)
 	if source.RepoRoot == "" {
 		source.RepoRoot = repoRoot

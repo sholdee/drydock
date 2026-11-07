@@ -173,12 +173,14 @@ func TestParseKubeVersionInvalidReturnsError(t *testing.T) {
 		},
 	}
 
-	_, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
-	if err == nil {
-		t.Fatal("renderOptions() error = nil, want kube version parse error")
+	// The error waits for the Helm renderer: with helm.enable off, the
+	// source renders as a directory and the block is never read.
+	opts, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v, want the error in HelmSpecError", err)
 	}
-	if !strings.Contains(err.Error(), "not-a-version") {
-		t.Fatalf("renderOptions() error = %v, want version string in error", err)
+	if opts.HelmSpecError == nil || !strings.Contains(opts.HelmSpecError.Error(), "not-a-version") {
+		t.Fatalf("HelmSpecError = %v, want the kube version parse error", opts.HelmSpecError)
 	}
 }
 
@@ -230,8 +232,18 @@ func TestRenderOptionsAppliesCapabilityOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
-	if opts.KubeVersion != "1.34.0" {
-		t.Fatalf("KubeVersion = %q, want 1.34.0 (override wins)", opts.KubeVersion)
+	// --kube-version stands for the cluster version, and a per-app
+	// kubeVersion wins over it (GetKubeVersionOrDefault).
+	if opts.KubeVersion != "1.30.0" {
+		t.Fatalf("KubeVersion = %q, want the per-app 1.30.0", opts.KubeVersion)
+	}
+	source.Helm.KubeVersion = ""
+	withoutPerApp, err := renderOptions(application, source, CapabilityOptions{KubeVersion: "1.34.0"}, defaultTrackingOptions())
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if withoutPerApp.KubeVersion != "1.34.0" {
+		t.Fatalf("KubeVersion = %q, want --kube-version 1.34.0 without a per-app value", withoutPerApp.KubeVersion)
 	}
 	want := []string{"gateway.networking.k8s.io/v1", "monitoring.coreos.com/v1", "per-app.example.com/v1"}
 	if !reflect.DeepEqual(opts.APIVersions, want) {

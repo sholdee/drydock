@@ -110,6 +110,13 @@ func renderSourcePlan(ctx context.Context, application argoappv1.Application, pr
 	if err != nil {
 		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 	}
+	// Only the local provider knows whether argocd-cm turns the tool off,
+	// so another provider fails on a tool block that does not parse here.
+	if _, ok := provider.(sourceTypeGatedProvider); !ok {
+		if specErr := firstToolSpecError(opts); specErr != nil {
+			return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), specErr)
+		}
+	}
 	if sourcePlan.AppRevision != "" {
 		opts.ArgoEnv = argoRenderEnvAt(application, sourcePlan.Source, sourcePlan.AppRevision, normalizeTrackingOptions(trackingOpts).ControllerNamespace)
 	}
@@ -391,6 +398,27 @@ func recordNamespaceBeforeNormalization(rendered *render.Manifest) {
 	rendered.NamespaceBeforeNormalization = strings.TrimSpace(rendered.Object.GetNamespace())
 }
 
+// A helm or kustomize block that does not parse does not fail here. The
+// error goes to HelmSpecError or KustomizeSpecError, and only the renderer
+// of that tool returns it. When argocd-cm turns the tool off, the source
+// renders as a plain directory, and the Argo CD v3.6.1 repo-server never
+// reads the block (GenerateManifests, reposerver/repository/repository.go:
+// 1806-1811). It parses the kube version only in the Helm and Kustomize
+// branches (lines 1299 and 1782).
+// sourceTypeGatedProvider is a provider that applies the argocd-cm source
+// type keys and returns HelmSpecError and KustomizeSpecError from the
+// renderer of the tool.
+type sourceTypeGatedProvider interface {
+	appliesSourceTypeGates()
+}
+
+func firstToolSpecError(opts render.RenderOptions) error {
+	if opts.HelmSpecError != nil {
+		return opts.HelmSpecError
+	}
+	return opts.KustomizeSpecError
+}
+
 func renderOptions(application argoappv1.Application, source argoappv1.ApplicationSource, capabilities CapabilityOptions, trackingOpts TrackingOptions) (render.RenderOptions, error) {
 	trackingOpts = normalizeTrackingOptions(trackingOpts)
 	opts := render.RenderOptions{
@@ -405,7 +433,7 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 		if source.Kustomize.KubeVersion != "" {
 			normalized, err := parseKubeVersion(source.Kustomize.KubeVersion)
 			if err != nil {
-				return render.RenderOptions{}, err
+				opts.KustomizeSpecError = err
 			}
 			opts.KubeVersion = normalized
 		}
@@ -441,7 +469,7 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	}
 	normalizedHelm, err := parseKubeVersion(source.Helm.KubeVersion)
 	if err != nil {
-		return render.RenderOptions{}, err
+		opts.HelmSpecError = err
 	}
 	opts.KubeVersion = normalizedHelm
 	opts.APIVersions = append(opts.APIVersions, source.Helm.APIVersions...)
@@ -455,20 +483,24 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	opts.IncludeCRDs = !source.Helm.SkipCrds
 	opts.SkipTests = source.Helm.SkipTests
 	valuesObject, err := helmValues(source.Helm)
-	if err != nil {
-		return render.RenderOptions{}, err
+	if err != nil && opts.HelmSpecError == nil {
+		opts.HelmSpecError = err
 	}
 	opts.ValuesObject = valuesObject
 	return applyCapabilityOptions(opts, capabilities)
 }
 
-// applyCapabilityOptions applies global capability overrides onto render opts.
-// KubeVersion overrides the per-app value; APIVersions are unioned (deduped, sorted).
+// applyCapabilityOptions applies the global capability options onto render
+// opts. --kube-version stands for the kube version of the destination
+// cluster, so a per-app kubeVersion wins over it, as
+// ApplicationSource.GetKubeVersionOrDefault picks it in Argo CD v3.6.1
+// (pkg/apis/application/v1alpha1/types.go:385-398). APIVersions are unioned
+// (deduped, sorted).
 func applyCapabilityOptions(opts render.RenderOptions, capabilities CapabilityOptions) (render.RenderOptions, error) {
 	if len(capabilities.APIVersions) != 0 {
 		opts.APIVersions = dedupeSortedStrings(append(opts.APIVersions, capabilities.APIVersions...))
 	}
-	if capabilities.KubeVersion != "" {
+	if capabilities.KubeVersion != "" && opts.KubeVersion == "" {
 		normalized, err := parseKubeVersion(capabilities.KubeVersion)
 		if err != nil {
 			return render.RenderOptions{}, err

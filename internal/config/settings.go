@@ -187,7 +187,12 @@ type ArgoSettings struct {
 	// SourceTypeEnable holds the argocd-cm keys helm.enable,
 	// kustomize.enable, and jsonnet.enable that are present, as written.
 	// See SourceTypeEnabled.
-	SourceTypeEnable        map[string]Value[string]          `json:"sourceTypeEnable,omitempty" yaml:"sourceTypeEnable,omitempty"`
+	SourceTypeEnable map[string]Value[string] `json:"sourceTypeEnable,omitempty" yaml:"sourceTypeEnable,omitempty"`
+	// RepoServerHelmNamespace is the namespace that helm uses in the
+	// repo-server of a rendered Argo CD install when no --namespace is
+	// given (see RepoServerHelmNamespace). nil without a rendered install;
+	// HelmNamespace then gives DefaultHelmNamespace.
+	RepoServerHelmNamespace *Value[string]                    `json:"repoServerHelmNamespace,omitempty" yaml:"repoServerHelmNamespace,omitempty"`
 	ConfigManagementPlugins map[string]ConfigManagementPlugin `json:"-" yaml:"-"`
 	CommandParameters       []CommandParameterSetting         `json:"commandParameters,omitempty" yaml:"commandParameters,omitempty"`
 	// MaxCombinedDirectoryManifestsSize is the argocd-cmd-params-cm key

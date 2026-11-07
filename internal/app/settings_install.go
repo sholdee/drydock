@@ -510,11 +510,18 @@ func helmParameterSetsArgoCDSettings(name string) bool {
 func settingsConfigMapManifests(manifests []render.Manifest) []render.Manifest {
 	var out []render.Manifest
 	for _, manifest := range manifests {
-		if manifest.Object != nil && isSettingsConfigMapObject(manifest.Object) {
+		if manifest.Object != nil && (isSettingsConfigMapObject(manifest.Object) || isRepoServerSettingsObject(manifest.Object)) {
 			out = append(out, manifest)
 		}
 	}
 	return out
+}
+
+// isRepoServerSettingsObject reports the repo-server Deployment and
+// ServiceAccount, which decide the namespace that helm uses
+// (config.RepoServerHelmNamespace).
+func isRepoServerSettingsObject(obj *unstructured.Unstructured) bool {
+	return discovery.IsRepoServerObject(obj, "apps", "Deployment") || discovery.IsRepoServerObject(obj, "", "ServiceAccount")
 }
 
 func isSettingsConfigMapObject(obj *unstructured.Unstructured) bool {
@@ -556,12 +563,14 @@ func settingsCandidateNamespace(candidate discovery.SettingsCandidate, destinati
 	return namespace
 }
 
-// settingsConfigMapsInNamespace drops the settings ConfigMaps of result that
-// do not land in namespace. Other settings candidates stay.
+// settingsConfigMapsInNamespace drops the settings ConfigMaps and the
+// repo-server objects of result that do not land in namespace. Other
+// settings candidates stay.
 func settingsConfigMapsInNamespace(result discovery.Result, destinationNamespace, namespace string) discovery.Result {
 	kept := result.SettingsCandidates[:0:0]
 	for _, candidate := range result.SettingsCandidates {
-		if !discovery.IsSettingsConfigMapKind(candidate.Kind) || settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
+		namespaced := discovery.IsSettingsConfigMapKind(candidate.Kind) || discovery.IsRepoServerKind(candidate.Kind)
+		if !namespaced || settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
 			kept = append(kept, candidate)
 		}
 	}

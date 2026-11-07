@@ -39,3 +39,6 @@ func (gates sourceTypeGates) enabled(sourceType argoappv1.ApplicationSourceType)
 	}
 	return true
 }
+
+// appliesSourceTypeGates marks localProvider as a sourceTypeGatedProvider.
+func (localProvider) appliesSourceTypeGates() {}

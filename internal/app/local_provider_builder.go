@@ -62,6 +62,7 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		maxCombinedDirectoryManifestsSize: maxDirectorySize,
 		allowOutOfBoundsSymlinks:          allowOutOfBoundsSymlinks(settings),
 		sourceTypes:                       sourceTypeGatesFromSettings(settings),
+		helmNamespace:                     settings.HelmNamespace(),
 		symlinkBounds:                     request.symlinkBounds,
 		repoRoot:                          root,
 		controllerNamespace:               trackingOptionsFromSettings(settings).ControllerNamespace,

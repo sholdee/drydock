@@ -8,9 +8,9 @@ import (
 )
 
 // KustomizeHelmValues lists the values files that the helmCharts render
-// reads: valuesFile only when valuesMerge allows it, and additionalValuesFiles
-// with globs. kustomize reads the paths as written, so a $ARGOCD_APP_NAME in
-// a path stays literal.
+// reads: valuesFile only when valuesMerge allows it, and additionalValuesFiles.
+// kustomize reads the paths as written, so a $ARGOCD_APP_NAME in a path
+// stays literal, and a glob is a file name.
 func TestKustomizeHelmValuesReadsValuesFilesLikeTheRenderer(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -33,9 +33,14 @@ func TestKustomizeHelmValuesReadsValuesFilesLikeTheRenderer(t *testing.T) {
 			want:  []string{"install/values.yaml"},
 		},
 		{
-			name:  "glob in additionalValuesFiles",
+			name:  "glob in additionalValuesFiles is a file name",
 			chart: "    additionalValuesFiles:\n      - layers/*.yaml\n",
-			want:  []string{"install/layers/a.yaml", "install/layers/b.yaml"},
+			want:  []string{"install/layers/*.yaml"},
+		},
+		{
+			name:  "glob in valuesFile is a file name",
+			chart: "    valuesFile: layers/?.yaml\n",
+			want:  nil,
 		},
 		{
 			name:  "build environment variable stays literal in valuesFile with valuesInline",
@@ -51,7 +56,7 @@ func TestKustomizeHelmValuesReadsValuesFilesLikeTheRenderer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "install", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nhelmCharts:\n  - name: demo\n    releaseName: demo\n"+tc.chart)
-			for _, file := range []string{"values.yaml", "extra.yaml", "layers/a.yaml", "layers/b.yaml", "values-demo.yaml", "values-$ARGOCD_APP_NAME.yaml"} {
+			for _, file := range []string{"values.yaml", "extra.yaml", "layers/a.yaml", "layers/b.yaml", "layers/*.yaml", "values-demo.yaml", "values-$ARGOCD_APP_NAME.yaml"} {
 				writeFile(t, filepath.Join(root, "install", filepath.FromSlash(file)), "a: 1\n")
 			}
 			values, err := KustomizeHelmValues(context.Background(), root, "install", nil)

@@ -97,7 +97,8 @@ type TrackingOptions struct {
 }
 
 // CapabilityOptions overrides Kubernetes capabilities for rendering so output
-// matches a target cluster. KubeVersion (when set) overrides per-app kubeVersion;
+// matches a target cluster. KubeVersion stands for the cluster version, so a
+// per-app kubeVersion wins over it, as in Argo CD;
 // APIVersions are unioned (deduped, sorted) with per-app apiVersions.
 type CapabilityOptions struct {
 	KubeVersion string

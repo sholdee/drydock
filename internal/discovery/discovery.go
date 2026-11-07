@@ -290,9 +290,42 @@ func settingsCandidateKind(obj *unstructured.Unstructured) (string, bool) {
 		return "cluster-secret", true
 	case isArgoHelmValuesSettings(obj):
 		return "argocd-values", true
+	case IsRepoServerObject(obj, "apps", "Deployment"):
+		return RepoServerDeploymentKind, true
+	case IsRepoServerObject(obj, "", "ServiceAccount"):
+		return RepoServerServiceAccountKind, true
 	default:
 		return "", false
 	}
+}
+
+// The candidate kinds of the Argo CD repo-server Deployment and its
+// ServiceAccount. They decide the namespace that helm uses when Argo CD or
+// kustomize passes no --namespace (see config.RepoServerHelmNamespace).
+const (
+	RepoServerDeploymentKind     = "argocd-repo-server"
+	RepoServerServiceAccountKind = "argocd-repo-server-serviceaccount"
+)
+
+// IsRepoServerKind reports whether kind is a repo-server candidate kind.
+func IsRepoServerKind(kind string) bool {
+	return kind == RepoServerDeploymentKind || kind == RepoServerServiceAccountKind
+}
+
+// IsRepoServerObject reports whether obj is the Argo CD repo-server object
+// of the given group and kind: the upstream install names it
+// argocd-repo-server, and the argo-cd Helm chart labels it with the
+// repo-server component of argocd.
+func IsRepoServerObject(obj *unstructured.Unstructured, group, kind string) bool {
+	gvk := obj.GroupVersionKind()
+	if gvk.Group != group || gvk.Version != "v1" || gvk.Kind != kind {
+		return false
+	}
+	if obj.GetName() == "argocd-repo-server" {
+		return true
+	}
+	labels := obj.GetLabels()
+	return labels["app.kubernetes.io/component"] == "repo-server" && labels["app.kubernetes.io/part-of"] == "argocd"
 }
 
 func settingsCandidate(rel string, documentIndex int, kind string, obj *unstructured.Unstructured, includeObject bool) SettingsCandidate {
@@ -319,6 +352,8 @@ func settingsCandidateObject(kind string, obj *unstructured.Unstructured) *unstr
 		return sanitizedSecretObject(obj, []string{"name", "type", "url", "enableOCI", "project"})
 	case "cluster-secret":
 		return sanitizedSecretObject(obj, []string{"name", "server", "namespaces", "clusterResources", "project"})
+	case RepoServerDeploymentKind:
+		return sanitizedRepoServerDeployment(obj)
 	default:
 		return obj.DeepCopy()
 	}
@@ -534,4 +569,74 @@ func unstructuredToTyped(in map[string]any, out any) error {
 		return err
 	}
 	return json.Unmarshal(data, out)
+}
+
+// repoServerNamespaceEnv are the container environment variables that decide
+// the namespace helm uses: HELM_NAMESPACE (helm EnvSettings), POD_NAMESPACE
+// (client-go in-cluster config), and KUBECONFIG.
+var repoServerNamespaceEnv = map[string]struct{}{
+	"HELM_NAMESPACE": {},
+	"POD_NAMESPACE":  {},
+	"KUBECONFIG":     {},
+}
+
+// sanitizedRepoServerDeployment keeps only the fields of a repo-server
+// Deployment that decide the namespace helm uses, so no other environment
+// value of the install is kept: the metadata, the pod
+// automountServiceAccountToken and serviceAccountName, and per container
+// its name, the volume mount paths, and the env entries in
+// repoServerNamespaceEnv.
+func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured.Unstructured {
+	out := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": obj.GetAPIVersion(),
+		"kind":       obj.GetKind(),
+	}}
+	out.SetName(obj.GetName())
+	out.SetNamespace(obj.GetNamespace())
+	out.SetLabels(obj.GetLabels())
+	podSpec, _, _ := unstructured.NestedMap(obj.Object, "spec", "template", "spec")
+	keptSpec := map[string]any{}
+	for _, key := range []string{"automountServiceAccountToken", "serviceAccountName", "serviceAccount"} {
+		if value, ok := podSpec[key]; ok {
+			keptSpec[key] = value
+		}
+	}
+	containers, _, _ := unstructured.NestedSlice(podSpec, "containers")
+	keptContainers := make([]any, 0, len(containers))
+	for _, item := range containers {
+		container, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		kept := map[string]any{"name": container["name"]}
+		var env []any
+		envItems, _ := container["env"].([]any)
+		for _, envItem := range envItems {
+			entry, ok := envItem.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := entry["name"].(string)
+			if _, ok := repoServerNamespaceEnv[name]; ok {
+				env = append(env, entry)
+			}
+		}
+		if len(env) > 0 {
+			kept["env"] = env
+		}
+		var mounts []any
+		mountItems, _ := container["volumeMounts"].([]any)
+		for _, mountItem := range mountItems {
+			if mount, ok := mountItem.(map[string]any); ok {
+				mounts = append(mounts, map[string]any{"mountPath": mount["mountPath"]})
+			}
+		}
+		if len(mounts) > 0 {
+			kept["volumeMounts"] = mounts
+		}
+		keptContainers = append(keptContainers, kept)
+	}
+	keptSpec["containers"] = keptContainers
+	_ = unstructured.SetNestedMap(out.Object, map[string]any{"spec": keptSpec}, "spec", "template")
+	return out
 }

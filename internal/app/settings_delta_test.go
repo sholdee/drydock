@@ -72,6 +72,9 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	// Which renderer every source uses, and whether a directory source
 	// evaluates its .jsonnet files.
 	"SourceTypeEnable": settingsRenderAll,
+	// The release namespace of every Helm source and helmCharts entry
+	// without a namespace.
+	"RepoServerHelmNamespace": settingsRenderAll,
 	// Read only by diag, by settings merging, or as provenance.
 	"HelmValuesFileSchemesSource":  settingsNoEffect,
 	"IgnoreResourceUpdatesEnabled": settingsNoEffect,
@@ -266,7 +269,8 @@ var nonZeroOverrides = map[string]any{
 	"ArgoSettings.EnableProgressiveSyncs.Value":    "true",
 	"ArgoSettings.IgnoreNormalizerJQTimeout.Value": "5s",
 	// Only a known key with a value other than "true" turns a tool off.
-	"ArgoSettings.SourceTypeEnable{}": config.HelmEnableKey,
+	"ArgoSettings.SourceTypeEnable{}":      config.HelmEnableKey,
+	"ArgoSettings.RepoServerHelmNamespace": &config.Value[string]{Value: "argocd"},
 }
 
 // nonZeroValue builds a value of typ with every exported field, element, and

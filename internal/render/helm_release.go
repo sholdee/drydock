@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"text/template"
@@ -31,12 +32,28 @@ const kustomizeHelmDefaultReleaseName = "release-name"
 // same for helmCharts.
 const helmDefaultNamespace = "default"
 
-// helmReleaseNamespace returns .Release.Namespace for a render with opts.
-func helmReleaseNamespace(opts RenderOptions) string {
-	if opts.Namespace == "" {
-		return helmDefaultNamespace
+// helmRenderStartError returns the error that stops a Helm render before it
+// reads anything: a canceled context, or an error in the helm block of the
+// source (HelmSpecError).
+func helmRenderStartError(ctx context.Context, opts RenderOptions) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return opts.Namespace
+	return opts.HelmSpecError
+}
+
+// helmReleaseNamespace returns .Release.Namespace for a render with opts.
+// Without a namespace, helm uses the namespace of its environment in the
+// repo-server (HelmDefaultNamespace, see config.RepoServerHelmNamespace),
+// which is "default" without a service account token.
+func helmReleaseNamespace(opts RenderOptions) string {
+	if opts.Namespace != "" {
+		return opts.Namespace
+	}
+	if opts.HelmDefaultNamespace != "" {
+		return opts.HelmDefaultNamespace
+	}
+	return helmDefaultNamespace
 }
 
 // checkHelmCommandVersion fails as Argo CD v3.6.1 fails for a
@@ -139,8 +156,14 @@ func checkHelmChartRelease(chrt helmchart.Charter, releaseName string) (*chartv2
 // checkHelmChartKubeVersion is the kubeVersion check of renderResources
 // (pkg/action/action.go:288-291 at helm v4.3.1), which runs after the values
 // are coalesced and checked against the schema, before the templates render.
-func checkHelmChartKubeVersion(chrt *chartv2.Chart, capabilities *common.Capabilities) error {
-	if chrt.Metadata == nil || chrt.Metadata.KubeVersion == "" {
+//
+// Argo CD checks the kube version of the destination cluster. drydock knows
+// that version only when it is explicit: a per-app kubeVersion,
+// --kube-version, or a helmCharts kubeVersion. Without one, drydock renders
+// with helm's default capabilities, so the check is skipped rather than
+// failing a chart that the cluster would accept.
+func checkHelmChartKubeVersion(chrt *chartv2.Chart, capabilities *common.Capabilities, explicitKubeVersion string) error {
+	if explicitKubeVersion == "" || chrt.Metadata == nil || chrt.Metadata.KubeVersion == "" {
 		return nil
 	}
 	if !chartv2util.IsCompatibleRange(chrt.Metadata.KubeVersion, capabilities.KubeVersion.String()) {

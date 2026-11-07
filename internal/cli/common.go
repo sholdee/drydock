@@ -217,7 +217,7 @@ func bindFilterFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringArrayVar(&flags.skipKinds, "skip-kind", flags.skipKinds, "rendered resource kind to omit from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipCRDs, "skip-crds", flags.skipCRDs, "omit CustomResourceDefinition resources from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipSecrets, "skip-secrets", flags.skipSecrets, "omit Secret resources from output and diffs")
-	cmd.Flags().StringVar(&flags.kubeVersion, "kube-version", flags.kubeVersion, "Kubernetes version for rendering capabilities (overrides per-app kubeVersion)")
+	cmd.Flags().StringVar(&flags.kubeVersion, "kube-version", flags.kubeVersion, "Kubernetes version of the destination cluster for rendering capabilities (a per-app kubeVersion wins)")
 	cmd.Flags().StringArrayVar(&flags.apiVersions, "api-versions", flags.apiVersions, "additional Kubernetes API versions for capability-gated rendering, unioned with per-app apiVersions (e.g. monitoring.coreos.com/v1)")
 	cmd.Flags().BoolVar(&flags.noCRDScope, "no-crd-scope", flags.noCRDScope, "disable post-render cluster-scoped custom resource namespace normalization")
 	_ = cmd.Flags().MarkHidden("no-crd-scope")

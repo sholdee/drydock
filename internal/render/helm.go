@@ -30,7 +30,7 @@ import (
 type HelmRenderer struct{}
 
 func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
-	if err := ctx.Err(); err != nil {
+	if err := helmRenderStartError(ctx, opts); err != nil {
 		return nil, nil, err
 	}
 
@@ -84,7 +84,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := checkHelmChartKubeVersion(v2chart, capabilities); err != nil {
+	if err := checkHelmChartKubeVersion(v2chart, capabilities, opts.KubeVersion); err != nil {
 		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
 	}
 

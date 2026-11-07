@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -861,6 +862,52 @@ func TestScanFindsHelmValuesWithAnySettingKeyDrydockReads(t *testing.T) {
 	for name := range ignored {
 		if got[name] {
 			t.Errorf("Scan() found %s as an Argo CD values file, want it ignored", name)
+		}
+	}
+}
+
+// The repo-server Deployment candidate keeps only what decides the
+// namespace that helm uses, not the other env values of the install.
+func TestRepoServerDeploymentCandidateKeepsOnlyNamespaceInputs(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]any{
+			"name": "argocd-repo-server", "namespace": "argocd",
+		},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+			"automountServiceAccountToken": true,
+			"serviceAccountName":           "argocd-repo-server",
+			"containers": []any{map[string]any{
+				"name":  "repo-server",
+				"image": "quay.io/argoproj/argocd:v3.6.1",
+				"env": []any{
+					map[string]any{"name": "SECRET_LOOKING", "value": "never-kept"},
+					map[string]any{"name": "POD_NAMESPACE", "value": "argocd"},
+				},
+				"volumeMounts": []any{map[string]any{"name": "tmp", "mountPath": "/tmp"}},
+			}},
+		}}},
+	}}
+	result, err := ScanObjects("rendered.yaml", []*unstructured.Unstructured{obj})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.SettingsCandidates) != 1 || result.SettingsCandidates[0].Kind != RepoServerDeploymentKind {
+		t.Fatalf("SettingsCandidates = %#v, want one repo-server candidate", result.SettingsCandidates)
+	}
+	kept, err := json.Marshal(result.SettingsCandidates[0].Object.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"never-kept", "SECRET_LOOKING", "quay.io"} {
+		if strings.Contains(string(kept), unwanted) {
+			t.Fatalf("candidate %s keeps %q", kept, unwanted)
+		}
+	}
+	for _, wanted := range []string{"POD_NAMESPACE", "automountServiceAccountToken", "/tmp"} {
+		if !strings.Contains(string(kept), wanted) {
+			t.Fatalf("candidate %s drops %q", kept, wanted)
 		}
 	}
 }

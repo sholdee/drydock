@@ -17,7 +17,9 @@ import (
 // their symlinks read are included too (DirectorySymlinkInputPaths), as
 // optional paths: a symlink whose target is missing reads nothing now but
 // renders the target once it exists. So are the files that its Jsonnet
-// files import from outside those trees (DirectoryJsonnetImportPaths).
+// files import from outside those trees (DirectoryJsonnetImportPaths). When
+// argocd-cm jsonnet.enable turns Jsonnet off, the renderer evaluates no
+// Jsonnet file, so the libraries and the imports are not inputs.
 func DirectoryInputDigestPaths(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]gitref.PathDigestPath, error) {
 	root, err := sourceRoot(source)
 	if err != nil {
@@ -28,6 +30,12 @@ func DirectoryInputDigestPaths(ctx context.Context, source ResolvedSource, opts 
 		return nil, err
 	}
 	paths := []gitref.PathDigestPath{{Path: sourceRel}}
+	if opts.DirectoryJsonnetDisabled {
+		for _, rel := range DirectorySymlinkInputPaths(source.RepoRoot, []string{sourceRel}) {
+			paths = append(paths, gitref.PathDigestPath{Path: rel, Optional: true})
+		}
+		return paths, nil
+	}
 	// The libraries count only for a source with a Jsonnet file. A library
 	// need not exist: the repo-server accepts a missing one.
 	libDirs, libLinks, err := DirectoryJsonnetLibInputs(source.RepoRoot, source.Path, opts.Jsonnet.Libs)
