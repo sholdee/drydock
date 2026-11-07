@@ -1,0 +1,17 @@
+# The source directory holds both kustomization.yaml and a file whose name
+# ends in Chart.yaml. Argo CD picks the last match in name order, so it
+# renders the directory as a Helm chart, not as Kustomize.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-chart-file-name
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/helm-chart-file-name
+  destination:
+    name: in-cluster
+    namespace: parity-helm-chart-file-name

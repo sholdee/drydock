@@ -1,0 +1,14 @@
+# A single source needs path or chart (InvalidSpecError).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-decode-spec-source-no-path
+  namespace: parity-directory-decode
+spec:
+  project: parity-directory-decode
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-directory-decode-workloads
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD

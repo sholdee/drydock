@@ -468,6 +468,10 @@ func TestCommittedExpectedFileMatchesFixtures(t *testing.T) {
 			checkSeparateRepositoryCase(t, repoRoot, tc, string(app))
 			continue
 		}
+		if tc.SourceType() == sourceSpec {
+			checkSpecCase(t, tc, string(app))
+			continue
+		}
 		for _, want := range []string{
 			"name: " + tc.Name + "\n",
 			"namespace: " + testNamespace + "\n",
@@ -495,6 +499,17 @@ func TestCommittedExpectedFileMatchesFixtures(t *testing.T) {
 	}
 }
 
+// checkSpecCase checks a spec case: its Application has the case name and
+// namespace. It names no failing file.
+func checkSpecCase(t *testing.T, tc expectedCase, app string) {
+	t.Helper()
+	for _, want := range []string{"name: " + tc.Name + "\n", "namespace: " + testNamespace + "\n"} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("Application for %s does not contain %q", tc.Name, want)
+		}
+	}
+}
+
 // checkSeparateRepositoryCase checks a case whose Application renders from
 // a fixture repository other than the main one. The smoke builds that
 // repository and adds the failing file.
@@ -511,6 +526,58 @@ func checkSeparateRepositoryCase(t *testing.T, repoRoot string, tc expectedCase,
 	}
 	if info, err := os.Stat(filepath.Join(repoRoot, "testdata", "argocd-parity", tc.Repository+"-repo")); err != nil || !info.IsDir() {
 		t.Fatalf("fixture repository for %s: %v", tc.Name, err)
+	}
+}
+
+// TestCompareMatchesInvalidSpecCondition covers a spec case: Argo CD sets
+// InvalidSpecError, not ComparisonError, and no file is named.
+func TestCompareMatchesInvalidSpecCondition(t *testing.T) {
+	fixture := newTestFixture(t, `cases:
+  - name: parity-decode-spec-source-no-path
+    source: spec
+    argocdMessage: spec.source.repoURL and either spec.source.path or spec.source.chart are required
+    drydockMessage: "invalid spec: spec.source.repoURL and either spec.source.path or spec.source.chart are required"
+`)
+	const name = "parity-decode-spec-source-no-path"
+	fixture.writeApplication(t, testNamespace, name,
+		appCondition{Type: invalidSpecErrorType, Message: "spec.source.repoURL and either spec.source.path or spec.source.chart are required"})
+	fixture.writeDrydock(t, name, 2, "error render.failed: invalid spec: spec.source.repoURL and either spec.source.path or spec.source.chart are required\n")
+	result, err := compare(fixture.options())
+	if err != nil {
+		t.Fatalf("compare() error = %v", err)
+	}
+	if len(result.Failures) != 0 {
+		t.Fatalf("compare() failures = %v, want none", result.Failures)
+	}
+
+	// The same message as a ComparisonError does not pass the case.
+	fixture.writeApplication(t, testNamespace, name,
+		comparisonError("spec.source.repoURL and either spec.source.path or spec.source.chart are required"))
+	result, err = compare(fixture.options())
+	if err != nil {
+		t.Fatalf("compare() error = %v", err)
+	}
+	if len(result.Failures) != 1 || !strings.Contains(result.Failures[0], "no InvalidSpecError condition") {
+		t.Fatalf("compare() failures = %v, want the missing InvalidSpecError", result.Failures)
+	}
+}
+
+// TestReadExpectedRejectsInvalidSpecCases pins the rules of a spec case.
+func TestReadExpectedRejectsInvalidSpecCases(t *testing.T) {
+	for _, testCase := range []struct {
+		name, body, want string
+	}{
+		{name: "file", body: "    file: x.yaml\n    argocdMessage: a\n    drydockMessage: b\n", want: "must not name a file"},
+		{name: "quoted object", body: "    argocdQuotesObject: true\n    argocdMessage: a\n    drydockMessage: b\n", want: "must not set argocdQuotesObject"},
+		{name: "no drydock message", body: "    argocdMessage: a\n", want: "must set argocdMessage and drydockMessage"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "expected.yaml")
+			writeFile(t, path, "cases:\n  - name: parity-decode-spec-x\n    source: spec\n"+testCase.body)
+			if _, err := readExpected(path); err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("readExpected() error = %v, want %q", err, testCase.want)
+			}
+		})
 	}
 }
 

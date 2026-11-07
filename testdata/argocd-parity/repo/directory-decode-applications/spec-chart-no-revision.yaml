@@ -1,0 +1,15 @@
+# A chart needs a targetRevision (InvalidSpecError). The check runs before
+# Argo CD contacts the repository.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-decode-spec-chart-no-revision
+  namespace: parity-directory-decode
+spec:
+  project: parity-directory-decode
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-directory-decode-workloads
+  source:
+    repoURL: https://charts.example.invalid
+    chart: demo

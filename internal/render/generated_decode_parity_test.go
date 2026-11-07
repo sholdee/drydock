@@ -392,7 +392,9 @@ func readParityDecodeCases(t *testing.T, directory bool) []parityDecodeCase {
 	}
 	var out []parityDecodeCase
 	for _, tc := range expected.Cases {
-		if tc.Repository != "" {
+		// A spec case renders nothing: the controller rejects the spec
+		// first. TestParitySpecCasesMatchUpstream in internal/app covers it.
+		if tc.Repository != "" || tc.Source == "spec" {
 			continue
 		}
 		if (tc.Source == "" || tc.Source == "directory") == directory {

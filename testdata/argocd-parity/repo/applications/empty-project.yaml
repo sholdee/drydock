@@ -1,0 +1,21 @@
+# spec.project is empty. Argo CD reads it as the default project: the
+# controller sends "default" as ARGOCD_APP_PROJECT_NAME and writes
+# "default" back into spec.project, which the inventory comparison sees.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-empty-project
+  namespace: argocd
+spec:
+  project: ""
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/project-name
+    helm:
+      parameters:
+        - name: projectName
+          value: $ARGOCD_APP_PROJECT_NAME
+  destination:
+    name: in-cluster
+    namespace: parity-empty-project

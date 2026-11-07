@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	argoutil "github.com/argoproj/argo-cd/v3/util/argo"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // upstreamDestinationStop is a destination that the Argo CD v3.6.1
@@ -288,5 +290,57 @@ spec:
 				t.Fatalf("Statuses = %#v, want one failure containing %q", result.Statuses, testCase.want)
 			}
 		})
+	}
+}
+
+// TestParitySpecCasesMatchUpstream runs the spec cases of the Argo CD render
+// parity smoke (testdata/argocd-parity/directory-decode-expected.yaml) on
+// their committed Applications offline. drydock must fail with the
+// drydockMessage the smoke expects, and the upstream ValidatePermissions
+// must set an InvalidSpecError with the argocdMessage.
+func TestParitySpecCasesMatchUpstream(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "argocd-parity", "directory-decode-expected.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected struct {
+		Cases []struct {
+			Name           string `json:"name"`
+			Source         string `json:"source"`
+			ArgoCDMessage  string `json:"argocdMessage"`
+			DrydockMessage string `json:"drydockMessage"`
+		} `json:"cases"`
+	}
+	if err := sigsyaml.Unmarshal(data, &expected); err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tc := range expected.Cases {
+		if tc.Source != "spec" {
+			continue
+		}
+		seen++
+		t.Run(tc.Name, func(t *testing.T) {
+			file := filepath.Join("..", "..", "testdata", "argocd-parity", "repo", "directory-decode-applications", strings.TrimPrefix(tc.Name, "parity-decode-")+".yaml")
+			manifest, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var application argoappv1.Application
+			if err := sigsyaml.Unmarshal(manifest, &application); err != nil {
+				t.Fatal(err)
+			}
+			err = validateApplicationSpecSources(application.Spec)
+			if err == nil || !strings.Contains(err.Error(), tc.DrydockMessage) {
+				t.Fatalf("validateApplicationSpecSources() error = %v, want %q", err, tc.DrydockMessage)
+			}
+			upstream := upstreamSourceConditions(t, application.Spec)
+			if len(upstream) != 1 || !strings.Contains(upstream[0], tc.ArgoCDMessage) {
+				t.Fatalf("upstream InvalidSpecError = %q, want one containing %q", upstream, tc.ArgoCDMessage)
+			}
+		})
+	}
+	if seen == 0 {
+		t.Fatal("the expected file has no spec case")
 	}
 }

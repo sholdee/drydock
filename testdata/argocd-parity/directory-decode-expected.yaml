@@ -246,3 +246,32 @@ cases:
     file: file-parameter-links/targets
     argocdMessage: "file-parameter-links/targets: is a directory"
     drydockMessage: "file-parameter-links/targets: is a directory"
+  # Spec cases have no failing file. The Argo CD controller checks the
+  # sources of each Application before it renders anything
+  # (ValidatePermissions, util/argo/argo.go:644-737 at v3.6.1). A failed
+  # check sets an InvalidSpecError condition instead of a ComparisonError,
+  # and drydock must fail the render with the same text.
+  - name: parity-decode-spec-source-no-path
+    source: spec
+    argocdMessage: spec.source.repoURL and either spec.source.path or spec.source.chart are required
+    drydockMessage: "invalid spec: spec.source.repoURL and either spec.source.path or spec.source.chart are required"
+  # A multi-source entry may set ref alone, but it needs one of path,
+  # chart, and ref. Argo CD ends the message with the source in protobuf
+  # text form, and drydock names the source index.
+  - name: parity-decode-spec-sources-no-ref
+    source: spec
+    argocdMessage: spec.source.repoURL and either source.path, source.chart, or source.ref are required for source
+    drydockMessage: "sources[1]: invalid spec: spec.source.repoURL and either source.path, source.chart, or source.ref are required"
+  - name: parity-decode-spec-chart-no-revision
+    source: spec
+    argocdMessage: spec.source.targetRevision is required if the manifest source is a helm chart
+    drydockMessage: "invalid spec: spec.source.targetRevision is required if the manifest source is a helm chart"
+  # An oci:// source follows the same rule, so Argo CD never pulls it.
+  - name: parity-decode-spec-oci-no-path
+    source: spec
+    argocdMessage: spec.source.repoURL and either spec.source.path or spec.source.chart are required
+    drydockMessage: "invalid spec: spec.source.repoURL and either spec.source.path or spec.source.chart are required"
+  - name: parity-decode-spec-hydrator-no-branch
+    source: spec
+    argocdMessage: spec.sourceHydrator.syncSource.targetBranch is required
+    drydockMessage: "invalid spec: spec.sourceHydrator.syncSource.targetBranch is required"

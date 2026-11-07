@@ -1,0 +1,28 @@
+# Argo CD compares an Application with spec.sourceHydrator against its sync
+# source only: syncSource.path at syncSource.targetBranch, in the dry source
+# repository. It ignores spec.source. The hydrator is not enabled in the
+# smoke cluster, so the sync path is committed in the fixture as if the
+# hydrator had written it. Each of the three paths renders its own
+# ConfigMap, so rendering the wrong one fails the comparison.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-source-hydrator
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/source-hydrator/ignored
+  sourceHydrator:
+    drySource:
+      repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: workloads/source-hydrator/dry
+    syncSource:
+      targetBranch: main
+      path: workloads/source-hydrator/hydrated
+  destination:
+    name: in-cluster
+    namespace: parity-source-hydrator

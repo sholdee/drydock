@@ -1,0 +1,7 @@
+# Rendered only when the directory is read as Kustomize.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-helm-chart-file-name-kustomize
+data:
+  renderedBy: kustomize

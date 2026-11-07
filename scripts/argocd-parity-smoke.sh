@@ -187,6 +187,20 @@ OCI_CHART_IGNORED_APPLICATION="parity-oci-helm-chart-ignored"
 # (util/kustomize/kustomize.go:346-372) and drops the second. drydock renders
 # the same and warns kustomize.ignore-missing-components-dropped.
 COMPONENTS_DROPPED_APPLICATION="parity-kustomize-generators"
+# Sets spec.sourceHydrator. Argo CD compares only the sync source
+# (ApplicationSpec.GetSources), and the hydrator is not enabled in the smoke
+# cluster, so the sync path is committed in the fixture. drydock renders
+# the same path and warns source.hydrator-sync-source.
+SOURCE_HYDRATOR_APPLICATION="parity-source-hydrator"
+# Objects in namespaces that Argo CD does not reconcile
+# (repo/namespace-gate). The Application lives in NAMESPACE_DISABLED, which
+# application.namespaces does not list. The ApplicationSet lives in
+# TENANT_NAMESPACE, which applicationsetcontroller.namespaces does not list,
+# so its Application never exists. drydock skips both with
+# discovery.namespace-not-enabled.
+NAMESPACE_DISABLED="parity-namespace-disabled"
+NAMESPACE_DISABLED_APPLICATION="parity-namespace-disabled"
+NAMESPACE_DISABLED_APPLICATIONSET="parity-appset-namespace-disabled"
 OCI_HOSTS_MARKER="drydock-argocd-parity-smoke"
 HOSTS_ENTRY_ADDED="false"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
@@ -327,6 +341,15 @@ APPLICATIONS=(
   parity-app-revision-helm-repo
   parity-app-revision-annotated-tag
   parity-app-revision-annotated-tag-single
+  # spec.project "". Argo CD reads it as the default project in
+  # ARGOCD_APP_PROJECT_NAME and in the inventory comparison.
+  parity-empty-project
+  # kustomization.yaml and traefik-HelmChart.yaml in one directory: the
+  # last file whose name ends in Chart.yaml or is a kustomization file
+  # decides the type, so Argo CD renders it with Helm.
+  parity-helm-chart-file-name
+  # spec.sourceHydrator: Argo CD renders only the sync source.
+  parity-source-hydrator
 )
 
 # Applications whose Git sources read the ARGOCD_APP_REVISION variables. The
@@ -1404,12 +1427,15 @@ apply_cluster_secrets() {
 apply_fixture_apps() {
   ensure_namespace "${TENANT_NAMESPACE}"
   ensure_namespace "${DIRECTORY_DECODE_NAMESPACE}"
+  ensure_namespace "${NAMESPACE_DISABLED}"
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/projects" >/dev/null
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applications" >/dev/null
   apply_cluster_secrets
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applicationsets" >/dev/null
   kubectl -n "${TENANT_NAMESPACE}" apply -f "${FIXTURE_REPO_PATH}/tenant-applications" >/dev/null
   kubectl -n "${DIRECTORY_DECODE_NAMESPACE}" apply -f "${FIXTURE_REPO_PATH}/directory-decode-applications" >/dev/null
+  # Each file names its own namespace.
+  kubectl apply -f "${FIXTURE_REPO_PATH}/namespace-gate" >/dev/null
 }
 
 wait_for_application() {
@@ -1681,6 +1707,13 @@ capture_drydock_manifest() {
       source.oci-chart-ignored \
       "an oci:// repoURL with chart: set must warn once and render the artifact"
   fi
+  if [[ "${stem}" == "${SOURCE_HYDRATOR_APPLICATION}" ]]; then
+    # The manifest comparison proves that drydock renders the sync source.
+    # The warning tells users that drydock does not run the hydrator.
+    require_drydock_capture_warning "${app_ref}" "${stderr_file}" \
+      source.hydrator-sync-source \
+      "an Application with spec.sourceHydrator must warn that drydock renders the sync source"
+  fi
   if [[ "${stem}" == "${COMPONENTS_DROPPED_APPLICATION}" ]]; then
     # The manifest comparison proves that drydock drops the later valid
     # component as Argo CD does. The warning is the only evidence that users
@@ -1893,11 +1926,48 @@ compare_manifests() {
 # instance holds, both the committed ones and the ones the ApplicationSet
 # controller generated. It runs before the project-policy smoke applies its
 # own Applications.
+# The Application in NAMESPACE_DISABLED exists as an object, but Argo CD
+# never reconciles it, so it is not part of the inventory that drydock must
+# match. assert_namespace_gate checks it.
 capture_argocd_applications() {
   local output_dir
   output_dir="$(artifact_dir applications)"
-  kubectl get applications.argoproj.io --all-namespaces -o json > "${output_dir}/argocd.json" \
+  kubectl get applications.argoproj.io --all-namespaces \
+    --field-selector "metadata.namespace!=${NAMESPACE_DISABLED}" -o json > "${output_dir}/argocd.json" \
     || fail "could not list the Argo CD Applications for the Application inventory comparison"
+}
+
+# assert_namespace_gate checks the objects in namespaces that Argo CD does
+# not reconcile. Argo CD: the Application has no reconciledAt, and the API
+# server refuses it to the admin user. It fails the namespace check and
+# answers "permission denied", so it does not reveal whether the object
+# exists (getAppEnforceRBAC and getApplicationEnforceRBACClient,
+# server/application/application.go:177-286 at v3.6.1). The ApplicationSet
+# has no status. assert_application_inventory
+# already proved that its Application does not exist. drydock: get apps
+# warns discovery.namespace-not-enabled for both, and compare_applications
+# proves that it lists neither the Application nor anything the
+# ApplicationSet would generate. It runs after the other Applications were
+# reconciled, so the controllers had the time to act on these objects.
+assert_namespace_gate() {
+  local reconciled_at appset_status get_output stderr_file
+  log_step "Checking objects in namespaces that Argo CD does not reconcile"
+  reconciled_at="$(kubectl -n "${NAMESPACE_DISABLED}" get application "${NAMESPACE_DISABLED_APPLICATION}" -o jsonpath='{.status.reconciledAt}')"
+  [[ -z "${reconciled_at}" ]] \
+    || fail "Argo CD reconciled ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION} at ${reconciled_at}; application.namespaces must not enable ${NAMESPACE_DISABLED}"
+  if get_output="$(argocd app get "${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION}" 2>&1)"; then
+    fail "the Argo CD API server returned ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION}; want it refused"
+  fi
+  [[ "${get_output}" == *"permission denied"* ]] \
+    || fail "argocd app get ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION} failed without permission denied: ${get_output}"
+  appset_status="$(kubectl -n "${TENANT_NAMESPACE}" get applicationset "${NAMESPACE_DISABLED_APPLICATIONSET}" -o jsonpath='{.status}')"
+  [[ -z "${appset_status}" ]] \
+    || fail "the ApplicationSet controller reconciled ${TENANT_NAMESPACE}/${NAMESPACE_DISABLED_APPLICATIONSET}: ${appset_status}"
+  stderr_file="${OUT_DIR}/applications/drydock.stderr"
+  grep -qF "discovery.namespace-not-enabled: Application ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION} is skipped" "${stderr_file}" \
+    || fail "drydock get apps did not warn that it skipped ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION}; see ${stderr_file}"
+  grep -qF "discovery.namespace-not-enabled: ApplicationSet ${TENANT_NAMESPACE}/${NAMESPACE_DISABLED_APPLICATIONSET} is skipped" "${stderr_file}" \
+    || fail "drydock get apps did not warn that it skipped ${TENANT_NAMESPACE}/${NAMESPACE_DISABLED_APPLICATIONSET}; see ${stderr_file}"
 }
 
 # capture_drydock_applications lists every Application drydock discovers and
@@ -1958,6 +2028,8 @@ ensure_namespace() {
   kubectl get namespace "${namespace}" >/dev/null 2>&1 || kubectl create namespace "${namespace}" >/dev/null
 }
 
+# The value must equal application.namespaces in
+# repo/settings/argocd-cmd-params-cm.yaml, which drydock reads.
 configure_application_namespaces() {
   kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
     -p "{\"data\":{\"application.namespaces\":\"${TENANT_NAMESPACE},${DIRECTORY_DECODE_NAMESPACE},project-policy-tenant\"}}" >/dev/null
@@ -2222,7 +2294,8 @@ load_directory_decode_applications() {
 }
 
 # wait_for_directory_decode_application waits for the controller to record
-# a ComparisonError on a decode failure Application. A new Application's
+# a ComparisonError on a decode failure Application, or an InvalidSpecError
+# on a spec case. The comparison checks which type each case needs. A new Application's
 # first comparison resolves its revision without the revision cache, so the
 # controller records the error at once rather than after the repo error
 # grace period (CompareAppState, controller/state.go at v3.6.1).
@@ -2230,14 +2303,15 @@ wait_for_directory_decode_application() {
   local app="$1"
   local failure_dir
   for _ in {1..180}; do
-    if application_has_condition_type "${DIRECTORY_DECODE_NAMESPACE}" "${app}" ComparisonError; then
+    if application_has_condition_type "${DIRECTORY_DECODE_NAMESPACE}" "${app}" ComparisonError \
+      || application_has_condition_type "${DIRECTORY_DECODE_NAMESPACE}" "${app}" InvalidSpecError; then
       return 0
     fi
     sleep 2
   done
   failure_dir="$(artifact_dir directory-decode)"
   kubectl -n "${DIRECTORY_DECODE_NAMESPACE}" get application "${app}" -o yaml > "${failure_dir}/${app}.yaml" 2>&1 || true
-  fail "directory decode Application ${DIRECTORY_DECODE_NAMESPACE}/${app} did not report a ComparisonError; see ${failure_dir}/${app}.yaml"
+  fail "directory decode Application ${DIRECTORY_DECODE_NAMESPACE}/${app} did not report a ComparisonError or an InvalidSpecError; see ${failure_dir}/${app}.yaml"
 }
 
 capture_directory_decode_argocd_applications() {
@@ -2591,6 +2665,7 @@ main() {
   assert_app_revision_captures
   compare_manifests
   compare_applications
+  assert_namespace_gate
   compare_rolling_sync_conditions
   compare_avp_oracle_manifests
   compare_tracking_manifests
