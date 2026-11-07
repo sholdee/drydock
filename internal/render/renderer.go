@@ -43,19 +43,22 @@ type RenderOptions struct {
 	// v3.6.1). A config management plugin such as argocd-vault-plugin
 	// reads that output through a pipe instead, so the line break stays.
 	// The AVP compatibility plugin paths set it.
-	KeepOutputLineBreak    bool
-	EnableKSOPSCompat      bool
-	EnablePlugins          bool
-	Plugin                 *PluginConfig
-	KubeVersion            string
-	APIVersions            []string
-	BuildOptions           []string
-	Kustomize              *argoappv1.ApplicationSourceKustomize
-	Jsonnet                argoappv1.ApplicationSourceJsonnet
-	ArgoEnv                argoappv1.Env
-	RefRoots               map[string]string
-	RefSources             map[string]ResolvedSource
-	ReleaseName            string
+	KeepOutputLineBreak bool
+	EnableKSOPSCompat   bool
+	EnablePlugins       bool
+	Plugin              *PluginConfig
+	KubeVersion         string
+	APIVersions         []string
+	BuildOptions        []string
+	Kustomize           *argoappv1.ApplicationSourceKustomize
+	Jsonnet             argoappv1.ApplicationSourceJsonnet
+	ArgoEnv             argoappv1.Env
+	RefRoots            map[string]string
+	RefSources          map[string]ResolvedSource
+	ReleaseName         string
+	// HelmVersion is spec.source.helm.version. Argo CD v3.6.1 accepts "",
+	// "v3", and "v4", and fails the source for any other value.
+	HelmVersion            string
 	ValuesObject           map[string]any
 	ValuesMergeMode        string
 	ValueFiles             []string

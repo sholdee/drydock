@@ -435,6 +435,7 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	}
 
 	opts.ReleaseName = source.Helm.ReleaseName
+	opts.HelmVersion = source.Helm.Version
 	if source.Helm.Namespace != "" {
 		opts.Namespace = source.Helm.Namespace
 	}

@@ -43,11 +43,6 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, err
 	}
 
-	releaseName := opts.ReleaseName
-	if releaseName == "" {
-		releaseName = opts.AppName
-	}
-
 	capabilities, err := helmCapabilities(opts)
 	if err != nil {
 		return nil, nil, err
@@ -56,15 +51,16 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	// before it runs helm, and helm reads the values before it loads the
 	// chart (helmTemplate, reposerver/repository/repository.go:1292-1410 at
 	// v3.6.1, and helm pkg/cmd/install.go runInstall), so path and value
-	// errors come before chart errors.
-	inputValues, avpDiags, err := assembleHelmInputValues(ctx, source, opts)
+	// errors come before chart errors. The helm version check and the
+	// release name come between the paths and the values.
+	inputValues, releaseName, avpDiags, err := assembleHelmInputValues(ctx, source, manifestPath, opts)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	chart, err := opts.HelmChartLoadCache.Load(chartPath)
+	chart, err := loadInstallableHelmChart(chartPath, manifestPath, opts)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load helm chart %s: %w", manifestPath, err)
+		return nil, nil, err
 	}
 	chart, cleanup, err := prepareHelmDependencyWorkspace(ctx, chartPath, manifestPath, chart, opts)
 	if cleanup != nil {
@@ -72,6 +68,10 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	}
 	if err != nil {
 		return nil, nil, err
+	}
+	v2chart, err := checkHelmChartRelease(chart, releaseName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
 	}
 	pathMap, err := helmChartPathMap(manifestPath, chart)
 	if err != nil {
@@ -83,6 +83,9 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	values, err := helmTemplateValues(chart, inputValues, capabilities, releaseName, opts, manifestPath)
 	if err != nil {
 		return nil, nil, err
+	}
+	if err := checkHelmChartKubeVersion(v2chart, capabilities); err != nil {
+		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
 	}
 
 	rendered, err := engine.Render(chart, values)
@@ -111,35 +114,48 @@ func helmCapabilities(opts RenderOptions) (*common.Capabilities, error) {
 // assembleHelmInputValues resolves the value file and file parameter
 // paths, in that order, and then reads the value files and applies the
 // inline values and parameters, as the repo-server and helm do.
-func assembleHelmInputValues(ctx context.Context, source ResolvedSource, opts RenderOptions) (map[string]any, []diagnostic.Diagnostic, error) {
+//
+// Between the paths and the values, it checks spec.source.helm.version, as
+// the repo-server does when it makes the helm command (NewHelmApp,
+// repository.go:1414 at v3.6.1), and returns the release name, which helm
+// template works out before it reads the values (NameAndChart, runInstall
+// in pkg/cmd/install.go at helm v4.3.1).
+func assembleHelmInputValues(ctx context.Context, source ResolvedSource, manifestPath string, opts RenderOptions) (map[string]any, string, []diagnostic.Diagnostic, error) {
 	inlineValues := cloneValues(opts.ValuesObject)
 	loadValueFiles, err := shouldLoadHelmValueFiles(opts.ValuesMergeMode, inlineValues)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 	loader := newHelmValueFileLoader(ctx, source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, opts.IgnoreMissingValueFiles, opts, parseHelmValueFile)
 	var plans []plannedHelmValueFile
 	if loadValueFiles {
 		if plans, err = loader.planAll(opts.ValueFiles); err != nil {
-			return nil, nil, err
+			return nil, "", nil, err
 		}
 	}
 	targets, err := resolveHelmFileParameters(source, opts)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
+	}
+	if err := checkHelmCommandVersion(opts.HelmVersion); err != nil {
+		return nil, "", nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
+	}
+	releaseName, err := helmReleaseName(opts)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
 	}
 	fileValues, err := loader.readAll(plans)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 	inputValues, err := mergeHelmValues(fileValues, inlineValues, opts.ValuesMergeMode)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 	if err := applyHelmParameters(ctx, opts, targets, inputValues); err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
-	return inputValues, applyAVPCompatToHelmValues(inputValues, opts), nil
+	return inputValues, releaseName, applyAVPCompatToHelmValues(inputValues, opts), nil
 }
 
 func helmTemplateValues(chart helmchart.Charter, inputValues map[string]any, capabilities *common.Capabilities, releaseName string, opts RenderOptions, manifestPath string) (map[string]any, error) {
@@ -164,7 +180,7 @@ func helmTemplateValues(chart helmchart.Charter, inputValues map[string]any, cap
 		"Chart":        chartAccessor.MetadataAsMap(),
 		"Capabilities": capabilities,
 		"Release": map[string]any{
-			"Name": releaseName, "Namespace": opts.Namespace, "IsUpgrade": false,
+			"Name": releaseName, "Namespace": helmReleaseNamespace(opts), "IsUpgrade": false,
 			"IsInstall": true, "Revision": 1, "Service": "Helm",
 		},
 		"Values": mergedValues,
