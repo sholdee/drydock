@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/pflag"
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kustomize/v5/commands"
@@ -275,7 +274,3 @@ func TestArgoCDKustomizeVersion(t *testing.T) {
 	}
 	t.Fatal("sigs.k8s.io/kustomize/kustomize/v5 is not in the build information of the test")
 }
-
-// pflag must be the version that kustomize v5.8.3 builds with, so that the
-// flag values and their slice capacity match.
-var _ = pflag.ContinueOnError
