@@ -218,8 +218,9 @@ func TestHelmValueFilesMatchArgoCD(t *testing.T) {
 		// repo-server's error names an absolute path in its checkout.
 		wantErr string
 		// drydockErr is set where drydock fails by design and the
-		// repo-server does not.
-		drydockErr string
+		// repo-server does not, or fails another way (upstreamFails).
+		drydockErr    string
+		upstreamFails bool
 	}{
 		{name: "repeated file is read once at its first place", files: []string{"../../v/a.yaml", "../../v/b.yaml", "../../v/a.yaml"}},
 		{name: "repeated file through a symlink is read once", files: []string{"../../v/a.yaml", "../../v/b.yaml", "../../v/link-a.yaml"}},
@@ -259,6 +260,22 @@ func TestHelmValueFilesMatchArgoCD(t *testing.T) {
 			drydockErr: "makes helm read a file outside the repository, which drydock never reads",
 		},
 		{name: "path in .git", files: []string{"/.git/config.yaml"}, drydockErr: "enters a .git directory"},
+		{name: "ref glob", files: []string{"$values/vals/glob/*.yaml"}},
+		{name: "ref glob that matches nothing", files: []string{"$values/vals/none/*.yaml"}},
+		{name: "ref glob that matches nothing with ignoreMissingValueFiles", files: []string{"$values/vals/none/*.yaml", "../../v/a.yaml"}, ignoreMissing: true},
+		{name: "explicit file then a glob over a symlink to it", files: []string{"/vals/abs.yaml", "/vals/glob/*.yaml"}},
+		{name: "glob then the symlink it matched", files: []string{"/vals/glob/*.yaml", "/vals/glob/link-abs.yaml"}},
+		{name: "glob through a symlinked directory", files: []string{"/vals/dir-link/*.yaml"}},
+		{name: "doublestar glob", files: []string{"/v/**/*.yaml"}},
+		{name: "doublestar glob over a dangling symlink", files: []string{"/vals/**/*.yaml"}, wantErr: `glob pattern "/vals/**/*.yaml": error resolving symlink for glob match`},
+		{name: "glob over a dangling symlink with ignoreMissingValueFiles", files: []string{"/vals/dang*.yaml"}, ignoreMissing: true, wantErr: `glob pattern "/vals/dang*.yaml": error resolving symlink for glob match`},
+		{name: "bad glob pattern", files: []string{"/v/[.yaml"}},
+		{name: "value file that is a directory", files: []string{"/vals/real"}, wantErr: "is a directory"},
+		{name: "glob that leaves the repository", files: []string{"../../../*.yaml"}},
+		{name: "glob at the repository root matches .git", files: []string{"/*"}, drydockErr: "enters a .git directory", upstreamFails: true},
+		{name: "question mark glob", files: []string{"/v/?.yaml", "/v/b.yaml"}},
+		{name: "missing file named twice", files: []string{"missing.yaml", "missing.yaml"}, wantErr: "charts/app/missing.yaml: no such file or directory"},
+		{name: "dot path read once", files: []string{"../../v/a.yaml", "/v/./a.yaml", "/v/b.yaml"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := writeHelmValueFileSymlinkRepo(t, t.TempDir())
@@ -270,6 +287,14 @@ func TestHelmValueFilesMatchArgoCD(t *testing.T) {
 				ValueFiles:              tt.files,
 				IgnoreMissingValueFiles: tt.ignoreMissing,
 			})
+			if tt.upstreamFails {
+				// The repo-server reads .git as a value file and fails
+				// on the directory. drydock never reads .git.
+				if wantErr == nil {
+					t.Fatalf("upstream values = %v, want an error", want)
+				}
+				wantErr = nil
+			}
 			assertHelmValueFileParity(t, result, err, want, wantErr, tt.wantErr, tt.drydockErr)
 		})
 	}
@@ -407,44 +432,111 @@ func TestHelmFileParameterURLFetchesThroughRemoteCache(t *testing.T) {
 }
 
 // TestHelmValueFileSmokeFixtureMatchesUpstream renders the value files of
-// the parity smoke Application parity-helm-value-file-paths with drydock
-// and with the repo-server's resolution (upstreamHelmValueFileValues), and
-// requires the values that the fixture README lists.
+// the parity smoke Applications parity-helm-value-file-paths,
+// parity-helm-value-file-ref-glob, and parity-helm-value-file-glob-missing
+// with drydock and with the repo-server's resolution
+// (upstreamHelmValueFileValues), and requires the values that the fixture
+// README lists.
 func TestHelmValueFileSmokeFixtureMatchesUpstream(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", "..", "testdata", "argocd-parity", "repo"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	const chartPath = "charts/helm-value-file-paths"
-	data, err := os.ReadFile(filepath.Join(repoRoot, "applications", "helm-value-file-paths.yaml"))
-	if err != nil {
-		t.Fatal(err)
+	for _, tt := range []struct {
+		file string
+		want map[string]any
+	}{
+		{file: "helm-value-file-paths.yaml", want: map[string]any{"winner": "b", "fromA": "a", "fromB": "b", "fromAbsolute": "absolute", "fromLinkedDir": "linked-dir", "globPlain": "plain"}},
+		{file: "helm-value-file-ref-glob.yaml", want: map[string]any{"winner": "b", "fromB": "b", "fromAbsolute": "absolute", "globPlain": "plain"}},
+		{file: "helm-value-file-glob-missing.yaml", want: map[string]any{"winner": "a", "fromA": "a"}},
+	} {
+		t.Run(tt.file, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(repoRoot, "applications", tt.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var app argoappv1.Application
+			if err := yaml.Unmarshal(data, &app); err != nil {
+				t.Fatal(err)
+			}
+			source := app.Spec.GetSource()
+			files := source.Helm.ValueFiles
+			ignore := source.Helm.IgnoreMissingValueFiles
+			refRoots := map[string]string{"$values": repoRoot}
+			upstream, err := upstreamHelmValueFileValues(filepath.Join(repoRoot, chartPath), repoRoot, nil, refRoots, files, ignore)
+			if err != nil {
+				t.Fatalf("upstream error = %v", err)
+			}
+			upstream = chartv2loader.MergeMaps(map[string]any{"winner": "chart-default"}, upstream)
+			if !reflect.DeepEqual(upstream, tt.want) {
+				t.Fatalf("upstream values = %v, want %v", upstream, tt.want)
+			}
+			result, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: chartPath}, RenderOptions{
+				AppName:                 app.Name,
+				Namespace:               app.Spec.Destination.Namespace,
+				RefRoots:                refRoots,
+				ValueFiles:              files,
+				IgnoreMissingValueFiles: ignore,
+			})
+			assertHelmValueFileParity(t, result, err, tt.want, nil, "", "")
+		})
 	}
-	var app argoappv1.Application
-	if err := yaml.Unmarshal(data, &app); err != nil {
-		t.Fatal(err)
+}
+
+// TestCollectHelmLocalInputPathsForValueFileLists pins the persistent
+// render cache inputs of plain value file lists: every file that a glob or
+// an entry reads, once, and a missing file as an optional input under
+// ignoreMissingValueFiles.
+func TestCollectHelmLocalInputPathsForValueFileLists(t *testing.T) {
+	repo := t.TempDir()
+	for rel, content := range map[string]string{
+		"charts/app/Chart.yaml":    "apiVersion: v2\nname: app\nversion: 0.1.0\n",
+		"charts/app/values.yaml":   "a: 1\n",
+		"charts/app/env/prod.yaml": "a: 2\n",
+		"charts/app/env/dev.yaml":  "a: 3\n",
+		"shared/common.yaml":       "a: 4\n",
+	} {
+		writeFile(t, filepath.Join(repo, rel), content)
 	}
-	files := app.Spec.Source.Helm.ValueFiles
-	want := map[string]any{
-		"winner":        "b",
-		"fromA":         "a",
-		"fromB":         "b",
-		"fromAbsolute":  "absolute",
-		"fromLinkedDir": "linked-dir",
-		"globPlain":     "plain",
+	for _, tt := range []struct {
+		files  []string
+		ignore bool
+		want   []HelmLocalInputPath
+	}{
+		{files: []string{"values.yaml"}, want: []HelmLocalInputPath{{Path: "charts/app"}, {Path: "charts/app/values.yaml"}}},
+		{files: []string{"values.yaml", "env/*.yaml", "env/prod.yaml"}, want: []HelmLocalInputPath{{Path: "charts/app"}, {Path: "charts/app/env/dev.yaml"}, {Path: "charts/app/env/prod.yaml"}, {Path: "charts/app/values.yaml"}}},
+		{files: []string{"../../shared/common.yaml", "values.yaml"}, want: []HelmLocalInputPath{{Path: "charts/app"}, {Path: "charts/app/values.yaml"}, {Path: "shared/common.yaml"}}},
+		{files: []string{"missing.yaml", "values.yaml"}, ignore: true, want: []HelmLocalInputPath{{Path: "charts/app"}, {Path: "charts/app/missing.yaml", Optional: true}, {Path: "charts/app/values.yaml"}}},
+		{files: []string{"env/*.yaml", "env/*.yaml"}, want: []HelmLocalInputPath{{Path: "charts/app"}, {Path: "charts/app/env/dev.yaml"}, {Path: "charts/app/env/prod.yaml"}}},
+		{files: []string{"values.yaml", "values.yaml"}, want: []HelmLocalInputPath{{Path: "charts/app"}, {Path: "charts/app/values.yaml"}}},
+	} {
+		got, err := CollectHelmLocalInputPaths(HelmLocalInputOptions{
+			RepoRoot: repo,
+			Source:   ResolvedSource{RepoRoot: repo, Path: "charts/app"},
+			Options:  RenderOptions{ValueFiles: tt.files, IgnoreMissingValueFiles: tt.ignore},
+		})
+		if err != nil || !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("CollectHelmLocalInputPaths(%v) = %v, %v, want %v", tt.files, got, err, tt.want)
+		}
 	}
-	upstream, err := upstreamHelmValueFileValues(filepath.Join(repoRoot, chartPath), repoRoot, nil, nil, files, false)
-	if err != nil {
-		t.Fatalf("upstream error = %v", err)
-	}
-	upstream = chartv2loader.MergeMaps(map[string]any{"winner": "chart-default"}, upstream)
-	if !reflect.DeepEqual(upstream, want) {
-		t.Fatalf("upstream values = %v, want %v", upstream, want)
-	}
-	result, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: chartPath}, RenderOptions{
-		AppName:    app.Name,
-		Namespace:  app.Spec.Destination.Namespace,
-		ValueFiles: files,
+}
+
+// TestHelmValueFileURLsAreReadOnce pins that a value file URL that the list
+// names twice is fetched and read once, at its first place, as the
+// repo-server's appendUnique keeps it.
+func TestHelmValueFileURLsAreReadOnce(t *testing.T) {
+	repo := writeHelmValueFileSymlinkRepo(t, t.TempDir())
+	remoteValues := filepath.Join(t.TempDir(), "remote.yaml")
+	writeFile(t, remoteValues, "winner: remote\n")
+	acquirer := &fakeRemoteAcquirer{path: remoteValues}
+	result, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repo, Path: "charts/app"}, RenderOptions{
+		AppName:                "probe",
+		RemoteResourceAcquirer: acquirer,
+		ValueFiles:             []string{"https://values.example.test/v.yaml", "../../v/b.yaml", "https://values.example.test/v.yaml"},
 	})
-	assertHelmValueFileParity(t, result, err, want, nil, "", "")
+	assertHelmValueFileParity(t, result, err, map[string]any{"winner": "b", "b": "b"}, nil, "", "")
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("remote requests = %#v, want one", acquirer.requests)
+	}
 }

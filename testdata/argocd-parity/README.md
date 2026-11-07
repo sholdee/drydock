@@ -930,9 +930,20 @@ repo-server reads each resolved path once, at its first place. The second
 | `fromLinkedDir` | `linked-dir` |
 | `globPlain` | `plain` |
 
+Two more Applications render the same chart:
+
+| Application | value files | values |
+| --- | --- | --- |
+| `parity-helm-value-file-ref-glob` | `$values/value-file-links/b.yaml`, the `$ref` glob `$values/value-file-links/glob/*.yaml`, and `$values/value-file-links/glob/linked.yaml` again | `winner: b`, `fromB`, `fromAbsolute`, `globPlain` |
+| `parity-helm-value-file-glob-missing` | the glob `value-file-links/missing/*.yaml`, which matches nothing, `a.yaml`, and the missing `missing.yaml`, with `ignoreMissingValueFiles: true` | `winner: a`, `fromA` |
+
+In the `$ref` case, the glob leaves out `glob/linked.yaml`, because the list
+also names it, and the explicit entry keeps its place at the end. The
+second source of the Application is the same repository with `ref: values`.
+
 `TestHelmValueFileSmokeFixtureMatchesUpstream` in `internal/render`
-renders the same value files with drydock and with a copy of
-`getResolvedValueFiles`.
+renders the value files of all three Applications with drydock and with a
+copy of `getResolvedValueFiles`.
 
 ## HTTP Helm repository fixture
 
@@ -984,6 +995,12 @@ Application maps the fixture URL to `FIXTURE_GIT_WORK`
 `parity-helm-dependency-vendored-version`, `charts/parity-range` is version
 `1.0.0`. helm template matches dependencies by name only, so nothing is
 fetched, and the vendored chart renders.
+
+`parity-oci-helm-range` renders the OCI Helm chart of the "OCI Helm chart
+fixture" at `targetRevision: "1.*"`. The repo-server lists the registry
+tags and pulls the highest match, `1.0.0`, and drydock does the same with
+helm's registry client. The warm run records the tag list for the offline
+capture.
 
 `parity-helm-file-parameter-url` renders `charts/helm-file-parameter-url`
 with the value file `files/values.yaml` and the file parameter

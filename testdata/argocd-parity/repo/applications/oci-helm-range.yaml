@@ -1,0 +1,17 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-oci-helm-range
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: argocd-parity-registry.argocd-parity.svc.cluster.local:5443
+    chart: parity/nested/parity-nested-chart
+    targetRevision: "1.*"
+    helm:
+      valuesObject:
+        fromValues: from-range
+  destination:
+    name: in-cluster
+    namespace: parity-oci-helm-range

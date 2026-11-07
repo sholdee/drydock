@@ -244,6 +244,9 @@ CRD_REJECTED_MESSAGE="Invalid value: \".\": spec.sourceHydrator.syncSource.path 
 # HELM_REPO_CHARTS lists one "name version" archive for each entry of
 # helm-repo/index.yaml.
 HELM_REPO_PORT="18879"
+# The busybox-extras package of PARITY_ALPINE_IMAGE_DIGEST (alpine 3.23.6),
+# whose httpd serves the HTTP Helm repository.
+BUSYBOX_EXTRAS_VERSION="1.37.0-r30"
 HELM_REPO_URL="http://argocd-parity-registry.argocd-parity.svc.cluster.local:${HELM_REPO_PORT}"
 HELM_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/helm-repo"
 HELM_REPO_CHARTS=(
@@ -256,7 +259,8 @@ HELM_REPO_CHARTS=(
 )
 # Applications that read the HTTP Helm repository: chart sources with a
 # version range, local charts whose dependencies helm dependency build
-# fetches, and a file parameter URL. warm_drydock_helm_repo_cache renders
+# fetches, and a file parameter URL. The last one is a version range on the
+# OCI registry, whose tag list must be recorded too. warm_drydock_helm_repo_cache renders
 # each once online, so the offline captures find the charts, the recorded
 # version lists, and the remote files in the caches.
 HELM_REPO_APPLICATIONS=(
@@ -267,6 +271,7 @@ HELM_REPO_APPLICATIONS=(
   parity-helm-dependency-range
   parity-helm-dependency-partial
   parity-helm-file-parameter-url
+  parity-oci-helm-range
 )
 # Applications whose source holds a file that prepare_fixture_git_image
 # adds to FIXTURE_GIT_WORK: the vendored archive
@@ -432,7 +437,11 @@ APPLICATIONS=(
   parity-source-hydrator
   # Helm value file paths: a repeated file, a symlink, a symlinked
   # directory, a path from the repository root, and a glob over a symlink.
+  # Then a $ref glob, and a glob that matches nothing under
+  # ignoreMissingValueFiles.
   parity-helm-value-file-paths
+  parity-helm-value-file-ref-glob
+  parity-helm-value-file-glob-missing
   # HELM_REPO_APPLICATIONS, and a vendored dependency of another version.
   parity-helm-file-parameter-url
   parity-helm-range-wildcard
@@ -442,6 +451,8 @@ APPLICATIONS=(
   parity-helm-dependency-range
   parity-helm-dependency-partial
   parity-helm-dependency-vendored-version
+  # A version range on the schemeless OCI chart of the registry.
+  parity-oci-helm-range
 )
 
 # Applications whose Git sources read the ARGOCD_APP_REVISION variables. The
@@ -949,9 +960,13 @@ prepare_fixture_git_image() {
   prepare_live_diff_repo
 
   dockerfile="${WORK_DIR}/Dockerfile.git"
-  cat > "${dockerfile}" <<'DOCKERFILE'
-FROM alpine:3.23
-RUN apk add --no-cache git-daemon busybox-extras
+  [[ -n "${PARITY_ALPINE_POLICY_IMAGE}" ]] \
+    || fail "PARITY_ALPINE_POLICY_IMAGE is unset; prepare_parity_alpine_image must run before prepare_fixture_git_image"
+  # The base is the digest-pinned alpine that prepare_parity_alpine_image
+  # pulled. busybox-extras serves the HTTP Helm repository.
+  cat > "${dockerfile}" <<DOCKERFILE
+FROM ${PARITY_ALPINE_POLICY_IMAGE}
+RUN apk add --no-cache git-daemon busybox-extras=${BUSYBOX_EXTRAS_VERSION}
 COPY --chown=65534:65534 helm-repo /srv/helm
 COPY --chown=65534:65534 repo.git /srv/git/repo.git
 COPY --chown=65534:65534 oob-symlink.git /srv/git/oob-symlink.git
@@ -961,8 +976,8 @@ EXPOSE 9418
 USER 65534:65534
 ENTRYPOINT ["git", "daemon", "--verbose", "--export-all", "--base-path=/srv/git", "--reuseaddr", "--informative-errors", "/srv/git"]
 DOCKERFILE
-  # The build pulls its base image from Docker Hub and packages from the
-  # Alpine CDN, both rate-limited for anonymous clients.
+  # The build fetches packages from the Alpine CDN, which is rate-limited
+  # for anonymous clients.
   retry "docker build of ${image}" docker build -q -t "${image}" -f "${dockerfile}" "${WORK_DIR}" >/dev/null \
     || fail "docker build of the fixture Git server image ${image} failed"
   kind load docker-image "${image}" --name "${CLUSTER_NAME}"
@@ -1240,6 +1255,11 @@ spec:
           ports:
             - containerPort: ${HELM_REPO_PORT}
               name: helm-repo
+          readinessProbe:
+            httpGet:
+              path: /index.yaml
+              port: helm-repo
+            periodSeconds: 2
       volumes:
         - name: registry-tls
           secret:
