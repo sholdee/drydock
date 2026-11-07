@@ -150,15 +150,19 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 // Helm value file glob without a static prefix.
 func (c *kustomizeInputCollector) collectSourceKustomizeComponent(ctx context.Context, sourceRoot, pattern string) error {
 	// Own the glob folders first, from the pattern text, so a glob that
-	// then fails on a symlink still owns them.
+	// then fails on a symlink still owns them. Own each element before a
+	// "..", too: the glob stops with no match when that element is
+	// missing or a file, so adding or deleting it changes the render.
 	for _, componentPattern := range sourceKustomizeComponentArgs([]string{pattern}) {
-		globDir, ok := kustomizeComponentGlobDir(sourceRoot, componentPattern)
-		if !ok {
-			continue
+		dirs := kustomizeComponentParentPrefixes(sourceRoot, componentPattern)
+		if globDir, ok := kustomizeComponentGlobDir(sourceRoot, componentPattern); ok {
+			dirs = append(dirs, globDir)
 		}
-		if err := c.addSelectionPrefix(globDir); err != nil {
-			if err := c.skip(ctx, err); err != nil {
-				return err
+		for _, dir := range dirs {
+			if err := c.addSelectionPrefix(dir); err != nil {
+				if err := c.skip(ctx, err); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -202,6 +206,25 @@ func (c *kustomizeInputCollector) collectSourceKustomizeComponentMatch(ctx conte
 		}
 	}
 	return nil
+}
+
+// kustomizeComponentParentPrefixes returns, under dir, each prefix of a
+// component pattern that ends with a named element just before a "..",
+// such as "../../mid" in "../../mid/../components/*".
+func kustomizeComponentParentPrefixes(dir, pattern string) []string {
+	if filepath.IsAbs(pattern) {
+		return nil
+	}
+	elements := strings.Split(pattern, string(filepath.Separator))
+	var prefixes []string
+	for i := 1; i < len(elements); i++ {
+		previous := elements[i-1]
+		if elements[i] != ".." || previous == "" || previous == "." || previous == ".." {
+			continue
+		}
+		prefixes = append(prefixes, filepath.Clean(filepath.Join(dir, filepath.Join(elements[:i]...))))
+	}
+	return prefixes
 }
 
 // addSelectionPrefix owns dir for changed-only selection as a path prefix,

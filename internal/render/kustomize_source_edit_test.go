@@ -1786,9 +1786,9 @@ func TestKustomizeSourceComponentGlobOwnsItsDirectoryAfterSymlinkError(t *testin
 	}
 }
 
-// A folder that becomes a symlink to .git between the resolve and the
-// open is not listed: the glob makes sure that the open folder is still
-// the one it resolved.
+// A last path element that becomes a symlink to .git between the resolve
+// and the open is not listed: the glob makes sure that the open folder is
+// still the one it resolved. A swap of a middle element is not covered.
 func TestKustomizeComponentGlobRejectsFolderSwappedForSymlink(t *testing.T) {
 	root := writeSourceEditTestRepo(t, "")
 	writeFile(t, filepath.Join(root, ".git", "secret-entry"), "x\n")
@@ -1797,7 +1797,10 @@ func TestKustomizeComponentGlobRejectsFolderSwappedForSymlink(t *testing.T) {
 		t.Fatalf("OpenRoot() error = %v", err)
 	}
 	defer func() { _ = repoRoot.Close() }()
-	glob := newKustomizeComponentGlob(repoRoot, root, filepath.Join(root, "apps", "demo"))
+	glob, err := newKustomizeComponentGlob(repoRoot, root, filepath.Join(root, "apps", "demo"))
+	if err != nil {
+		t.Fatalf("newKustomizeComponentGlob() error = %v", err)
+	}
 	glob.beforeOpen = func(rel string) {
 		if rel != "components" {
 			return
@@ -1845,5 +1848,42 @@ func TestKustomizeComponentGlobAbsoluteSymlinkTargetLeavingRepository(t *testing
 	}
 	if strings.Contains(err.Error(), "secret-outside") {
 		t.Fatalf("error %v names an entry outside the repository", err)
+	}
+}
+
+// The glob compares absolute symlink targets with the repository root, so
+// it rejects a relative root.
+func TestNewKustomizeComponentGlobRejectsRelativeRoot(t *testing.T) {
+	if _, err := newKustomizeComponentGlob(nil, "repo", filepath.Join("repo", "app")); err == nil || !strings.Contains(err.Error(), "must be absolute") {
+		t.Fatalf("newKustomizeComponentGlob() error = %v, want must be absolute", err)
+	}
+}
+
+// The glob stops with no match at a missing element before a "..", so
+// changed-only selection owns that element: adding or deleting it changes
+// the render.
+func TestKustomizeSourceComponentOwnsElementBeforeParent(t *testing.T) {
+	root := writeSourceEditTestRepo(t, "")
+	writeFile(t, filepath.Join(root, "mid", "keep.txt"), "x\n")
+	kustomize := argoappv1.ApplicationSourceKustomize{Components: []string{"../../mid/../components/[ab]"}}
+	if _, err := renderSourceEditTest(t, root, kustomize); err != nil {
+		t.Fatalf("Render() with mid error = %v", err)
+	}
+	for _, present := range []bool{true, false} {
+		if !present {
+			if err := os.RemoveAll(filepath.Join(root, "mid")); err != nil {
+				t.Fatalf("RemoveAll() error = %v", err)
+			}
+			if _, err := renderSourceEditTest(t, root, kustomize); err == nil || !strings.Contains(err.Error(), "has no match: must build at directory: not a valid directory") {
+				t.Fatalf("Render() without mid error = %v, want has no match", err)
+			}
+		}
+		selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), &kustomize)
+		if err != nil {
+			t.Fatalf("KustomizeSelectionPaths() error = %v", err)
+		}
+		if !slices.Contains(selection, "mid") {
+			t.Fatalf("selection paths with mid present = %t: %q, want mid", present, selection)
+		}
 	}
 }

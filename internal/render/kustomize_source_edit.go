@@ -486,6 +486,13 @@ func editAddKustomizeComponents(kustomization *types.Kustomization, kustomizatio
 // symlink error, because drydock rejects a component path that passes
 // through a symlink. Argo CD follows every such symlink.
 func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []string) ([]string, error) {
+	// The glob compares absolute symlink targets with the repository
+	// root, so it works on absolute paths.
+	dir, dirErr := filepath.Abs(dir)
+	boundaryRoot, rootErr := filepath.Abs(boundaryRoot)
+	if err := errors.Join(dirErr, rootErr); err != nil {
+		return nil, fmt.Errorf("kustomize components: %w", err)
+	}
 	var out []string
 	var root *os.Root
 	defer func() {
@@ -504,7 +511,10 @@ func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []strin
 			}
 			root = opened
 		}
-		glob := newKustomizeComponentGlob(root, boundaryRoot, dir)
+		glob, err := newKustomizeComponentGlob(root, boundaryRoot, dir)
+		if err != nil {
+			return nil, err
+		}
 		matches, err := glob.glob(pattern, 0)
 		var symlinkErr kustomizeComponentSymlinkError
 		switch {
@@ -546,13 +556,19 @@ type kustomizeComponentGlob struct {
 	beforeOpen func(rel string)
 }
 
-func newKustomizeComponentGlob(root *os.Root, boundaryRoot, dir string) kustomizeComponentGlob {
+// newKustomizeComponentGlob returns the glob for dir in the repository at
+// boundaryRoot. boundaryRoot and dir must be absolute: underRoot compares
+// absolute symlink targets with the elements of the repository root.
+func newKustomizeComponentGlob(root *os.Root, boundaryRoot, dir string) (kustomizeComponentGlob, error) {
+	if !filepath.IsAbs(boundaryRoot) || !filepath.IsAbs(dir) {
+		return kustomizeComponentGlob{}, fmt.Errorf("kustomize components: repository root %q and source directory %q must be absolute", boundaryRoot, dir)
+	}
 	boundaryRoot = filepath.Clean(boundaryRoot)
 	realRoot, err := filepath.EvalSymlinks(boundaryRoot)
 	if err != nil {
 		realRoot = boundaryRoot
 	}
-	return kustomizeComponentGlob{root: root, boundaryRoot: boundaryRoot, realRoot: realRoot, dir: filepath.Clean(dir)}
+	return kustomizeComponentGlob{root: root, boundaryRoot: boundaryRoot, realRoot: realRoot, dir: filepath.Clean(dir)}, nil
 }
 
 // kustomizeGlobDepthLimit is the recursion limit of filepath.Glob.
@@ -618,8 +634,13 @@ func (g kustomizeComponentGlob) globDir(dirPath, pattern string, matches []strin
 		return matches, nil
 	}
 	// The os.Root follows symlinks inside the repository, .git too. So
-	// make sure that the open directory is still the one that resolve
-	// found, without a symlink on the way, before it is listed.
+	// make sure, before the listing, that the open directory is still the
+	// one that resolve found. This catches a swap of the last element for
+	// a symlink between the resolve and the open. It does not catch a swap
+	// of a middle element, because Lstat follows symlinks in all but the
+	// last element: a process that rewrites the checkout while drydock
+	// runs is outside drydock's protection. The os.Root still stops any
+	// read outside the repository.
 	if err := g.sameResolvedDir(dirPath, resolved, info); err != nil {
 		return matches, err
 	}
@@ -642,7 +663,8 @@ func (g kustomizeComponentGlob) globDir(dirPath, pattern string, matches []strin
 }
 
 // sameResolvedDir fails with the symlink error when dirPath no longer
-// resolves to the directory that was opened, info.
+// resolves to the directory that was opened, info. It covers a swap of the
+// last element of the path, not of a middle element (see globDir).
 func (g kustomizeComponentGlob) sameResolvedDir(dirPath string, resolved kustomizeResolvedPath, info os.FileInfo) error {
 	again, err := g.resolve(dirPath, true)
 	if err != nil {
