@@ -56,9 +56,9 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		// signature of settings without the keys does not change.
 		DisabledSourceTypes []string `json:"disabledSourceTypes,omitempty"`
 		// HelmNamespace is the namespace that helm uses without a
-		// --namespace, from the rendered repo-server. It is left out for
-		// "default", so settings without a rendered install keep their
-		// signature.
+		// --namespace, from the repo-server of a rendered or committed
+		// install. It is left out for "default", so settings without such
+		// an install keep their signature.
 		HelmNamespace string `json:"helmNamespace,omitempty"`
 	}{
 		KustomizeBuildOptions:             renderSettingsValues(settings.KustomizeBuildOptions),

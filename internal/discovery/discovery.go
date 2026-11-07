@@ -3,7 +3,9 @@ package discovery
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -656,10 +658,15 @@ func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured
 }
 
 // sanitizedRepoServerVolumes keeps, for each volume of the pod, only its
-// name and whether it holds a file named namespace
-// (config.RepoServerNamespaceFileKey): a Secret volume, which for a service
-// account token Secret holds the namespace, or a projected volume with a
-// downwardAPI item at that path.
+// name and whether it holds a file named token and a file named namespace
+// (config.RepoServerTokenFileKey and config.RepoServerNamespaceFileKey).
+// client-go needs the token for the in-cluster config and reads the
+// namespace file next to it. A Secret volume without items holds every key
+// of the Secret; a service account token Secret holds both files, so it
+// counts for both. With items, and for the secret, configMap, and
+// downwardAPI sources of a projected volume, a file counts only when an
+// item has its path, and a serviceAccountToken source gives the token at
+// its path. drydock keeps no value and no object name.
 func sanitizedRepoServerVolumes(podSpec map[string]any) []any {
 	items, _ := podSpec["volumes"].([]any)
 	out := make([]any, 0, len(items))
@@ -668,23 +675,54 @@ func sanitizedRepoServerVolumes(podSpec map[string]any) []any {
 		if !ok {
 			continue
 		}
-		namespaceFile := false
-		if _, ok := volume["secret"]; ok {
-			namespaceFile = true
+		files := map[string]bool{}
+		if secret, ok := volume["secret"].(map[string]any); ok {
+			paths, listed := itemPaths(secret)
+			if !listed {
+				files["token"], files["namespace"] = true, true
+			}
+			maps.Copy(files, paths)
 		}
 		sources, _, _ := unstructured.NestedSlice(volume, "projected", "sources")
 		for _, sourceItem := range sources {
 			source, _ := sourceItem.(map[string]any)
-			downward, _, _ := unstructured.NestedSlice(source, "downwardAPI", "items")
-			for _, downwardItem := range downward {
-				if entry, ok := downwardItem.(map[string]any); ok && entry["path"] == "namespace" {
-					namespaceFile = true
+			if token, ok := source["serviceAccountToken"].(map[string]any); ok {
+				if tokenPath, _ := token["path"].(string); tokenPath != "" {
+					files[tokenPath] = true
+				}
+			}
+			for _, kind := range []string{"secret", "configMap", "downwardAPI"} {
+				if projection, ok := source[kind].(map[string]any); ok {
+					paths, _ := itemPaths(projection)
+					maps.Copy(files, paths)
 				}
 			}
 		}
-		out = append(out, map[string]any{"name": volume["name"], config.RepoServerNamespaceFileKey: namespaceFile})
+		out = append(out, map[string]any{
+			"name":                            volume["name"],
+			config.RepoServerTokenFileKey:     files["token"],
+			config.RepoServerNamespaceFileKey: files["namespace"],
+		})
 	}
 	return out
+}
+
+// itemPaths returns the file paths that the items of a volume source
+// project, and whether the source lists items.
+func itemPaths(source map[string]any) (map[string]bool, bool) {
+	items, ok := source["items"].([]any)
+	if !ok {
+		return nil, false
+	}
+	paths := map[string]bool{}
+	for _, item := range items {
+		if entry, ok := item.(map[string]any); ok {
+			if itemPath, _ := entry["path"].(string); itemPath != "" {
+				paths[path.Clean(itemPath)] = true
+			}
+		}
+	}
+	return paths, true
 }
 
 // sanitizedRepoServerServiceAccount keeps only the fields of a repo-server

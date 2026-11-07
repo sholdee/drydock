@@ -33,10 +33,10 @@ func (s ArgoSettings) HelmNamespace() string {
 const (
 	RepoServerUnknownSourceKey = "drydockUnknownSource"
 	RepoServerEnvFromKey       = "drydockEnvFrom"
-	// RepoServerNamespaceFileKey marks, on a sanitized volume, that the
-	// volume holds a file named namespace: a projected volume with a
-	// downwardAPI item at that path, or a Secret volume, which for a
-	// service account token Secret holds the namespace.
+	// RepoServerTokenFileKey and RepoServerNamespaceFileKey mark, on a
+	// sanitized volume, whether the volume holds a file named token and a
+	// file named namespace (discovery.sanitizedRepoServerVolumes).
+	RepoServerTokenFileKey     = "drydockTokenFile"
 	RepoServerNamespaceFileKey = "drydockNamespaceFile"
 )
 
@@ -94,8 +94,10 @@ func RepoServerHelmNamespace(deployment *unstructured.Unstructured, serviceAccou
 		return value, notes
 	}
 	if env["KUBECONFIG"] != "" {
+		// drydock goes on as if KUBECONFIG were unset.
 		notes = append(notes, "KUBECONFIG names a kubeconfig file that drydock cannot read")
-	} else if env["HELM_KUBECONTEXT"] != "" {
+	}
+	if env["HELM_KUBECONTEXT"] != "" {
 		// helm overrides the current context. Without a kubeconfig the
 		// context is not found, client-go fails, and helm falls back to
 		// "default" (ConfirmUsable, client_config.go:441-446).
@@ -178,7 +180,10 @@ func containerNamespaceEnv(container map[string]any, podNamespace string) (known
 // too. The kubelet mounts both when the pod spec
 // automountServiceAccountToken is true, or unset while the ServiceAccount
 // does not set it to false. A volume that the container mounts at the token
-// path holds the namespace file only when the sanitizer marked it so
+// path counts only when it holds the token file
+// (RepoServerTokenFileKey): client-go uses the in-cluster config only with
+// the token (inClusterClientConfig.Possible, client_config.go:666-671). It
+// holds the namespace file only when the sanitizer marked it so
 // (RepoServerNamespaceFileKey).
 func serviceAccountToken(podSpec, container map[string]any, serviceAccounts []*unstructured.Unstructured) (mounted, namespaceFile bool) {
 	mounts, _ := container["volumeMounts"].([]any)
@@ -190,7 +195,7 @@ func serviceAccountToken(podSpec, container map[string]any, serviceAccounts []*u
 		volumes, _ := podSpec["volumes"].([]any)
 		for _, volumeItem := range volumes {
 			if volume, ok := volumeItem.(map[string]any); ok && volume["name"] == mount["name"] {
-				return true, volume[RepoServerNamespaceFileKey] == true
+				return volume[RepoServerTokenFileKey] == true, volume[RepoServerNamespaceFileKey] == true
 			}
 		}
 		return true, false

@@ -932,6 +932,10 @@ func TestRepoServerCandidatesKeepOnlyTokenInputs(t *testing.T) {
 				}}},
 				map[string]any{"name": "creds", "secret": map[string]any{"secretName": "hidden-secret"}},
 				map[string]any{"name": "scratch", "emptyDir": map[string]any{}},
+				map[string]any{"name": "picked", "secret": map[string]any{"secretName": "hidden-secret", "items": []any{map[string]any{"key": "hidden-key", "path": "token"}}}},
+				map[string]any{"name": "mixed", "projected": map[string]any{"sources": []any{
+					map[string]any{"configMap": map[string]any{"name": "hidden-configmap", "items": []any{map[string]any{"key": "ns", "path": "namespace"}}}},
+				}}},
 			},
 		}}},
 	}}
@@ -954,7 +958,7 @@ func TestRepoServerCandidatesKeepOnlyTokenInputs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, unwanted := range []string{"hidden-audience", "hidden-secret", "hidden-token-secret", "annotation-value", "emptyDir", "projected"} {
+		for _, unwanted := range []string{"hidden-audience", "hidden-secret", "hidden-token-secret", "annotation-value", "emptyDir", "projected", "hidden-key", "hidden-configmap"} {
 			if strings.Contains(string(kept), unwanted) {
 				t.Fatalf("%s candidate %s keeps %q", candidate.Kind, kept, unwanted)
 			}
@@ -962,9 +966,11 @@ func TestRepoServerCandidatesKeepOnlyTokenInputs(t *testing.T) {
 	}
 	volumes, _, _ := unstructured.NestedSlice(result.SettingsCandidates[0].Object.Object, "spec", "template", "spec", "volumes")
 	want := []any{
-		map[string]any{"name": "token", config.RepoServerNamespaceFileKey: true},
-		map[string]any{"name": "creds", config.RepoServerNamespaceFileKey: true},
-		map[string]any{"name": "scratch", config.RepoServerNamespaceFileKey: false},
+		map[string]any{"name": "token", config.RepoServerTokenFileKey: true, config.RepoServerNamespaceFileKey: true},
+		map[string]any{"name": "creds", config.RepoServerTokenFileKey: true, config.RepoServerNamespaceFileKey: true},
+		map[string]any{"name": "scratch", config.RepoServerTokenFileKey: false, config.RepoServerNamespaceFileKey: false},
+		map[string]any{"name": "picked", config.RepoServerTokenFileKey: true, config.RepoServerNamespaceFileKey: false},
+		map[string]any{"name": "mixed", config.RepoServerTokenFileKey: false, config.RepoServerNamespaceFileKey: true},
 	}
 	if !reflect.DeepEqual(volumes, want) {
 		t.Fatalf("volumes = %#v, want %#v", volumes, want)

@@ -189,9 +189,10 @@ type ArgoSettings struct {
 	// See SourceTypeEnabled.
 	SourceTypeEnable map[string]Value[string] `json:"sourceTypeEnable,omitempty" yaml:"sourceTypeEnable,omitempty"`
 	// RepoServerHelmNamespace is the namespace that helm uses in the
-	// repo-server of a rendered Argo CD install when no --namespace is
-	// given (see RepoServerHelmNamespace). nil without a rendered install;
-	// HelmNamespace then gives DefaultHelmNamespace.
+	// repo-server of the Argo CD install that drydock finds, rendered or
+	// committed, when no --namespace is given (see RepoServerHelmNamespace).
+	// nil without such an install; HelmNamespace then gives
+	// DefaultHelmNamespace.
 	RepoServerHelmNamespace *Value[string]                    `json:"repoServerHelmNamespace,omitempty" yaml:"repoServerHelmNamespace,omitempty"`
 	ConfigManagementPlugins map[string]ConfigManagementPlugin `json:"-" yaml:"-"`
 	CommandParameters       []CommandParameterSetting         `json:"commandParameters,omitempty" yaml:"commandParameters,omitempty"`
