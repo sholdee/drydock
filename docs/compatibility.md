@@ -627,22 +627,55 @@ Supported:
   both are empty, Argo CD passes no `--namespace`, and Helm picks the
   namespace from the repo-server environment (`EnvSettings.Namespace`,
   `pkg/cli/environment.go:276-286` at Helm v4.3.1, and client-go
-  `DeferredLoadingClientConfig.Namespace`). The repo-server has no
-  kubeconfig. So the namespace is `HELM_NAMESPACE` when the repo-server
-  container sets it. Else, when a service account token is mounted, it is
-  `POD_NAMESPACE` or the pod namespace. Else it is `default`. drydock reads
-  this from the repo-server Deployment and ServiceAccount of a rendered Argo
-  CD install. The token is mounted when the pod spec
-  `automountServiceAccountToken` is `true`, or unset while the ServiceAccount
-  does not set it to `false`, or when the container mounts a volume at the
-  token path. The upstream `install.yaml` sets it to `false`, so the
-  namespace is `default`. The argo-cd Helm chart sets
+  `DirectClientConfig.Namespace` and `DeferredLoadingClientConfig.Namespace`).
+  The rule, in order:
+  1. `HELM_NAMESPACE` in the repo-server container, when it is not empty.
+     It wins also over `KUBECONFIG`.
+  2. A `KUBECONFIG` that is not empty names a kubeconfig file, which drydock
+     cannot read. drydock warns and goes on as if it were unset. An empty
+     `KUBECONFIG` is unset. The repo-server has no kubeconfig of its own.
+  3. When a service account token is mounted, `POD_NAMESPACE`, else the pod
+     namespace. The token is mounted when the pod spec
+     `automountServiceAccountToken` is `true`, or unset while the
+     ServiceAccount does not set it to `false`, or when the container mounts
+     a volume at the token path.
+  4. Else `default`.
+
+  The upstream `install.yaml` sets `automountServiceAccountToken: false`,
+  so the namespace is `default`. The argo-cd Helm chart sets
   `repoServer.automountServiceAccountToken: true` by default, so the
-  namespace is the Argo CD namespace. Without a rendered install, and when
-  the container sets `KUBECONFIG`, drydock uses `default`. The namespace is
-  part of the render settings signature, so a change renders every
-  Application again. Earlier drydock releases used the release name as
-  written and an empty `.Release.Namespace`.
+  namespace is the Argo CD namespace.
+
+  drydock reads the repo-server Deployment and its ServiceAccount from these
+  installs:
+  - The render of an Application on this cluster that installs Argo CD. An
+    Application whose destination is another cluster installs another Argo
+    CD, and its repo-server does not count. A repo-server without a
+    namespace gets the destination namespace.
+  - A committed file, with the rules for a committed `argocd-cm`: only a
+    file that also holds Argo CD objects or settings, such as the upstream
+    `install.yaml`, and not a file that a rendered install read. Its
+    namespace is its own, else the `namespace` of the kustomization in its
+    directory that lists it, else the destination namespace of the
+    Applications on this cluster whose source path holds it. A file that
+    only Applications on other clusters render does not count. When
+    drydock cannot tell the namespace, it assumes the Argo CD namespace and
+    warns.
+
+  A Deployment without containers is a patch and does not count. A
+  repo-server counts when it comes from the same install as a discovered
+  `argocd-cm`, or when it runs in the Argo CD namespace. When several
+  count, drydock uses the first in this order: from the same install as an
+  `argocd-cm`, then rendered before committed, then by path and document
+  index. A repo-server that gives another namespace adds a warning. An
+  `HELM_NAMESPACE`, `POD_NAMESPACE`, or `KUBECONFIG` from a ConfigMap, a
+  Secret, another `valueFrom`, `envFrom`, or a `$(VAR)` reference also adds
+  a warning that names the repo-server and the namespace that drydock uses.
+  drydock keeps only the kind of such a source, never its value. Without a
+  repo-server that counts, drydock uses `default`. The namespace is part of
+  the render settings signature, so a change renders every Application
+  again. Earlier drydock releases used the release name as written and an
+  empty `.Release.Namespace`.
 - The checks of `helm template` (Helm v4.3.1) that come before the
   templates render, in Helm's order, with Helm's error text: the release
   name must have at most 53 characters and match the Helm name pattern
@@ -664,8 +697,9 @@ Supported:
   `--kube-version`. Argo CD uses the per-app value and falls back to the
   cluster version (`ApplicationSource.GetKubeVersionOrDefault`,
   `pkg/apis/application/v1alpha1/types.go:385-398`), and `--kube-version`
-  stands for the cluster version. Earlier drydock releases let
-  `--kube-version` win.
+  stands for the cluster version. A `--kube-version` that does not parse
+  fails every run, also when every Application sets its own `kubeVersion`.
+  Earlier drydock releases let `--kube-version` win.
 - Helm `parameters` and `fileParameters` applied the way Argo CD's
   `helm template` call applies them: every `--set`, then every `--set-string`
   (`forceString: true`), then every `--set-file`, keeping only the last entry
@@ -1294,9 +1328,23 @@ Supported:
   values. The difference shows only when one build has an entry with
   `apiVersions`, an entry without them, and flag values. Argo CD passes
   flag values whenever `kustomize.buildOptions` holds `--enable-helm`.
-- Kustomize Helm `valuesFile` and `additionalValuesFiles` entries outside the
-  kustomization directory when the resolved file remains inside the repository
-  root.
+- Kustomize Helm `valuesFile` and `additionalValuesFiles` entries load as
+  the kustomize file loader loads them (`fileloader.go:320-332` and
+  `loadrestrictions.go:15-30` at kustomize/api v0.21.3). Under the default
+  `LoadRestrictionsRootOnly`, a file outside the kustomization directory
+  fails with `security; file '...' is not in or below '...'`. With
+  `kustomize.buildOptions` `--load-restrictor LoadRestrictionsNone`, a file
+  outside it loads when it stays inside the repository root. A directory
+  fails with `'...' must resolve to a file`. drydock names the paths from
+  the repository root, where kustomize names absolute paths. Earlier drydock
+  releases loaded files outside the kustomization directory under
+  `LoadRestrictionsRootOnly` too.
+- kustomize accumulates the resources of a kustomization, with the builds
+  of its bases, before it runs its generators (`kusttarget.go:202-235`).
+  So a missing local resource is reported before an error of the
+  `helmCharts` of the same kustomization. drydock reports it with the start
+  of the kustomize text, `accumulating resources: accumulation
+  err='accumulating resources from '<resource>'`.
 - Kustomize Helm `valuesFile` and `additionalValuesFiles` paths are read as
   written, as kustomize reads them. A build environment variable such as
   `$ARGOCD_APP_REVISION_SHORT` in such a path stays literal, because Argo CD
