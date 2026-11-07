@@ -256,10 +256,13 @@ An Application with `spec.sourceHydrator` gets this warning. Argo CD compares
 such an Application against its sync source only: `syncSource.path` at
 `syncSource.targetBranch`. It ignores `spec.source` and `spec.sources`.
 drydock renders the same sync source at the same branch. For the repository
-under analysis, it reads the tree of each side when the branch is `HEAD`, a
-`--ref` or `--ref-orig` name, or the default branch, the same rule that every
-other source of that repository follows. A `--repo-map` target that is the top of a Git
-repository gives the branch from a snapshot. Otherwise drydock reads the
+under analysis, it reads the tree of each side only when the branch is
+`HEAD`, a `--ref` or `--ref-orig` name, or the default branch. That rule is
+stricter than for other sources, which also read the tree when their path
+exists there. A `targetBranch` equal to the default branch renders the
+working tree, even when another branch is checked out. A `--repo-map` to the
+tree under analysis behaves as if there were no map. A `--repo-map` to another
+Git repository gives the branch from a snapshot. Otherwise drydock reads the
 branch from the Git cache or fetches it, and `--offline` fails on a cache
 miss. It cannot run the hydrator offline, so a change to the dry source
 shows in drydock only after the hydrator commits it to the sync branch.

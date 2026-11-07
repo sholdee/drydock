@@ -146,17 +146,25 @@ Supported:
   It never uses the local tree only because the sync path exists there,
   because the dry and the sync source often share a path:
 
-  - A `--repo-map` target renders as it is when it has that branch checked
-    out. When it is the top of a Git repository with another branch checked
-    out, drydock renders a snapshot of the branch, or of `origin/<branch>`.
-    Any other target fails, because drydock cannot read the branch from it.
-  - The repository under analysis follows the rule of every other source
-    of that repository: it renders from the tree of this side when the
-    branch is `HEAD`, a `--ref` or `--ref-orig` name, or the default branch
-    that the remote `HEAD` symref names. So each side of a diff reads its
-    own tree, and a change to the hydrated path shows in the diff.
-    Changed-only selection owns the sync path only in this case and in the
-    `--repo-map` case above.
+  - The repository under analysis renders from the tree of this side only
+    when the branch passes the self-repo revision match: `HEAD`, a `--ref`
+    or `--ref-orig` name, or the default branch that the remote `HEAD`
+    symref names. This rule is stricter than the rule for other sources of
+    that repository, which also render from the tree when their path exists
+    there. A `targetBranch` equal to the default branch renders the working
+    tree, even when another branch is checked out. Each side of a diff reads
+    its own tree, so a change to the hydrated path shows in the diff. drydock
+    finds the repository by its remote, or by a `--repo-map` to the tree
+    under analysis. A `--ref` diff rewrites such a map to each side's
+    snapshot. A self map behaves as if there were no map: a branch that the
+    match does not track comes from the Git cache or a fetch.
+  - A `--repo-map` to another Git repository renders as it is when it has
+    that branch checked out. When another branch is checked out there,
+    drydock renders a snapshot of the branch, or of `origin/<branch>`. A
+    `--repo-map` to a directory that is no Git repository fails, because
+    drydock cannot read the branch from it.
+  - Changed-only selection owns the sync path only when the render reads
+    the tree under analysis, in the first case.
   - Any other sync source comes from the Git cache or a fetch, and
     `--offline` fails on a cache miss.
 

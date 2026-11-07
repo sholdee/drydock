@@ -75,9 +75,13 @@ is the `default` project.
 
 For an Application with `spec.sourceHydrator`, drydock renders the sync
 source (`syncSource.path` at `syncSource.targetBranch`), because that is
-what Argo CD compares. It reads that branch from the local tree only when
-the self-repo rule of every other source tracks the branch there, else from
-a `--repo-map` Git repository, the Git cache, or a fetch. drydock cannot run the hydrator offline, so it warns
+what Argo CD compares. It reads that branch from the local tree only when the
+branch passes the self-repo revision match (`HEAD`, a `--ref` name, or the
+default branch). That is stricter than for other sources, which also read the
+local tree when their path exists there. A `targetBranch` equal to the
+default branch renders the working tree, even when another branch is checked
+out. Any other branch comes from a `--repo-map` Git repository, the Git
+cache, or a fetch. drydock cannot run the hydrator offline, so it warns
 `source.hydrator-sync-source`: a change to the dry source shows only after
 the hydrator commits it.
 
