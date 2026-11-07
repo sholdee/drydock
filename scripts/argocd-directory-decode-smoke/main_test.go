@@ -514,12 +514,13 @@ func checkFailingFile(t *testing.T, path string, tc expectedCase) {
 }
 
 // checkNoFileCase checks a spec or render case: its Application has the
-// case name and namespace, and a render case renders its case directory. It
-// names no failing file.
+// case name and namespace, and a render case renders its case directory,
+// unless it renders a chart from a chart repository. It names no failing
+// file.
 func checkNoFileCase(t *testing.T, tc expectedCase, caseDir, app string) {
 	t.Helper()
 	wants := []string{"name: " + tc.Name + "\n", "namespace: " + testNamespace + "\n"}
-	if tc.SourceType() == sourceRender {
+	if tc.SourceType() == sourceRender && !strings.Contains(app, "\n    chart: ") {
 		wants = append(wants, "path: workloads/directory-decode/"+caseDir+"\n")
 	}
 	for _, want := range wants {

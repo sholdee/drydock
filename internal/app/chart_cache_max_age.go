@@ -15,14 +15,15 @@ import (
 const chartCacheStaleCode = "source.chart-cache-stale"
 
 // staleChartDiagnostics reports each chart acquisition in records that
-// reused an expired cache entry because --offline forbids refetching it.
+// reused an expired cache entry, or resolved a version range from an
+// expired recorded version list, because --offline forbids refetching it.
 // Records of one chart repeat (each acquisition records itself); one warning
 // per chart cache entry is enough.
 func staleChartDiagnostics(records []cacheevent.AcquisitionRecord) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 	seen := map[string]struct{}{}
 	for _, record := range records {
-		if record.Kind != cacheevent.AcquisitionChart || !record.Chart.Stale {
+		if record.Kind != cacheevent.AcquisitionChart || (!record.Chart.Stale && !record.Chart.VersionListStale) {
 			continue
 		}
 		chart := record.Chart
@@ -31,19 +32,33 @@ func staleChartDiagnostics(records []cacheevent.AcquisitionRecord) []diagnostic.
 			continue
 		}
 		seen[key] = struct{}{}
-		age := "has no recorded fetch time"
-		if !chart.FetchedAt.IsZero() {
-			age = "was fetched at " + chart.FetchedAt.UTC().Format(time.RFC3339)
+		if chart.Stale {
+			diags = append(diags, staleChartDiagnostic(fmt.Sprintf("cached chart %s %s from %s %s, older than --chart-cache-max-age %s; using it because --offline forbids refetching it",
+				chart.Name, chart.Version, chart.Target, staleFetchAge(chart.FetchedAt), chart.MaxAge)))
 		}
-		diags = append(diags, diagnostic.Diagnostic{
-			Code:     chartCacheStaleCode,
-			Severity: diagnostic.SeverityWarning,
-			Category: "source",
-			Message: fmt.Sprintf("cached chart %s %s from %s %s, older than --chart-cache-max-age %s; using it because --offline forbids refetching it",
-				chart.Name, chart.Version, chart.Target, age, chart.MaxAge),
-		})
+		if chart.VersionListStale {
+			diags = append(diags, staleChartDiagnostic(fmt.Sprintf("recorded version list of chart %s from %s %s, older than --chart-cache-max-age %s; resolving version range %s to %s from it because --offline forbids refetching it",
+				chart.Name, chart.Target, staleFetchAge(chart.VersionListFetchedAt), chart.MaxAge, record.RequestedRevision, record.ResolvedRevision)))
+		}
 	}
 	return diags
+}
+
+func staleChartDiagnostic(message string) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     chartCacheStaleCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "source",
+		Message:  message,
+	}
+}
+
+// staleFetchAge words when a stale cache entry or version list was fetched.
+func staleFetchAge(fetchedAt time.Time) string {
+	if fetchedAt.IsZero() {
+		return "has no recorded fetch time"
+	}
+	return "was fetched at " + fetchedAt.UTC().Format(time.RFC3339)
 }
 
 // renderCacheChartsFromRecords collects the chart cache entries one render
@@ -57,7 +72,7 @@ func renderCacheChartsFromRecords(records []cacheevent.AcquisitionRecord) (rende
 		if record.Kind != cacheevent.AcquisitionChart {
 			continue
 		}
-		if record.Chart.Stale {
+		if record.Chart.Stale || record.Chart.VersionListStale {
 			stale = true
 		}
 		entry := renderCacheChart{

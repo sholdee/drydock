@@ -1,0 +1,6 @@
+dependencies:
+- name: parity-range
+  repository: http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879
+  version: 1.2.3
+digest: sha256:60434f00ac8c47d2fb108e1249317c463a5b30c8d33ec5bda13ef450e6e45e8d
+generated: "2026-01-01T00:00:00Z"

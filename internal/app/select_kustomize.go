@@ -101,7 +101,7 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			}
 			// The render reads the source after its override files.
 			source := selectionSourceWithOverrides(root, input.Application, specSource)
-			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(root, source)...)
+			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(root, tree.helmGlobs, source)...)
 			// A directory source reads the files that its symlinks reach
 			// and its Jsonnet files import, also outside its path. The
 			// Kustomize renderer and Helm charts and value files reject
@@ -224,6 +224,9 @@ type selectionTree struct {
 	// mappedToRoot memoizes sameLocalPath per mapped path: it resolves
 	// symlinks, which dominates the cost of a repo-mapped fleet.
 	mappedToRoot map[string]bool
+	// helmGlobs memoizes the paths that each Helm value file glob owns on
+	// this tree.
+	helmGlobs helmGlobMemo
 }
 
 func newSelectionTree(root string, repoMaps []sourcepkg.RepoMap, selfRepo selfRepoRefs) *selectionTree {
@@ -232,6 +235,7 @@ func newSelectionTree(root string, repoMaps []sourcepkg.RepoMap, selfRepo selfRe
 		resolver:     sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: repoMaps}),
 		selfRepo:     newSelfRepoMatcher(selfRepo),
 		mappedToRoot: map[string]bool{},
+		helmGlobs:    helmGlobMemo{},
 	}
 }
 

@@ -336,6 +336,43 @@ cases:
     source: render
     argocdMessage: invalid chart apiVersion
     drydockMessage: invalid chart apiVersion
+  # Helm inputs that fail around helm in the repo-server. These render
+  # cases fail in helm dependency build, in the value file resolver, or in
+  # the chart version resolution, which the in-process helm oracle of
+  # TestGeneratedParityDecodeFixtures does not run. Unit tests in
+  # internal/render and internal/chart cover them. helm
+  # template fails on the missing dependency parity-range, and the
+  # repo-server runs `helm dependency build` once
+  # (reposerver/repository/repository.go:1402-1416). Its lock file digest
+  # does not match Chart.yaml (Manager.Build, helm v4.3.1
+  # pkg/downloader/manager.go:105-131).
+  - name: parity-decode-helm-dependency-stale-lock
+    source: render
+    argocdMessage: "the lock file (Chart.lock) is out of sync with the dependencies file (Chart.yaml). Please update the dependencies with 'helm dependency update'"
+    drydockMessage: "the lock file (Chart.lock) is out of sync with the dependencies file (Chart.yaml). Please update the dependencies with 'helm dependency update'"
+  # The lock file matches, but it names an http:// repository. The
+  # repo-server adds only the https and oci repositories of Chart.yaml
+  # before the build (getHelmDependencyRepos, repository.go:1208-1240), so
+  # helm does not know the repository (Manager.hasAllRepos).
+  - name: parity-decode-helm-dependency-http-lock
+    source: render
+    argocdMessage: "no repository definition for http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879. Please add the missing repos via 'helm repo add'"
+    drydockMessage: "no repository definition for http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879. Please add the missing repos via 'helm repo add'"
+  # A bare $values value file resolves to the root of the ref source, which
+  # the resolver refuses without naming the path (resolveFailure,
+  # util/io/path/resolved.go:67-73). drydock adds the cause after the text.
+  - name: parity-decode-helm-value-file-bare-ref
+    source: render
+    argocdMessage: "error resolving helm value files: error resolving value file path: error resolving value file path: internal error: failed to resolve path. Check logs for more details"
+    drydockMessage: "error resolving helm value files: error resolving value file path: error resolving value file path: internal error: failed to resolve path. Check logs for more details"
+  # A targetRevision range that matches no version of the chart in the
+  # index (versions.MaxVersion). drydock resolves it offline from the
+  # version list that the online warm run of the range Applications
+  # recorded.
+  - name: parity-decode-helm-range-no-match
+    source: render
+    argocdMessage: "invalid revision: version matching constraint not found in 5 tags"
+    drydockMessage: "invalid revision: version matching constraint not found in 5 tags"
   # Spec cases have no failing file. The Argo CD controller checks the
   # sources of each Application before it renders anything
   # (ValidatePermissions, util/argo/argo.go:644-737 at v3.6.1). A failed

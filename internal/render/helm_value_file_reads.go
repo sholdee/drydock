@@ -1,12 +1,14 @@
 package render
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/sholdee/drydock/internal/pathsafety"
 )
 
 // HelmValueFileReads returns the repository-relative local files that the
@@ -24,6 +26,10 @@ func HelmValueFileReads(repoRoot string, source ResolvedSource, opts RenderOptio
 		source.RepoRoot = repoRoot
 	}
 	reads := map[string]struct{}{}
+	if argoHelmValueFiles(opts) {
+		addArgoHelmValueFileReads(reads, repoRoot, source, opts, refOnly)
+		return sortedKeys(reads)
+	}
 	for _, raw := range opts.ValueFiles {
 		file := envsubstHelmValueFilePath(raw, opts, opts.RefRoots)
 		if isRemoteHelmValueFile(file) || (refOnly && !strings.HasPrefix(file, "$")) {
@@ -47,6 +53,53 @@ func HelmValueFileReads(repoRoot string, source ResolvedSource, opts RenderOptio
 		}
 	}
 	return sortedKeys(reads)
+}
+
+// addArgoHelmValueFileReads adds the local files that the Argo CD resolver
+// reads for opts.ValueFiles (planArgo): the real path of each file that
+// helm reads, when it is a regular file in repoRoot.
+func addArgoHelmValueFileReads(reads map[string]struct{}, repoRoot string, source ResolvedSource, opts RenderOptions, refOnly bool) {
+	realRepoRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return
+	}
+	loader := newHelmValueFileLoader(context.Background(), source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, opts.IgnoreMissingValueFiles, opts, nil)
+	for _, raw := range opts.ValueFiles {
+		file := envsubstHelmValueFilePath(raw, opts, opts.RefRoots)
+		if isRemoteHelmValueFile(file) || (refOnly && !strings.HasPrefix(file, "$")) {
+			continue
+		}
+		plans, err := loader.planArgo([]string{raw})
+		if err != nil {
+			continue
+		}
+		for _, planned := range plans {
+			if rel, ok := argoHelmValueFileRead(realRepoRoot, planned); ok {
+				reads[rel] = struct{}{}
+			}
+		}
+	}
+}
+
+// argoHelmValueFileRead returns the path, relative to realRepoRoot, of the
+// regular local file that helm reads for planned.
+func argoHelmValueFileRead(realRepoRoot string, planned plannedHelmValueFile) (string, bool) {
+	if !planned.argo {
+		return "", false
+	}
+	realPath, err := confineHelmInputRead("helm value file", planned.root, planned.path, planned.display)
+	if err != nil {
+		return "", false
+	}
+	info, err := os.Lstat(realPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	rel, err := filepath.Rel(realRepoRoot, realPath)
+	if err != nil || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) || pathsafety.RelEntersGit(rel) {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
 }
 
 // HelmChartValuesFiles returns the repository-relative values.yaml files

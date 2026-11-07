@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,6 +85,9 @@ type OperationResult struct {
 	// never on dry-run) can trim renders further; its effect is reported separately
 	// in RenderSweep. Always present in JSON/YAML output (not omitempty).
 	TotalSizeBytes int64 `json:"totalSizeBytes" yaml:"totalSizeBytes"`
+	// VersionRecordsRemoved counts the recorded chart version lists that an
+	// age prune removed, or would remove on a dry run.
+	VersionRecordsRemoved int `json:"versionRecordsRemoved,omitempty" yaml:"versionRecordsRemoved,omitempty"`
 }
 
 func List(opts Options) ([]Entry, error) {
@@ -141,12 +145,22 @@ func Prune(opts OperationOptions) (OperationResult, error) {
 	}
 	selected, result := buildPruneResult(entries, opts)
 	if opts.DryRun {
+		records, err := pruneChartVersionRecords(opts)
+		if err != nil {
+			return OperationResult{}, err
+		}
+		result.VersionRecordsRemoved = records
 		return result, nil
 	}
 	if err := removeEntries(selected); err != nil {
 		return OperationResult{}, err
 	}
 	result.RemovedCount = len(selected)
+	records, err := pruneChartVersionRecords(opts)
+	if err != nil {
+		return OperationResult{}, err
+	}
+	result.VersionRecordsRemoved = records
 	if enabledSources(opts.Sources)[SourceRender] && (opts.Source == "" || opts.Source == SourceRender) {
 		sweep, err := pruneRenderSweep(opts.RenderCacheDir, opts.RenderCacheMaxBytes, opts.ForbiddenRoots)
 		if err != nil {
@@ -574,6 +588,87 @@ func resolveCacheRoot(root string, forbiddenRoots []string) (string, bool, error
 		return "", false, fmt.Errorf("cache root %q must not be inside Git repository %q", absRoot, gitRoot)
 	}
 	return absRoot, true, nil
+}
+
+// pruneChartVersionRecords removes, in an age prune of the chart cache, the
+// recorded chart version lists that were last used before the cutoff, as
+// chart entries are pruned by last use (entryAgeTime). Every resolve, online
+// or offline, records its use in the list (usedAt). A list without it falls
+// back to its file time. A dry run only counts them.
+func pruneChartVersionRecords(opts OperationOptions) (int, error) {
+	if opts.OlderThan <= 0 || !enabledSources(opts.Sources)[SourceChart] || (opts.Source != "" && opts.Source != SourceChart) {
+		return 0, nil
+	}
+	root, ok, err := resolveCacheRoot(opts.ChartCacheDir, opts.ForbiddenRoots)
+	if err != nil || !ok {
+		return 0, err
+	}
+	cutoff := time.Now().Add(-opts.OlderThan)
+	removed := 0
+	for _, kind := range []string{"http", "oci"} {
+		if opts.Kind != "" && opts.Kind != kind {
+			continue
+		}
+		count, err := pruneVersionRecordDir(ChartVersionsRecordDir(root, kind), cutoff, opts.DryRun)
+		removed += count
+		if err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
+}
+
+// pruneVersionRecordDir removes the version lists in dir that were written
+// before cutoff, or only counts them on a dry run.
+func pruneVersionRecordDir(dir string, cutoff time.Time, dryRun bool) (int, error) {
+	children, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	removed := 0
+	for _, child := range children {
+		if !child.Type().IsRegular() || filepath.Ext(child.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, child.Name())
+		used, ok := versionRecordUsedAt(path)
+		if !ok {
+			info, err := child.Info()
+			if err != nil {
+				continue
+			}
+			used = info.ModTime()
+		}
+		if !used.Before(cutoff) {
+			continue
+		}
+		if !dryRun {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return removed, err
+			}
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+// versionRecordUsedAt reads the last-use time of the chart version list at
+// path.
+func versionRecordUsedAt(path string) (time.Time, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var record struct {
+		UsedAt time.Time `json:"usedAt"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil || record.UsedAt.IsZero() {
+		return time.Time{}, false
+	}
+	return record.UsedAt, true
 }
 
 func enabledSources(sources []Source) map[Source]bool {

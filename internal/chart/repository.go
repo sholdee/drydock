@@ -11,8 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/argoproj/pkg/sync"
 	"github.com/sholdee/drydock/internal/cache"
 )
+
+// chartKeyLock serializes the work on one chart cache entry in this
+// process.
+var chartKeyLock = sync.NewKeyLock()
 
 type DefaultAcquirer struct {
 	Client    *http.Client
@@ -34,37 +39,40 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, err
 	}
 	opts.CacheDir = cacheDir
+	var index *repositoryIndex
+	var versionList resolvedVersion
+	if needsVersionResolution(request) {
+		resolved, err := acquirer.resolveVersion(ctx, request, opts)
+		if err != nil {
+			return Result{}, err
+		}
+		request.Version = resolved.version
+		index = resolved.index
+		versionList = resolved
+	}
 	key, err := NewCacheKey(request)
 	if err != nil {
 		return Result{}, err
 	}
 	keyParent := cache.ChartKindRoot(opts.CacheDir, string(request.Kind))
 	keyDir := cache.ChartEntryPath(opts.CacheDir, string(request.Kind), key)
-	chartDir := filepath.Join(keyDir, chartLeaf(request.Name))
+	// The lock is on the resolved entry, so two requests that resolve to
+	// one version, such as 1.2.* and ~1.2.0, do not publish it at once.
+	chartKeyLock.Lock(keyDir)
+	defer chartKeyLock.Unlock(keyDir)
 	if err := rejectForbiddenCachePath(keyDir, opts.ForbiddenRoots); err != nil {
 		return Result{}, err
 	}
-	if !opts.Refresh && chartDirReady(chartDir) {
-		fetchedAt, known := entryFetchedAt(keyDir, request.Kind, key)
-		expired := Expired(fetchedAt, known, opts.MaxAge, time.Now())
-		if !expired || opts.Offline {
-			// Reuse refreshes the entry's last-use time. An entry of unknown
-			// age keeps its fetch time unknown, whatever the max age: dating
-			// the old content as freshly fetched would let a later max-age
-			// run serve it instead of refetching it.
-			writeChartMetadata(keyDir, key, request, time.Time{}, !known)
-			result := resultFor(request, chartDir, true)
-			result.CacheKey = key
-			result.FetchedAt = fetchedAt
-			result.Stale = expired
-			return result, nil
+	if !refreshChartEntry(opts, keyDir) {
+		if result, ok := reuseCachedChart(request, opts, keyDir, key, versionList); ok {
+			return holdChartEntry(opts, result)
 		}
 	}
 	if opts.Offline {
 		return Result{}, fmt.Errorf("offline cache miss for chart %s %s", request.Name, request.Version)
 	}
 
-	archive, err := acquirer.fetchChart(ctx, request, opts)
+	archive, err := acquirer.fetchChart(ctx, request, opts, index)
 	if err != nil {
 		return Result{}, err
 	}
@@ -72,7 +80,68 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, fmt.Errorf("chart archive for %s %s does not contain %s/Chart.yaml", request.Name, request.Version, chartLeaf(request.Name))
 	}
 
-	return publishFetchedChart(request, opts, keyParent, keyDir, key, archive)
+	result, err := publishFetchedChart(request, opts, keyParent, keyDir, key, archive)
+	if err != nil {
+		return Result{}, err
+	}
+	markChartEntryRefreshed(opts, keyDir)
+	return holdChartEntry(opts, result)
+}
+
+// markChartEntryRefreshed tells the entry hooks that a refresh published
+// the entry at keyDir. It runs only after a successful publish, so a failed
+// fetch is retried.
+func markChartEntryRefreshed(opts Options, keyDir string) {
+	if opts.Refresh && opts.EntryHooks != nil && opts.EntryHooks.MarkRefreshed != nil {
+		opts.EntryHooks.MarkRefreshed(keyDir)
+	}
+}
+
+// refreshChartEntry reports whether the request refetches the entry at
+// keyDir: under Options.Refresh, unless the entry hooks say that this run
+// already refreshed it.
+func refreshChartEntry(opts Options, keyDir string) bool {
+	if !opts.Refresh {
+		return false
+	}
+	return opts.EntryHooks == nil || opts.EntryHooks.Refreshed == nil || !opts.EntryHooks.Refreshed(keyDir)
+}
+
+// reuseCachedChart returns the cached chart of the entry at keyDir when it
+// is ready and not expired under Options.MaxAge, or expired but offline.
+// Reuse refreshes the entry's last-use time. An entry of unknown age keeps
+// its fetch time unknown, whatever the max age: dating the old content as
+// freshly fetched would let a later max-age run serve it instead of
+// refetching it.
+func reuseCachedChart(request Request, opts Options, keyDir, key string, versionList resolvedVersion) (Result, bool) {
+	chartDir := filepath.Join(keyDir, chartLeaf(request.Name))
+	if !chartDirReady(chartDir) {
+		return Result{}, false
+	}
+	fetchedAt, known := entryFetchedAt(keyDir, request.Kind, key)
+	expired := Expired(fetchedAt, known, opts.MaxAge, time.Now())
+	if expired && !opts.Offline {
+		return Result{}, false
+	}
+	writeChartMetadata(keyDir, key, request, time.Time{}, !known)
+	result := resultFor(request, chartDir, true)
+	result.CacheKey = key
+	result.FetchedAt = fetchedAt
+	result.Stale = expired
+	result.VersionListStale = versionList.stale
+	if versionList.stale {
+		result.VersionListFetchedAt = versionList.listFetchedAt
+	}
+	return result, true
+}
+
+// holdChartEntry runs the Hold hook of opts on result, while the caller
+// still holds the entry lock.
+func holdChartEntry(opts Options, result Result) (Result, error) {
+	if opts.EntryHooks == nil || opts.EntryHooks.Hold == nil {
+		return result, nil
+	}
+	return opts.EntryHooks.Hold(result)
 }
 
 // validateRequest rejects unsupported kinds, unsafe chart names, and malformed
@@ -116,7 +185,7 @@ func publishFetchedChart(request Request, opts Options, keyParent, keyDir, key s
 	if !chartDirReady(tmpChartDir) {
 		return Result{}, fmt.Errorf("chart archive for %s %s did not extract Chart.yaml", request.Name, request.Version)
 	}
-	if err := publishChartCache(keyDir, tmpKeyDir); err != nil {
+	if err := publishChartCache(keyDir, tmpKeyDir, chartLeaf(request.Name)); err != nil {
 		return Result{}, err
 	}
 	// The published entry starts without metadata, so its creation time is
@@ -184,10 +253,10 @@ func writeChartMetadata(keyDir, key string, request Request, createdAt time.Time
 		FetchTimeUnknown: fetchTimeUnknown,
 	})
 }
-func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request, opts Options) ([]byte, error) {
+func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request, opts Options, index *repositoryIndex) ([]byte, error) {
 	switch request.Kind {
 	case RepositoryHTTP:
-		return acquirer.fetchHTTPChart(ctx, request, opts)
+		return acquirer.fetchHTTPChart(ctx, request, opts, index)
 	case RepositoryOCI:
 		return acquirer.fetchOCIChart(ctx, request, opts)
 	default:

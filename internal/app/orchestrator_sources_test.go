@@ -767,10 +767,11 @@ data:
 		t.Fatalf("chart acquire calls = %d, want 1", len(acquirer.requests))
 	}
 	if got, want := acquirer.requests[0], (chart.Request{
-		Repository: "https://charts.example.test",
-		Name:       "demo",
-		Version:    "1.2.3",
-		Kind:       chart.RepositoryHTTP,
+		Repository:    "https://charts.example.test",
+		Name:          "demo",
+		Version:       "1.2.3",
+		Kind:          chart.RepositoryHTTP,
+		VersionPolicy: chart.VersionArgoTargetRevision,
 	}); got != want {
 		t.Fatalf("chart request = %#v, want %#v", got, want)
 	}
@@ -797,6 +798,73 @@ data:
 		t.Fatalf("data.value = %q, found %v, err %v; want from-inline", value, found, err)
 	}
 }
+
+// TestOrchestratorBuildRendersChartOnlyVersionRange pins a chart source
+// whose targetRevision is a version range: the acquirer resolves it, and the
+// render gets the resolved version as ARGOCD_APP_REVISION and its short
+// forms, as the Argo CD v3.6.1 repo-server passes the version that
+// newHelmClientResolveRevision returns to newEnv
+// (reposerver/repository/repository.go:3029-3066 and 1864-1878). Such a
+// source is persistent-render-cache ineligible, because the range can
+// resolve to a newer version on the next run.
+func TestOrchestratorBuildRendersChartOnlyVersionRange(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "cache", "demo")
+	writeTestFile(t, filepath.Join(root, "apps", "argocd", "chart-app.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chart-range
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://charts.example.test
+    targetRevision: 1.2.*
+    chart: demo
+    helm:
+      parameters:
+        - name: revision
+          value: $ARGOCD_APP_REVISION
+        - name: short
+          value: $ARGOCD_APP_REVISION_SHORT
+        - name: target
+          value: $ARGOCD_APP_SOURCE_TARGET_REVISION
+  destination:
+    name: in-cluster
+    namespace: chart-ns
+`)
+	writeTestFile(t, filepath.Join(chartDir, "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 1.2.3\n")
+	writeTestFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  revision: {{ .Values.revision | quote }}
+  short: {{ .Values.short | quote }}
+  target: {{ .Values.target | quote }}
+`)
+	acquirer := &recordingChartAcquirer{chartDir: chartDir, resolvedVersion: "1.2.345678"}
+	result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+		Path:          root,
+		ChartCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(acquirer.requests) != 1 || acquirer.requests[0].Version != "1.2.*" || acquirer.requests[0].VersionPolicy != chart.VersionArgoTargetRevision {
+		t.Fatalf("chart requests = %#v, want 1.2.* under the target revision policy", acquirer.requests)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	data, _, _ := unstructured.NestedStringMap(result.Manifests[0].Object.Object, "data")
+	if want := map[string]string{"revision": "1.2.345678", "short": "1.2.345", "target": "1.2.*"}; !reflect.DeepEqual(data, want) {
+		t.Fatalf("data = %#v, want %#v", data, want)
+	}
+	if identity := chartOnlySourceIdentity(render.ResolvedSource{RepoURL: "https://charts.example.test", Chart: "demo", TargetRevision: "1.2.*"}); identity != (SourceIdentity{}) {
+		t.Fatalf("chartOnlySourceIdentity() = %#v, want persistence-ineligible", identity)
+	}
+}
+
 func TestOrchestratorRecordsChartCacheEvents(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "argocd", "charted.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -1047,5 +1115,26 @@ metadata:
 	}
 	if got := acquirer.options[0].GitCredentials; got != remoteGitCredentials {
 		t.Fatalf("remote git credentials = %#v, want %#v", got, remoteGitCredentials)
+	}
+}
+
+// TestChartOnlySourceIdentityNeedsAnExactVersion pins that only an exact
+// full chart version gives a chart-only source a persistent render cache
+// identity. A range and a partial version such as 1.2 resolve against the
+// repository on each run, so they re-render.
+func TestChartOnlySourceIdentityNeedsAnExactVersion(t *testing.T) {
+	for revision, eligible := range map[string]bool{
+		"1.2.3":        true,
+		"v1.2.3":       true,
+		"1.2.3-rc.1":   true,
+		"1.2":          false,
+		"1":            false,
+		"1.2.*":        false,
+		">=1.0.0 <2.0": false,
+	} {
+		identity := chartOnlySourceIdentity(render.ResolvedSource{RepoURL: "https://charts.example.test", Chart: "demo", TargetRevision: revision})
+		if got := identity != (SourceIdentity{}); got != eligible {
+			t.Fatalf("chartOnlySourceIdentity(%q) eligible = %v, want %v", revision, got, eligible)
+		}
 	}
 }

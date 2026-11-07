@@ -512,10 +512,15 @@ func readParityApplicationSource(t *testing.T, path string) v1alpha1.Application
 	if err := yaml.Unmarshal(data, &application); err != nil {
 		t.Fatalf("parse Application %s: %v", path, err)
 	}
-	if application.Spec.Source == nil {
-		t.Fatalf("Application %s has no single source", path)
+	if application.Spec.Source != nil {
+		return *application.Spec.Source
 	}
-	return *application.Spec.Source
+	// A multi-source case renders its first source, which reads the
+	// others as $ref sources.
+	if len(application.Spec.Sources) == 0 {
+		t.Fatalf("Application %s has no source", path)
+	}
+	return application.Spec.Sources[0]
 }
 
 // readParityFileParameters returns the helm.fileParameters of the single

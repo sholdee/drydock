@@ -1,0 +1,12 @@
+apiVersion: v2
+name: helm-dependency-partial
+description: Local Helm chart with one vendored and one missing dependency.
+type: application
+version: 0.1.0
+dependencies:
+  - name: parity-range
+    version: ~1.2.0
+    repository: http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879
+  - name: parity-extra
+    version: 1.0.0
+    repository: http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879

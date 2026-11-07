@@ -783,8 +783,8 @@ func TestHelmRendererRejectsValueFilePathEscape(t *testing.T) {
 	if err == nil {
 		t.Fatal("Render() error = nil, want path escape error")
 	}
-	if !strings.Contains(err.Error(), "escapes value files") {
-		t.Fatalf("Render() error = %v, want value files escape", err)
+	if !strings.Contains(err.Error(), "error resolving helm value files: error resolving value file path: file '../../../outside.yaml' resolved to outside repository root") {
+		t.Fatalf("Render() error = %v, want the repo-server's escape error", err)
 	}
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
@@ -794,7 +794,10 @@ func TestHelmRendererRejectsValueFilePathEscape(t *testing.T) {
 	}
 }
 
-func TestHelmRendererRejectsSymlinkedValueFiles(t *testing.T) {
+// A $ref value file that is a symlink to a file outside the ref root fails
+// as in the repo-server: the resolver follows the symlink and the target is
+// outside the root.
+func TestHelmRendererRejectsValueFileSymlinkOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	valuesRoot := t.TempDir()
 	outside := t.TempDir()
@@ -813,10 +816,10 @@ value: outside
 		ValueFiles: []string{"$values/values.yaml"},
 	})
 	if err == nil {
-		t.Fatal("Render() error = nil, want symlink error")
+		t.Fatal("Render() error = nil, want outside error")
 	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("Render() error = %v, want symlink error", err)
+	if !strings.Contains(err.Error(), "error resolving value file path: error resolving value file path: file '/values.yaml' resolved to outside repository root") {
+		t.Fatalf("Render() error = %v, want the repo-server's outside error", err)
 	}
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
@@ -1044,7 +1047,7 @@ func TestHelmRendererRejectsDisallowedRemoteValueFileSchemes(t *testing.T) {
 			name:       "default allows only http and https",
 			opts:       RenderOptions{},
 			valueFile:  "s3://bucket/values.yaml",
-			wantErr:    `scheme "s3" is not allowed`,
+			wantErr:    `error resolving value file path: the URL scheme 's3' is not allowed`,
 			wantNoCall: true,
 		},
 		{
@@ -1053,7 +1056,7 @@ func TestHelmRendererRejectsDisallowedRemoteValueFileSchemes(t *testing.T) {
 				HelmValueFileSchemesSet: true,
 			},
 			valueFile:  "https://values.example.test/team/demo.yaml",
-			wantErr:    `scheme "https" is not allowed`,
+			wantErr:    `error resolving value file path: the URL scheme 'https' is not allowed`,
 			wantNoCall: true,
 		},
 		{
@@ -1602,13 +1605,10 @@ dependencies:
     version: '>=0.12.0'
     repository: oci://registry-1.docker.io/cloudpirates
 `)
-	writeFile(t, filepath.Join(parent, "Chart.lock"), `
-dependencies:
+	writeHelmChartLock(t, parent, `
   - name: postgres
     repository: oci://registry-1.docker.io/cloudpirates
     version: 0.12.4
-digest: sha256:example
-generated: "2026-01-01T00:00:00Z"
 `)
 	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
 apiVersion: v1
@@ -1656,7 +1656,11 @@ metadata:
 	}
 }
 
-func TestHelmRendererAcquiresIncompatibleVendoredOCIChartDependency(t *testing.T) {
+// A vendored subchart of another version than Chart.yaml names still
+// counts: helm template matches dependencies by name only
+// (action.CheckDependencies), so the repo-server never runs `helm
+// dependency build` and renders the vendored chart.
+func TestHelmRendererUsesVendoredChartOfAnotherVersion(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "parent")
 	child := filepath.Join(root, "acquired", "postgres")
@@ -1703,15 +1707,18 @@ metadata:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
-	if got, want := len(acquirer.requests), 1; got != want {
+	if got, want := len(acquirer.requests), 0; got != want {
 		t.Fatalf("chart acquire calls = %d, want %d", got, want)
 	}
-	if !containsManifest(result, "ConfigMap", "postgres-config") || containsManifest(result, "ConfigMap", "stale-postgres-config") {
-		t.Fatalf("manifests = %#v, want acquired compatible dependency only", manifestNames(result))
+	if containsManifest(result, "ConfigMap", "postgres-config") || !containsManifest(result, "ConfigMap", "stale-postgres-config") {
+		t.Fatalf("manifests = %#v, want the vendored dependency only", manifestNames(result))
 	}
 }
 
-func TestHelmRendererUsesChartLockWhenVendoredVersionSatisfiesRange(t *testing.T) {
+// A vendored subchart also wins over a Chart.lock version: the lock is read
+// only by `helm dependency build`, which never runs while every dependency
+// has a chart under charts/.
+func TestHelmRendererUsesVendoredChartOverChartLock(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "parent")
 	child := filepath.Join(root, "acquired", "postgres")
@@ -1766,15 +1773,17 @@ metadata:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
-	if got, want := len(acquirer.requests), 1; got != want {
+	if got, want := len(acquirer.requests), 0; got != want {
 		t.Fatalf("chart acquire calls = %d, want %d", got, want)
 	}
-	if !containsManifest(result, "ConfigMap", "locked-postgres-config") || containsManifest(result, "ConfigMap", "unlocked-postgres-config") {
-		t.Fatalf("manifests = %#v, want locked dependency only", manifestNames(result))
+	if containsManifest(result, "ConfigMap", "locked-postgres-config") || !containsManifest(result, "ConfigMap", "unlocked-postgres-config") {
+		t.Fatalf("manifests = %#v, want the vendored dependency only", manifestNames(result))
 	}
 }
 
-func TestHelmRendererRemovesIncompatibleVendoredChartArchive(t *testing.T) {
+// A vendored chart archive of another version than Chart.yaml names also
+// counts, as a vendored directory does.
+func TestHelmRendererUsesVendoredArchiveOfAnotherVersion(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "parent")
 	child := filepath.Join(root, "acquired", "postgres")
@@ -1821,11 +1830,11 @@ metadata:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
-	if got, want := len(acquirer.requests), 1; got != want {
+	if got, want := len(acquirer.requests), 0; got != want {
 		t.Fatalf("chart acquire calls = %d, want %d", got, want)
 	}
-	if !containsManifest(result, "ConfigMap", "postgres-config") || containsManifest(result, "ConfigMap", "archived-postgres-config") {
-		t.Fatalf("manifests = %#v, want acquired dependency only", manifestNames(result))
+	if containsManifest(result, "ConfigMap", "postgres-config") || !containsManifest(result, "ConfigMap", "archived-postgres-config") {
+		t.Fatalf("manifests = %#v, want the vendored archive only", manifestNames(result))
 	}
 }
 
@@ -2265,8 +2274,8 @@ func TestHelmRendererRejectsValueFileEscapingRepoRoot(t *testing.T) {
 	if err == nil {
 		t.Fatal("Render() error = nil, want repo root escape error")
 	}
-	if !strings.Contains(err.Error(), "escapes value files") {
-		t.Fatalf("Render() error = %v, want value files escape", err)
+	if !strings.Contains(err.Error(), "error resolving helm value files: error resolving value file path: file '../../../outside.yaml' resolved to outside repository root") {
+		t.Fatalf("Render() error = %v, want the repo-server's escape error", err)
 	}
 }
 

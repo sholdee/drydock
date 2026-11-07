@@ -1428,6 +1428,11 @@ func acquisitionsPinStable(records []cacheevent.AcquisitionRecord) bool {
 			if strings.TrimSpace(record.RequestedRevision) == "" {
 				return false
 			}
+			// A version range resolved against the repository, which can
+			// resolve to a newer version on the next run.
+			if resolved := strings.TrimSpace(record.ResolvedRevision); resolved != "" && resolved != strings.TrimSpace(record.RequestedRevision) {
+				return false
+			}
 		case cacheevent.AcquisitionRemoteGit:
 			if !isFullCommitSHA(record.RequestedRevision) {
 				return false

@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	"github.com/argoproj/argo-cd/v3/util/versions"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
@@ -31,12 +34,14 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 	}
 	acquirer = p.acquisition.ChartAcquirer(acquirer)
 
-	acquired, err := acquirer.Acquire(ctx, chart.Request{
-		Repository: source.RepoURL,
-		Name:       source.Chart,
-		Version:    source.TargetRevision,
-		Kind:       kind,
-	}, chart.Options{
+	request := chart.Request{
+		Repository:    source.RepoURL,
+		Name:          source.Chart,
+		Version:       source.TargetRevision,
+		Kind:          kind,
+		VersionPolicy: chart.VersionArgoTargetRevision,
+	}
+	acquired, err := acquirer.Acquire(ctx, request, chart.Options{
 		CacheDir:        p.chartCacheDir,
 		Offline:         p.offline,
 		Refresh:         p.refreshCharts,
@@ -68,12 +73,15 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		Offline:           p.offline,
 		Refresh:           p.refreshCharts,
 	}))
-	p.recordAcquisition(render.ChartAcquisitionRecord(chart.Request{
-		Repository: source.RepoURL,
-		Name:       source.Chart,
-		Version:    source.TargetRevision,
-		Kind:       kind,
-	}, acquired, p.chartCacheMaxAge))
+	p.recordAcquisition(render.ChartAcquisitionRecord(request, acquired, p.chartCacheMaxAge))
+	// The repo-server renders with the version that a range resolved to
+	// as ARGOCD_APP_REVISION (newHelmClientResolveRevision and newEnv,
+	// reposerver/repository/repository.go:3029-3066 and 1864-1878 at
+	// v3.6.1). A revision that parses as semver, also a partial one such
+	// as 1.2, stays as written.
+	if resolved := strings.TrimSpace(acquired.Version); resolved != "" && !versions.IsVersion(strings.TrimSpace(source.TargetRevision)) {
+		opts.ArgoEnv = withArgoAppRevision(opts.ArgoEnv, resolved)
+	}
 
 	if err := p.checkOutOfBoundsSymlinks(ctx, acquired.ChartDir, render.OutOfBoundsSymlinkScopeChart); err != nil {
 		return nil, nil, err

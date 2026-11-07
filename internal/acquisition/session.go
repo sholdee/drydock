@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/filecopy"
@@ -45,6 +46,11 @@ type SnapshotCache struct {
 	charts      map[string]chart.Result
 	ociResolves map[string]string
 	ociExtracts map[string]string
+	// chartRefreshes holds the chart cache entries that a refresh in this
+	// run already refetched. The SnapshotCache lives for one run, which
+	// both sides of a diff share, so a later Render or Client call in the
+	// same process refreshes again.
+	chartRefreshes map[string]struct{}
 }
 
 type targetLock struct {
@@ -58,10 +64,11 @@ func NewTargetLocks() *TargetLocks {
 
 func NewSnapshotCache() *SnapshotCache {
 	return &SnapshotCache{
-		gits:        map[string]source.GitResult{},
-		charts:      map[string]chart.Result{},
-		ociResolves: map[string]string{},
-		ociExtracts: map[string]string{},
+		gits:           map[string]source.GitResult{},
+		charts:         map[string]chart.Result{},
+		ociResolves:    map[string]string{},
+		ociExtracts:    map[string]string{},
+		chartRefreshes: map[string]struct{}{},
 	}
 }
 
@@ -157,6 +164,36 @@ func (cache *SnapshotCache) storeChart(key string, result chart.Result) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	cache.charts[key] = result
+}
+
+// chartRefreshed reports whether a refresh in this run already refetched
+// the chart cache entry at entryPath. A cache without snapshots keeps no
+// record, so every refresh refetches.
+func (cache *SnapshotCache) chartRefreshed(entryPath string) bool {
+	if cache == nil {
+		return false
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	_, ok := cache.chartRefreshes[entryPath]
+	return ok
+}
+
+// markChartRefreshed records that a refresh in this run refetched and
+// published the chart cache entry at entryPath, so a later refresh request
+// in the run reuses it and an earlier request's snapshot copy is never
+// replaced under it. A failed refetch is not recorded, so the next request
+// tries again.
+func (cache *SnapshotCache) markChartRefreshed(entryPath string) {
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.chartRefreshes == nil {
+		cache.chartRefreshes = map[string]struct{}{}
+	}
+	cache.chartRefreshes[entryPath] = struct{}{}
 }
 
 func (locks *TargetLocks) lock(key string) func() {
@@ -315,16 +352,65 @@ func (acquirer cacheSafeChartAcquirer) Acquire(ctx context.Context, request char
 		}
 	}
 
+	cacheDir, err := chart.ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
+	if err != nil {
+		return acquirer.delegate.Acquire(ctx, request, opts)
+	}
+	// The hooks run under the lock of the resolved cache entry: the run
+	// refreshes each entry once, and copies it before the lock is
+	// released, so a request whose version resolves to the same entry
+	// never replaces it during the copy.
+	held := false
+	opts.EntryHooks = &chart.EntryHooks{
+		Refreshed:     acquirer.snapshotCache.chartRefreshed,
+		MarkRefreshed: acquirer.snapshotCache.markChartRefreshed,
+		Hold: func(result chart.Result) (chart.Result, error) {
+			held = true
+			return acquirer.snapshotChart(cacheDir, result)
+		},
+	}
 	result, err := acquirer.delegate.Acquire(ctx, request, opts)
-	if err != nil || !acquirer.snapshot {
+	if err != nil {
 		return result, err
+	}
+	if !held {
+		// An acquirer that does not run the hooks.
+		if result, err = acquirer.snapshotChart(cacheDir, result); err != nil {
+			return chart.Result{}, err
+		}
+	}
+	if acquirer.snapshot {
+		acquirer.snapshotCache.storeChart(key, result)
+	}
+	return result, nil
+}
+
+// snapshotChart copies the chart of result into the session snapshot area,
+// once per publish of a resolved cache entry under cacheDir, when the
+// session takes snapshots. The key holds the fetch time of the entry, so a
+// later refetch gets its own copy. A reused copy carries the fields of
+// result, the latest publish.
+func (acquirer cacheSafeChartAcquirer) snapshotChart(cacheDir string, result chart.Result) (chart.Result, error) {
+	if !acquirer.snapshot {
+		return result, nil
+	}
+	entryKey := ""
+	if result.CacheKey != "" {
+		entryKey = strings.Join([]string{"entry", cacheDir, string(result.Kind), result.CacheKey, result.FetchedAt.UTC().Format(time.RFC3339Nano)}, "\x00")
+		if cached, ok := acquirer.snapshotCache.chart(entryKey); ok {
+			reused := result
+			reused.ChartDir = cached.ChartDir
+			return reused, nil
+		}
 	}
 	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "chart", result.ChartDir, snapshotCopyOptions{linkRegularFiles: true})
 	if err != nil {
 		return chart.Result{}, err
 	}
 	result.ChartDir = snapshot
-	acquirer.snapshotCache.storeChart(key, result)
+	if entryKey != "" {
+		acquirer.snapshotCache.storeChart(entryKey, result)
+	}
 	return result, nil
 }
 

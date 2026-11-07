@@ -447,11 +447,13 @@ data:
 }
 
 type recordingChartAcquirer struct {
-	chartDir   string
-	acquireErr error
-	fromCache  bool
-	requests   []chart.Request
-	options    []chart.Options
+	chartDir string
+	// resolvedVersion, when set, is the version that a range resolves to.
+	resolvedVersion string
+	acquireErr      error
+	fromCache       bool
+	requests        []chart.Request
+	options         []chart.Options
 }
 type recordingGitAcquirer struct {
 	path      string
@@ -495,15 +497,22 @@ func (acquirer *recordingRemoteAcquirer) Acquire(_ context.Context, request remo
 }
 func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {
 	acquirer.requests = append(acquirer.requests, request)
+	// The session's entry hooks are functions, which never compare equal,
+	// and this acquirer does not run them.
+	opts.EntryHooks = nil
 	acquirer.options = append(acquirer.options, opts)
 	if acquirer.acquireErr != nil {
 		return chart.Result{}, acquirer.acquireErr
+	}
+	version := request.Version
+	if acquirer.resolvedVersion != "" {
+		version = acquirer.resolvedVersion
 	}
 	return chart.Result{
 		ChartDir:   acquirer.chartDir,
 		Repository: request.Repository,
 		Name:       request.Name,
-		Version:    request.Version,
+		Version:    version,
 		Kind:       request.Kind,
 		FromCache:  acquirer.fromCache,
 	}, nil

@@ -152,7 +152,7 @@ func assembleHelmInputValues(ctx context.Context, source ResolvedSource, manifes
 	if err != nil {
 		return nil, "", nil, err
 	}
-	if err := applyHelmParameters(ctx, opts, targets, inputValues); err != nil {
+	if err := applyHelmParameters(ctx, opts, source.RepoRoot, targets, inputValues); err != nil {
 		return nil, "", nil, err
 	}
 	return inputValues, releaseName, applyAVPCompatToHelmValues(inputValues, opts), nil

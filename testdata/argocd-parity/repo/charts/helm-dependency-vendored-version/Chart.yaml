@@ -1,0 +1,9 @@
+apiVersion: v2
+name: helm-dependency-vendored-version
+description: Local Helm chart with a vendored dependency of another version.
+type: application
+version: 0.1.0
+dependencies:
+  - name: parity-range
+    version: 9.9.9
+    repository: http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879

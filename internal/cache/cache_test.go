@@ -514,3 +514,61 @@ func TestPruneRenderEntriesByAgeAndSweep(t *testing.T) {
 		t.Fatalf("dry-run must not remove or sweep: %+v", dry)
 	}
 }
+
+// TestPruneRemovesOldChartVersionRecords pins that an age prune of the
+// chart cache removes the recorded version lists that are older than the
+// cutoff, keeps newer ones, and only counts them on a dry run. A prune of
+// another source keeps them.
+func TestPruneRemovesOldChartVersionRecords(t *testing.T) {
+	root := t.TempDir()
+	dir := ChartVersionsRecordDir(root, "http")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-48 * time.Hour)
+	oldRecord := writeVersionRecordFile(t, dir, "old.json", "{}", past)
+	newRecord := writeVersionRecordFile(t, dir, "new.json", "{}", time.Now())
+	// The used record was written long ago, but an offline run used it
+	// just now, so it stays.
+	usedRecord := writeVersionRecordFile(t, dir, "used.json", `{"usedAt":"`+time.Now().UTC().Format(time.RFC3339)+`"}`, past)
+	opts := OperationOptions{ChartCacheDir: root, OlderThan: 24 * time.Hour, Yes: true}
+
+	other := opts
+	other.Source = SourceGit
+	if result, err := Prune(other); err != nil || result.VersionRecordsRemoved != 0 {
+		t.Fatalf("Prune(git) = %#v, %v, want no version records", result, err)
+	}
+	dry := opts
+	dry.DryRun = true
+	if result, err := Prune(dry); err != nil || result.VersionRecordsRemoved != 1 {
+		t.Fatalf("Prune(dry run) = %#v, %v, want one version record", result, err)
+	}
+	if _, err := os.Stat(oldRecord); err != nil {
+		t.Fatalf("dry run removed the old record: %v", err)
+	}
+	if result, err := Prune(opts); err != nil || result.VersionRecordsRemoved != 1 {
+		t.Fatalf("Prune() = %#v, %v, want one version record", result, err)
+	}
+	if _, err := os.Stat(oldRecord); !os.IsNotExist(err) {
+		t.Fatalf("old record still exists: %v", err)
+	}
+	for _, path := range []string{newRecord, usedRecord} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("record %s removed: %v", path, err)
+		}
+	}
+}
+
+// writeVersionRecordFile writes a version list file with content and file
+// time modified, and returns its path.
+func writeVersionRecordFile(t *testing.T, dir, name, content string, modified time.Time) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

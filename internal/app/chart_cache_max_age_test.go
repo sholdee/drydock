@@ -67,3 +67,29 @@ func TestRenderCacheChartsFromRecordsIsDeterministic(t *testing.T) {
 		t.Fatalf("charts without records = %#v, want recorded and empty", empty)
 	}
 }
+
+// TestStaleVersionListDiagnostic pins that a version range resolved offline
+// from an old recorded version list warns about that list and its fetch
+// time, not about the chart entry, which can be recent, and that such a
+// render is never stored.
+func TestStaleVersionListDiagnostic(t *testing.T) {
+	listFetchedAt := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
+	record := cacheevent.AcquisitionRecord{
+		Kind:              cacheevent.AcquisitionChart,
+		RequestedRevision: "1.2.*",
+		ResolvedRevision:  "1.2.3",
+		Chart: cacheevent.ChartAcquisition{
+			Target: "https://charts.example.test", Name: "demo", Version: "1.2.*",
+			CacheKind: "http", CacheKey: "abc", FetchedAt: time.Date(2026, 11, 6, 8, 0, 0, 0, time.UTC), MaxAge: 24 * time.Hour,
+			VersionListStale: true, VersionListFetchedAt: listFetchedAt,
+		},
+	}
+	diags := staleChartDiagnostics([]cacheevent.AcquisitionRecord{record})
+	want := "recorded version list of chart demo from https://charts.example.test was fetched at 2026-10-01T08:00:00Z, older than --chart-cache-max-age 24h0m0s; resolving version range 1.2.* to 1.2.3 from it because --offline forbids refetching it"
+	if len(diags) != 1 || diags[0].Message != want || diags[0].Code != chartCacheStaleCode {
+		t.Fatalf("diagnostics = %#v, want one with %q", diags, want)
+	}
+	if _, stale := renderCacheChartsFromRecords([]cacheevent.AcquisitionRecord{record}); !stale {
+		t.Fatal("stale = false, want a render from a stale version list never stored")
+	}
+}

@@ -101,10 +101,14 @@ tree.
 An OCI Helm chart source is the schemeless shape Argo CD classifies as
 Helm-OCI: `repoURL: ghcr.io/org/charts` (host and optional path, no scheme)
 plus `chart:`, including nested chart names. It is pulled through the Helm
-registry client into the chart cache at the exact `targetRevision` version;
-semver constraints are not resolved for this shape, where Argo CD's
-repo-server resolves them against the registry tag list — a recorded
-follow-up. A `repoURL` that starts with `oci://` is never a Helm chart
+registry client into the chart cache.
+
+A chart source `targetRevision` can be a version range, such as `1.2.*` or
+`>=1.0.0 <2.0.0`, as in Argo CD. drydock reads the repository index or the
+registry tags on every online run, takes the highest version that matches,
+and caches the chart under that version. Each online run records the version
+list, so `--offline` resolves the range from the record. A render that
+resolved a range is not stored in the persistent render cache. A `repoURL` that starts with `oci://` is never a Helm chart
 source: Argo CD's repo-server dispatches on the scheme before it looks at
 `chart:`, and drydock follows it — see
 [OCI Artifact Sources](#oci-artifact-sources).
@@ -112,17 +116,25 @@ source: Argo CD's repo-server dispatches on the scheme before it looks at
 Drydock resolves missing HTTP(S) and OCI chart dependencies declared in
 `Chart.yaml` through its native chart cache. With `--offline`, cache hits are
 allowed but network fetches are disabled. The source checkout is not mutated,
-and drydock does not run `helm dependency build`.
+and drydock does not run `helm dependency build`. It does the same steps as
+that command in Argo CD: a dependency is missing only when `charts/` has no
+chart of its name, a `Chart.lock` must match `Chart.yaml`, and the build
+fetches every remote dependency at its locked or resolved version, also the
+vendored ones.
 
 Local `file://`, repository-alias, or otherwise unresolved dependencies must
 already be available under `charts/`. Missing local dependencies fail with a
 clear vendored-chart requirement.
 
 Helm `valueFiles` support local paths, `$ref/...` paths, glob expansion,
-HTTP(S) remote value files, and discovered `helm.valuesFileSchemes`. Remote
-value files use the remote-resource cache and `--remote-*` credentials, not the
-chart cache. Explicitly empty `helm.valuesFileSchemes` disables remote
-value-file URLs.
+HTTP(S) remote value files, and discovered `helm.valuesFileSchemes`. Local
+paths resolve as in the Argo CD repo-server: a path that starts with `/` is
+relative to the repository root, symlinks in the repository are followed, and
+a file that the list names twice is read once, at its first place. drydock
+never reads a value file outside the repository or in `.git`. Remote value
+files and `fileParameters` URLs use the remote-resource cache and `--remote-*`
+credentials, not the chart cache. Explicitly empty `helm.valuesFileSchemes`
+disables remote value-file URLs.
 
 `source.helm.passCredentials` affects only HTTP chart repositories with
 explicit `--helm-*` credentials. By default, drydock sends those credentials to
@@ -760,6 +772,16 @@ never require confirmation.
 `--older-than DURATION` removes cache entries whose last-used timestamp
 (`Metadata.UpdatedAt`, refreshed on every cache hit and fetch) predates the
 given duration. Legacy entries without metadata fall back to filesystem mtime.
+
+The chart cache also holds the recorded version list of each chart whose
+version range drydock resolved. An offline run resolves the range from that
+list. Every resolve, online or offline, tries to record when it last used the
+list, and an age prune of the chart cache removes the lists that no run used
+within the duration, the same as chart entries. Recording a use is best
+effort: drydock skips it when the cache is read-only, when another process
+holds the lock on the lists for more than 5 seconds, or when the write fails. `cache list` does not show the lists,
+and `cache prune` reports how many it removed. A list keeps its fetch time
+apart from its last use, and `--chart-cache-max-age` judges that fetch time.
 
 ### Pruning by size (`--max-size`)
 

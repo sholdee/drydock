@@ -472,9 +472,53 @@ Important boundaries:
   OCI. A single-source `oci://` Application with neither `path:` nor
   `chart:` is an invalid spec upstream (`InvalidSpecError`), and drydock
   fails it the same way. Earlier drydock releases rendered the artifact
-  root. The schemeless Helm-OCI chart flow resolves exact chart versions
-  only, where the repo-server also resolves semver constraints against the
-  registry tag list. That is a recorded follow-up.
+  root.
+- A chart source `targetRevision` resolves as in the Argo CD v3.6.1
+  repo-server (`newHelmClientResolveRevision`,
+  `reposerver/repository/repository.go:3029-3066`), on HTTP(S) and
+  schemeless OCI Helm repositories. A revision that parses as semver, also
+  `1.2` or `v1.2.3`, stays as written. On an HTTP repository, helm then
+  takes the index entry with that version, or else the highest one that
+  matches it as a constraint, so `1.2` fetches the highest `1.2.x`. On an
+  OCI repository, helm pulls the tag as written. Any other
+  revision, such as `1.2.*`, `>=1.0.0 <2.0.0`, or `*`, is a constraint:
+  drydock takes the highest index version or registry tag that matches it
+  (`versions.MaxVersion`), with prereleases only for a constraint that
+  names one, and fetches that version. The chart cache entry, the cache
+  event revision, and `ARGOCD_APP_REVISION` hold the resolved version. A
+  constraint that matches nothing fails with the repo-server's `invalid
+  revision: version matching constraint not found in <n> tags`.
+- drydock treats every revision that is not an exact full version
+  (`1.2.3`, `v1.2.3`, `1.2.3-rc.1`) as a range: a constraint, and on an
+  HTTP repository also a partial version such as `1.2` or `1`. It
+  resolves such a revision on every online run, so it picks up a new
+  release, and it caches the chart under the version that helm takes.
+  `ARGOCD_APP_REVISION` stays as written for a revision that parses as
+  semver, such as `1.2`, as in the repo-server. Each online resolve
+  records the version list of the chart, with its fetch time, in the chart
+  cache, and an offline run resolves the range from that record. Without a
+  record, the offline run fails with `offline cache miss`. A render that
+  resolved a range is never stored in the persistent render cache,
+  because the next run can resolve another version.
+- With `--chart-cache-max-age`, an offline resolve from a version list
+  older than the max age, or of unknown age, is still used, as an expired
+  chart is. It gives the `source.chart-cache-stale` warning, which names
+  the version list and its fetch time, and the render is not stored. Every
+  resolve, online or offline, tries to record its use of the list, and an
+  age prune (`drydock cache prune --older-than`) of the chart cache removes
+  the version lists that no run used within the duration. Recording a use
+  is best effort. drydock skips it when the cache is read-only, when
+  another process holds the lock on the lists for more than 5 seconds, or
+  when the write fails, and the render goes on. A skipped use can let a
+  later age prune remove a list that an offline run still needs.
+- Recorded divergence from strict Argo CD v3.6.1: on a schemeless OCI
+  repository, drydock lists the tags with helm's registry client, which
+  keeps only strict semver tags. The repo-server lists every tag, so a
+  constraint can also match a tag such as `v1.2.0` there.
+- Kustomize `helmCharts` versions are not resolved as ranges. They must
+  name an index version as written. A chart cache entry that a range or a
+  partial version filled is named by the full version it resolved to, so a
+  Kustomize `helmCharts` version such as `1.2` never reads it.
 - `$ref` value-file sources are Git-only, matching upstream: an OCI `$ref`
   source fails with a clear error.
 - Private OCI registries are supported for OCI artifact sources through
@@ -524,6 +568,69 @@ Important boundaries:
   `helm dependency build` or mutating the source checkout. Local `file://`,
   repository-alias, or otherwise unresolved dependencies must be available
   under `charts/` and fail closed when missing.
+- A dependency is missing only when `charts/` holds no chart of its name, as
+  helm template checks it (`action.CheckDependencies`, helm v4.3.1
+  `pkg/action/install.go:839-869`). A vendored chart of another version
+  than `Chart.yaml` or `Chart.lock` names still counts, so nothing is
+  fetched and the vendored chart renders, as in Argo CD. Earlier drydock
+  releases fetched the named version instead.
+- When a dependency is missing, the repo-server runs `helm dependency build`
+  once, and drydock does the same steps in a copy of the chart:
+  - With a `Chart.lock`, its digest must match `Chart.yaml`, or the render
+    fails with `the lock file (Chart.lock) is out of sync with the
+    dependencies file (Chart.yaml). Please update the dependencies with
+    'helm dependency update'`. Every locked repository must be one that
+    helm knows. The repo-server adds only the `https` and `oci`
+    repositories of `Chart.yaml` before the build, so an `http://`
+    repository fails with `no repository definition for <url>. Please add
+    the missing repos via 'helm repo add'`. Every locked dependency is
+    fetched at its locked version. helm takes the first index entry with
+    an archive URL whose version equals the locked one as semver
+    (`findVersionedEntry`), so a partial version such as `1.2` in a
+    hand-edited `Chart.lock` takes `1.2.0`, not the highest `1.2.x`.
+  - Without a `Chart.lock`, each `Chart.yaml` version resolves against its
+    repository, as `helm dependency update` resolves it: the highest index
+    version with an archive URL, or the highest strict semver registry
+    tag, that matches the version as a constraint. On an OCI repository, a
+    version that parses as semver, such as `v1.2.3` or `1.2`, is pulled as
+    a tag as written. An `http://` repository works here. With
+    `--offline`, a range resolves from the version list that an earlier
+    online run recorded.
+  - A dependency without a repository must be a directory
+    `charts/<name>` whose version matches the dependency version. Without
+    a `Chart.lock`, helm first checks every dependency in order: a version
+    that does not parse fails with `dependency "<name>" has an invalid
+    version/constraint format`, and a missing path fails with `directory
+    charts/<name> not found`, also when `charts/` holds the chart as an
+    archive. Only then does a directory of another version fail with
+    `dependency <name> at version <version> does not satisfy the constraint
+    <constraint>`.
+  - The build fetches every remote dependency, also one that is vendored,
+    and removes each chart archive under `charts/` whose chart it did not
+    fetch, also one that `Chart.yaml` does not name. It decides by the
+    chart name inside the archive, not by the file name. A dependency
+    without a repository stays.
+- Behavior change: when one dependency is missing, drydock now fetches
+  every remote dependency of the chart, also the vendored ones, as
+  `helm dependency build` does in Argo CD. With `--offline`, the chart
+  cache must then hold all of them. A chart with vendored remote
+  dependencies and one missing dependency that rendered offline before can
+  fail with `offline cache miss` until one online run fills the cache.
+- Recorded divergences from strict Argo CD v3.6.1 in that build: drydock
+  does not package a `file://` dependency or fetch a repository-alias
+  dependency, so those must be vendored, and their vendored copy stays. It
+  skips the lock digest check when a dependency names a repository alias,
+  because helm hashes the URL of the repository that Argo CD added.
+  When `charts/` holds a vendored directory of a chart that the build
+  fetches, helm keeps both and picks one of them in Go map order. drydock
+  replaces the directory with the fetched chart.
+- Recorded divergence from strict Argo CD v3.6.1, in error text only: helm
+  checks the dependencies in their order and fetches the remote ones
+  between the checks of the local ones. drydock checks every dependency
+  without a repository first, and fetches the remote dependencies after
+  that. When a chart has both a failing local dependency and a failing
+  remote dependency, drydock can report the local error where helm reports
+  the remote one. Both sides fail the render.
 - Cached Helm charts never expire by default. Argo CD v3.6.1's repo-server
   re-pulls a cached chart archive older than its repo cache expiration (24h
   by default), so a republished chart version converges there; drydock needs
@@ -744,11 +851,13 @@ Supported:
   map iteration order, so overlapping names within one kind (such as `a` and
   `a.b`) can render differently from one Argo CD run to the next. drydock
   applies them in list order, which is one of the possible outcomes.
-- Helm `fileParameters` paths resolve as in the Argo CD v3.6.1 repo-server
-  (`ResolveValueFilePathOrUrl`, `util/io/path/resolved.go`), for every
-  entry, also an overridden one, and also for entries that come from an
-  `.argocd-source.yaml` file. A relative path is relative to the source
-  path, and a path that starts with `/` is relative to the repository root.
+- Helm `valueFiles` and `fileParameters` paths resolve as in the Argo CD
+  v3.6.1 repo-server (`getResolvedValueFiles` and
+  `ResolveValueFilePathOrUrl`, `reposerver/repository/repository.go` and
+  `util/io/path/resolved.go`), for every entry, also an overridden file
+  parameter, and also for entries that come from an `.argocd-source.yaml`
+  file. A relative path is relative to the source path, and a path that
+  starts with `/` is relative to the repository root.
   A path is a `$ref` path when its first segment, before env substitution,
   names a ref source, as in `getReferencedSourceName`. Its rest is
   env-substituted and is relative to the root of the ref source, so a bare
@@ -759,13 +868,33 @@ Supported:
   directory. A dangling symlink resolves to its missing target, which fails
   only when helm reads it. The result must be in the repository as text,
   and must not be the repository root:
-  - `error resolving helm value file path: file '<path>' resolved to outside
-    repository root`, or for a `$ref` path `error resolving set-file path:
-    error resolving value file path: file '/<path>' resolved to outside
-    repository root`.
+  - For a file parameter, `error resolving helm value file path: file
+    '<path>' resolved to outside repository root`, or for a `$ref` path
+    `error resolving set-file path: error resolving value file path: file
+    '/<path>' resolved to outside repository root`.
+  - For a value file, `error resolving helm value files: error resolving
+    value file path: file '<path>' resolved to outside repository root`,
+    with one more `error resolving value file path:` for a `$ref` path.
   - `internal error: failed to resolve path. Check logs for more details`
     for a symlink loop or a path that resolves to the repository root.
     drydock adds the cause after this text.
+- The repo-server reads each resolved value file once, at its first place
+  in the list, so `[a, b, a]` reads `a` and then `b`, and `b` wins. Two
+  entries that resolve to the same path count as one, also when one of them
+  is a symlink to the other. A glob expands with doublestar in name order
+  and leaves out the files that the list names explicitly, which keep their
+  explicit place. Each glob match must stay in the repository after its
+  symlinks resolve, or the render fails with `glob pattern "<pattern>":
+  glob match "<match>" resolved to outside repository root`. drydock names
+  the match relative to the root, where the repo-server names its checkout
+  path. A glob that matches nothing fails with `values file glob
+  "<pattern>" matched no files`, and is skipped with
+  `ignoreMissingValueFiles`. A value file URL with an allowed scheme is
+  fetched through the remote-resource cache. A URL with another scheme
+  fails with `error resolving value file path: the URL scheme '<scheme>'
+  is not allowed`.
+- The value files of a Kustomize `helmCharts` entry follow kustomize, not
+  this resolver.
 - Because the resolver joins a symlink target to the path as written, a
   relative target under a symlinked directory resolves from that directory,
   not from the real directory of the symlink. A target with `..` can then
@@ -782,8 +911,7 @@ Supported:
   repo-server skips that check, so the path is a local path that is
   env-substituted: `$$values/a.yaml` is the file `$values/a.yaml`, and
   `$ARGOCD_APP_NAME/values.yaml` names a directory after the Application.
-  For a value file, the substituted path must still be relative (see the
-  value file divergence below). drydock checks an Application with
+  drydock checks an Application with
   `sources` against the merged source after `.argocd-source*.yaml`, while
   the repo-server checks the spec, so a `$` segment that only an override
   file sets fails in drydock but is a local path in Argo CD.
@@ -791,31 +919,26 @@ Supported:
   character, so it can read a file other than the resolved path, such as
   `ab.txt` for `a\b.txt`. drydock reads the same file, and its cache key
   and changed-only selection track that file.
-- drydock reads a file parameter only when the real path of the file that
-  helm reads is in the repository and outside `.git`. A path through a
-  symlinked directory that leaves the repository fails with `makes helm
-  read a file outside the repository, which drydock never reads`. The
-  repo-server reads such a file, but its out-of-bounds symlink check fails
-  the repository first unless `reposerver.allow.oob.symlinks` is `true`.
-  An overridden entry is never read, so an overridden path in `.git` does
-  not fail.
+- drydock reads a value file or a file parameter only when the real path
+  of the file that helm reads is in the repository and outside `.git`. A
+  path through a symlinked directory that leaves the repository fails with
+  `makes helm read a file outside the repository, which drydock never
+  reads`. The repo-server reads such a file, but its out-of-bounds symlink
+  check fails the repository first unless `reposerver.allow.oob.symlinks` is
+  `true`. A value file path that resolves into `.git` fails with `enters a
+  .git directory`. An overridden file parameter is never read, so an
+  overridden path in `.git` does not fail.
 - The repo-server resolves the value file paths, then every file parameter
   path, and only then runs helm, which reads the value files and the file
   parameters before it loads the chart. drydock keeps this order. For
   example, a file parameter that does not resolve wins over a value file
   that is missing or does not parse, a missing value file wins over a file
   parameter that helm cannot read, and a value file that does not parse
-  wins over a chart that does not load. drydock's own checks can fail
-  earlier: a value file that is a symlink fails while drydock resolves the
-  value files (see the value file divergence below).
+  wins over a chart that does not load.
 - Recorded divergence from strict Argo CD v3.6.1: helm `--set-file` parses
   `name=<path>`, so a file parameter name that holds `=` or `,` can make
   helm read another path, relative to its working directory. drydock fails
   with `helm --set-file reads "<path>", which is not the resolved path`.
-- Recorded divergence from strict Argo CD v3.6.1: the repo-server drops a
-  value file whose resolved path is already in the list, so `[a, b, a]`
-  reads `a` and then `b`. drydock reads `a`, `b`, and `a` again, so `a`
-  wins over `b`.
 - Recorded divergence from strict Argo CD v3.6.1: when the path as written
   is outside the repository, drydock fails at once with the repo-server's
   `resolved to outside repository root` error and does not read its link
@@ -823,15 +946,17 @@ Supported:
   back into its checkout. For the later links of a chain, drydock reads the
   link text as the repo-server does, also outside the repository, but the
   result must still be in the repository.
-- Recorded divergence from strict Argo CD v3.6.1: a `fileParameters` URL
-  with an allowed scheme fails in drydock (`must reference a local or $ref
-  file`). helm `--set-file` fetches it in Argo CD. An overridden URL is
-  never fetched, so it works on both sides.
-- Recorded divergence from strict Argo CD v3.6.1: Helm `valueFiles` do not
-  use this resolver in drydock yet. A value file that is a symlink, or that
-  has a symlinked directory on the way, fails, and so does a value file
-  path that starts with `/`. The repo-server resolves both as it resolves
-  file parameters.
+- A `fileParameters` URL with an allowed scheme is fetched as helm
+  `--set-file` fetches it in Argo CD, through the remote-resource cache, so
+  `--offline` reads only a cached copy. A file parameter or value file URL
+  can have any file name, as in helm. A URL with a query or a fragment
+  still fails in drydock. An overridden URL is never fetched.
+  A scheme that `helm.valuesFileSchemes` allows but that is not `http` or
+  `https` fails in drydock, as for a value file URL.
+- Recorded divergence from strict Argo CD v3.6.1: helm `--set-file` drops a
+  backslash in a URL as in a path. drydock then fails with `helm --set-file
+  reads "<url>", which is not the resolved path` instead of fetching the
+  other URL.
 - `.argocd-source.yaml` and `.argocd-source-<app>.yaml` overrides, where
   `<app>` is the Application instance name like the repo-server's lookup: an
   Application outside the controller namespace reads
@@ -909,9 +1034,9 @@ Supported:
   - An OCI artifact source gets the manifest digest (`sha256:...`), so
     `_SHORT` is `sha256:` and `_SHORT_8` is `sha256:` plus one hex digit,
     as in Argo CD.
-  - A chart from a Helm repository gets the chart version. drydock supports
-    exact versions only, and for an exact version the repo-server reports
-    the `targetRevision` as written.
+  - A chart from a Helm repository gets the chart version: the
+    `targetRevision` as written when it parses as semver, and the resolved
+    version for a version range.
 - Recorded divergences from strict Argo CD v3.6.1 for these variables:
   - When the `--path` tree or a `--repo-map` directory is not the top of a
     Git repository (for example a subdirectory of a repository), or HEAD
@@ -1164,8 +1289,9 @@ Supported:
   like a `.git` directory. A root that is not in a Git worktree, that the
   worktree does not track, or that Git ignores itself, is checked whole.
 - The persistent render cache key and changed-only selection of a Helm
-  source cover each symlink that a `fileParameters` path passes through and
-  the file that helm reads. Changed-only selection reads every source with
+  source cover each symlink that a `valueFiles` or `fileParameters` path
+  passes through and the file that helm reads. A value file path that
+  starts with `/` is relative to the repository root there too. Changed-only selection reads every source with
   its `.argocd-source*.yaml` files merged in, as the render and the cache
   key do, so it owns the value files, file parameters, and Kustomize inputs
   that only an override file names. For an overridden entry whose path passes through a
@@ -1193,11 +1319,11 @@ Supported:
   still renders every Application.
 - Recorded divergence from strict Argo CD v3.6.1: drydock never extracts an
   OCI artifact that holds an out-of-bounds symlink, also when
-  `reposerver.allow.oob.symlinks` is `true`. Helm charts, Helm value
-  files, and Kustomize graphs still reject every symlink in drydock (see
-  the safety boundary below), where the repo-server follows in-tree
-  symlinks. Helm `fileParameters` follow symlinks as in Argo CD (see
-  Rendering).
+  `reposerver.allow.oob.symlinks` is `true`. Helm charts, Kustomize
+  `helmCharts` value files, and Kustomize graphs still reject every symlink
+  in drydock (see the safety boundary below), where the repo-server follows
+  in-tree symlinks. Helm `valueFiles` and `fileParameters` follow symlinks
+  as in Argo CD (see Rendering).
 - A directory file that is not a regular file, such as a named pipe or a
   socket, is skipped, as in Argo CD. Earlier drydock releases tried to read
   it, and a named pipe stopped the render.
@@ -1546,9 +1672,9 @@ Documented runtime-offline safety boundary:
   file is an in-repository symlink counts as present, as in Argo CD v3.6.1,
   and then fails drydock's symlinked graph entry check where the repo-server
   renders it.
-- A Helm `fileParameters` path never reads a file outside the repository
-  or in `.git`, also when `reposerver.allow.oob.symlinks` is `true` and the
-  repo-server would read it through a symlinked directory.
+- A Helm `valueFiles` or `fileParameters` path never reads a file outside
+  the repository or in `.git`, also when `reposerver.allow.oob.symlinks` is
+  `true` and the repo-server would read it through a symlinked directory.
 - drydock reads an `.argocd-source.yaml` or `.argocd-source-<app>.yaml`
   file only when it is a regular file whose real path is in the repository
   and outside `.git`, for the render, for changed-only selection, and for

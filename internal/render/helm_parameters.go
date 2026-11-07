@@ -39,7 +39,7 @@ func resolveHelmFileParameters(source ResolvedSource, opts RenderOptions) ([]hel
 // whatever their order on the command line. Winning entries apply in list
 // order; Argo CD's own order within one kind follows Go's randomized map
 // iteration order.
-func applyHelmParameters(ctx context.Context, opts RenderOptions, targets []helmFileParameterTarget, values map[string]any) error {
+func applyHelmParameters(ctx context.Context, opts RenderOptions, repoRoot string, targets []helmFileParameterTarget, values map[string]any) error {
 	lastParameters := lastHelmParameters(opts.HelmParameters)
 	for _, forceString := range []bool{false, true} {
 		for i, parameter := range opts.HelmParameters {
@@ -63,7 +63,7 @@ func applyHelmParameters(ctx context.Context, opts RenderOptions, targets []helm
 			value = helmFileParameterSetValue(target.root, target.path)
 		}
 		// The path is not secret: the repo-server shows it in its errors.
-		if err := strvals.ParseIntoFile(parameter.Name+"="+cleanHelmSetParameter(value), values, helmFileParameterReader(ctx, target)); err != nil {
+		if err := strvals.ParseIntoFile(parameter.Name+"="+cleanHelmSetParameter(value), values, helmFileParameterReader(ctx, opts, repoRoot, target)); err != nil {
 			return fmt.Errorf("helm file parameter %q failed to parse: %w", parameter.Name, err)
 		}
 	}
@@ -155,15 +155,27 @@ func lastEntryPerKey[T any, K comparable](entries []T, key func(T) K) []bool {
 // path, which drydock did not resolve, so that fails. drydock reads the file
 // only when its real path is in the root and outside .git
 // (confineHelmFileParameterRead), and then reads that real path. helm reads
-// the file even when the parameter name is empty.
-func helmFileParameterReader(ctx context.Context, target helmFileParameterTarget) strvals.RunesValueReader {
+// the file even when the parameter name is empty. For a URL, helm fetches
+// the URL it parsed, which must be target.url, and drydock fetches it
+// through the remote-resource cache (readHelmRemoteFile).
+func helmFileParameterReader(ctx context.Context, opts RenderOptions, repoRoot string, target helmFileParameterTarget) strvals.RunesValueReader {
 	return func(input []rune) (any, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		value := string(input)
-		if target.url != "" || isRemoteHelmValueFile(value) {
-			return nil, fmt.Errorf("helm file parameter %q must reference a local or $ref file", remote.RedactURL(value))
+		if target.url != "" {
+			if value != target.url {
+				return nil, fmt.Errorf("helm file parameter %q: helm --set-file reads %q, which is not the resolved path", remote.RedactURL(target.file), remote.RedactURL(value))
+			}
+			data, err := readHelmRemoteFile(ctx, opts, repoRoot, "helm file parameter", target.url)
+			if err != nil {
+				return nil, err
+			}
+			return string(data), nil
+		}
+		if isRemoteHelmValueFile(value) {
+			return nil, fmt.Errorf("helm file parameter %q: helm --set-file reads %q, which is not the resolved path", target.file, remote.RedactURL(value))
 		}
 		asked := ""
 		if strings.HasPrefix(value, "/") {

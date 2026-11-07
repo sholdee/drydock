@@ -151,26 +151,34 @@ func helmRefRootFor(name string, refRoots map[string]string) (string, bool) {
 
 // helmFileParameterPathFor decides, as helmTemplate does
 // (reposerver/repository/repository.go:1361-1377 at v3.6.1), how the raw
-// helm.fileParameters path resolves. A path whose first segment names a
-// $ref source, before env substitution, resolves in the root of that
-// source: the rest of the path, env-substituted, is relative to that root
-// (getResolvedRefValueFile, repository.go:1583-1604). A bare "$name" or
-// "$name/" resolves to that root, which then fails. Any other path is
-// env-substituted, so "$$" becomes "$" and an unknown "$name" becomes
-// its env value, and resolves against the source path and the repository
-// root. For an Application with sources, the plan fails a "$name" that
-// names no source first, as the repo-server does.
+// helm.fileParameters path resolves (helmArgoInputPathFor).
 func helmFileParameterPathFor(source ResolvedSource, opts RenderOptions, raw string) (helmFileParameterPath, error) {
+	return helmArgoInputPathFor(source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts, "helm file parameter", raw)
+}
+
+// helmArgoInputPathFor decides how the repo-server resolves one raw
+// helm.valueFiles or helm.fileParameters path (getResolvedValueFiles and
+// helmTemplate, reposerver/repository/repository.go:1361-1377 and
+// 1468-1604 at v3.6.1). A path whose first segment names a $ref source,
+// before env substitution, resolves in the root of that source: the rest
+// of the path, env-substituted, is relative to that root
+// (getResolvedRefValueFile). A bare "$name" or "$name/" resolves to that
+// root, which then fails. Any other path is env-substituted, so "$$"
+// becomes "$" and an unknown "$name" becomes its env value, and resolves
+// against the source path and the repository root. For an Application with
+// sources, the plan fails a "$name" that names no source first, as the
+// repo-server does. label names the kind of path in errors.
+func helmArgoInputPathFor(repoRoot, baseDir, boundaryDir string, opts RenderOptions, label, raw string) (helmFileParameterPath, error) {
 	if name := helmFileParameterRefName(raw); name != "" {
 		if root, ok := helmRefRootFor(name, opts.RefRoots); ok {
 			rest := opts.ArgoEnv.Envsubst(strings.TrimPrefix(raw, name))
 			p := helmFileParameterPath{file: name + rest, ref: true, path: rest}
 			if strings.TrimSpace(root) == "" {
-				return p, fmt.Errorf("helm file parameter %q references unknown ref %q", p.file, name)
+				return p, fmt.Errorf("%s %q references unknown ref %q", label, p.file, name)
 			}
 			cleanRoot := filepath.Clean(root)
 			if err := rejectHelmRefRootSymlink(cleanRoot); err != nil {
-				return p, fmt.Errorf("helm file parameter %q ref root %q: %w", p.file, name, err)
+				return p, fmt.Errorf("%s %q ref root %q: %w", label, p.file, name, err)
 			}
 			p.appPath, p.root = cleanRoot, cleanRoot
 			return p, nil
@@ -182,7 +190,7 @@ func helmFileParameterPathFor(source ResolvedSource, opts RenderOptions, raw str
 		p.url = file
 		return p, nil
 	}
-	appPath, root, err := helmValueFileRoots(source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts))
+	appPath, root, err := helmValueFileRoots(repoRoot, baseDir, boundaryDir)
 	if err != nil {
 		return p, err
 	}
@@ -265,24 +273,32 @@ func helmSetFileReadPath(name, root, path string) string {
 
 // confineHelmFileParameterRead returns the real path of path, the file that
 // helm --set-file reads for file, and fails when that real path is outside
-// root or in .git. The repo-server reads such a file through a symlinked
-// directory, but its out-of-bounds symlink check fails the repository first
-// unless reposerver.allow.oob.symlinks is true.
+// root or in .git (confineHelmInputRead).
 func confineHelmFileParameterRead(root, path, file string) (string, error) {
+	return confineHelmInputRead("helm file parameter", root, path, file)
+}
+
+// confineHelmInputRead returns the real path of path, the file that helm
+// reads for the value file or file parameter file, and fails when that real
+// path is outside root or in .git. The repo-server reads such a file through
+// a symlinked directory, but its out-of-bounds symlink check fails the
+// repository first unless reposerver.allow.oob.symlinks is true. label names
+// the kind of path in errors.
+func confineHelmInputRead(label, root, path, file string) (string, error) {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return "", err
 	}
 	realPath, err := pathsafety.ResolveForContainment(path)
 	if err != nil {
-		return "", fmt.Errorf("read helm file parameter %q: %w", file, err)
+		return "", fmt.Errorf("read %s %q: %w", label, file, err)
 	}
 	rel, err := filepath.Rel(realRoot, realPath)
 	if err != nil || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) {
-		return "", fmt.Errorf("helm file parameter %q makes helm read a file outside the repository, which drydock never reads", file)
+		return "", fmt.Errorf("%s %q makes helm read a file outside the repository, which drydock never reads", label, file)
 	}
 	if pathsafety.RelEntersGit(rel) {
-		return "", gitPathRefError("helm file parameter", file)
+		return "", gitPathRefError(label, file)
 	}
 	return realPath, nil
 }
@@ -308,6 +324,26 @@ type HelmFileParameterInputs struct {
 // that a relative file is relative to, and root is the root that it must
 // stay under. It fails when the path does not resolve, as the render does.
 func HelmFileParameterInputPaths(name, appPath, root, file string) (HelmFileParameterInputs, error) {
+	return helmInputPaths(appPath, root, file, func(absRoot, resolved string) string {
+		return helmSetFileReadPath(name, absRoot, resolved)
+	})
+}
+
+// HelmValueFileInputPaths returns the inputs of the local helm.valueFiles
+// entry with path file, which helm --values reads at its resolved path.
+// appPath is the directory that a relative file is relative to, and root is
+// the root that it must stay under. It fails when the path does not
+// resolve, as the render does.
+func HelmValueFileInputPaths(appPath, root, file string) (HelmFileParameterInputs, error) {
+	return helmInputPaths(appPath, root, file, func(_, resolved string) string {
+		return resolved
+	})
+}
+
+// helmInputPaths returns the inputs of one local value file or file
+// parameter path. readPath returns the path that helm reads for the path
+// resolved under the absolute root.
+func helmInputPaths(appPath, root, file string, readPath func(absRoot, resolved string) string) (HelmFileParameterInputs, error) {
 	var inputs HelmFileParameterInputs
 	resolved, err := resolveArgoValueFilePath(appPath, root, file)
 	if err != nil {
@@ -346,7 +382,7 @@ func HelmFileParameterInputPaths(name, appPath, root, file string) (HelmFilePara
 		}
 		return end, nil
 	}
-	if inputs.Read, err = trace(helmSetFileReadPath(name, absRoot, resolved)); err != nil {
+	if inputs.Read, err = trace(readPath(absRoot, resolved)); err != nil {
 		return inputs, err
 	}
 	written, err := trace(joined)

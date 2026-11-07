@@ -1,0 +1,9 @@
+apiVersion: v2
+name: helm-dependency-range
+description: Local Helm chart with a version range dependency and no Chart.lock.
+type: application
+version: 0.1.0
+dependencies:
+  - name: parity-range
+    version: ~1.2.0
+    repository: http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879

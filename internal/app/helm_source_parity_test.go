@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -319,5 +320,57 @@ func TestInvalidKubeVersionFlagFailsEveryRun(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "--kube-version: parse kube version \"not-a-version\"") {
 		t.Fatalf("Build() error = %v, want the --kube-version error", err)
+	}
+}
+
+// With argocd-cm helm.enable "false", the repo-server renders a chart
+// directory as a plain directory and never resolves the Helm inputs
+// (GenerateManifests, repository.go:1806-1811 at v3.6.1): no value file
+// or file parameter URL fetch, no value file glob, and no dependency
+// build. With Helm on, the same source reads them.
+func TestGatedHelmSourceSkipsHelmInputs(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "chart", "Chart.yaml"), "apiVersion: v2\nname: probe\nversion: 1.0.0\ndependencies:\n- name: dep\n  version: '>=1.0.0'\n  repository: https://charts.example.test\n")
+	writeTestFile(t, filepath.Join(root, "chart", "values.yaml"), "{}\n")
+	writeTestFile(t, filepath.Join(root, "chart", "templates", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: from-template\n")
+	writeTestFile(t, filepath.Join(root, "chart", "gate-probe.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\ndata:\n  a: b\n")
+	writeReviewApplication(t, root, "gated", "chart", `    helm:
+      valueFiles:
+      - https://values.example.test/values.yaml
+      - "*.missing.yaml"
+      ignoreMissingValueFiles: true
+      fileParameters:
+      - name: probe
+        path: https://values.example.test/probe.txt
+`, "demo")
+	remoteFile := filepath.Join(t.TempDir(), "remote.yaml")
+	writeTestFile(t, remoteFile, "{}\n")
+	build := func() (BuildResult, *recordingChartAcquirer, *recordingRemoteAcquirer, error) {
+		charts := &recordingChartAcquirer{acquireErr: errors.New("chart acquire probe")}
+		remotes := &recordingRemoteAcquirer{path: remoteFile}
+		result, err := Orchestrator{ChartAcquirer: charts, RemoteResourceAcquirer: remotes}.Build(context.Background(), BuildRequest{
+			Path:     root,
+			RepoMaps: []sourcepkg.RepoMap{{URL: reviewRepoURL, Path: root}},
+			Offline:  true,
+		})
+		return result, charts, remotes, err
+	}
+	if _, charts, remotes, err := build(); err == nil || !strings.Contains(err.Error(), "chart acquire probe") || len(charts.requests) == 0 || len(remotes.requests) == 0 {
+		t.Fatalf("Build() with Helm on: error = %v, chart requests = %d, remote requests = %d, want URL fetches and the dependency acquire error", err, len(charts.requests), len(remotes.requests))
+	}
+	writeReviewArgoCDConfigMap(t, root, "  helm.enable: \"false\"\n")
+	result, charts, remotes, err := build()
+	if err != nil {
+		t.Fatalf("Build() with Helm off error = %v", err)
+	}
+	if len(charts.requests) != 0 || len(remotes.requests) != 0 {
+		t.Fatalf("Build() with Helm off: chart requests = %v, remote requests = %v, want none", charts.requests, remotes.requests)
+	}
+	names := make([]string, 0, len(result.ApplicationManifests))
+	for _, item := range result.ApplicationManifests {
+		names = append(names, item.Manifest.Object.GetName())
+	}
+	if len(names) != 1 || names[0] != "plain" {
+		t.Fatalf("rendered %v, want only the plain directory ConfigMap", names)
 	}
 }

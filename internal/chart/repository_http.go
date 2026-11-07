@@ -2,6 +2,7 @@ package chart
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go.yaml.in/yaml/v3"
 	"io"
@@ -10,16 +11,75 @@ import (
 	"strings"
 )
 
+// repositoryIndex is a chart repository index. Entries holds every entry as
+// written, in index order, which Kustomize helmCharts lookups and the
+// repo-server's own index read (versions.MaxVersion) use. helm holds the
+// index as helm loads it (loadHelmIndex), or helmErr when helm fails to.
 type repositoryIndex struct {
 	Entries map[string][]repositoryChartVersion `yaml:"entries"`
+	helm    map[string][]repositoryChartVersion
+	helmErr error
 }
+
+// helmEntries returns the entries of the chart name as helm loads the
+// index.
+func (index repositoryIndex) helmEntries(name string) ([]repositoryChartVersion, error) {
+	if index.helmErr != nil {
+		return nil, fmt.Errorf("load chart repository index: %w", index.helmErr)
+	}
+	return index.helm[name], nil
+}
+
 type repositoryChartVersion struct {
 	Version string   `yaml:"version"`
 	URLs    []string `yaml:"urls"`
 }
 
-//nolint:gocyclo // Keeps index and chart archive request handling together for consistent URL redaction.
-func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Request, opts Options) ([]byte, error) {
+// fetchHTTPIndex fetches the index of the HTTP chart repository of request.
+func (acquirer DefaultAcquirer) fetchHTTPIndex(ctx context.Context, request Request, opts Options) (repositoryIndex, error) {
+	client := acquirer.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	credentials := opts.Credentials
+	repository, err := NormalizeRepository(request.Repository, request.Kind)
+	if err != nil {
+		return repositoryIndex{}, err
+	}
+	indexURL, err := repositoryIndexURL(repository)
+	if err != nil {
+		return repositoryIndex{}, err
+	}
+	redactedIndexURL := redactedFetchURL(indexURL, false)
+	indexRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
+	if err != nil {
+		return repositoryIndex{}, fmt.Errorf("create chart repository index request %s: %s", redactedIndexURL, redactedFetchError(err, indexURL, false))
+	}
+	applyChartAuth(indexRequest, credentials)
+	indexResponse, err := client.Do(indexRequest)
+	if err != nil {
+		return repositoryIndex{}, fmt.Errorf("fetch chart repository index %s: %s", redactedIndexURL, redactedChartCredentialError(redactedFetchError(err, indexURL, false), credentials))
+	}
+	defer func() { _ = indexResponse.Body.Close() }()
+	if indexResponse.StatusCode != http.StatusOK {
+		return repositoryIndex{}, fmt.Errorf("fetch chart repository index %s: HTTP %s", redactedIndexURL, indexResponse.Status)
+	}
+	data, err := io.ReadAll(indexResponse.Body)
+	if err != nil {
+		return repositoryIndex{}, fmt.Errorf("read chart repository index %s: %s", redactedIndexURL, redactedFetchError(err, indexURL, false))
+	}
+	var index repositoryIndex
+	if err := yaml.Unmarshal(data, &index); err != nil {
+		return repositoryIndex{}, fmt.Errorf("decode chart repository index %s: %w", redactedIndexURL, err)
+	}
+	index.helm, index.helmErr = loadHelmIndex(data)
+	return index, nil
+}
+
+// fetchHTTPChart fetches the chart archive of request from its HTTP chart
+// repository. index is the repository index when the caller already
+// fetched it, or nil.
+func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Request, opts Options, index *repositoryIndex) ([]byte, error) {
 	client := acquirer.Client
 	if client == nil {
 		client = http.DefaultClient
@@ -29,33 +89,15 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	if err != nil {
 		return nil, err
 	}
-	indexURL, err := repositoryIndexURL(repository)
-	if err != nil {
-		return nil, err
-	}
-	redactedIndexURL := redactedFetchURL(indexURL, false)
-	indexRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create chart repository index request %s: %s", redactedIndexURL, redactedFetchError(err, indexURL, false))
-	}
-	applyChartAuth(indexRequest, credentials)
-	indexResponse, err := client.Do(indexRequest)
-	if err != nil {
-		return nil, fmt.Errorf("fetch chart repository index %s: %s", redactedIndexURL, redactedChartCredentialError(redactedFetchError(err, indexURL, false), credentials))
-	}
-	defer func() { _ = indexResponse.Body.Close() }()
-	if indexResponse.StatusCode == http.StatusUnauthorized || indexResponse.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("fetch chart repository index %s: HTTP %s", redactedIndexURL, indexResponse.Status)
-	}
-	if indexResponse.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch chart repository index %s: HTTP %s", redactedIndexURL, indexResponse.Status)
-	}
-	var index repositoryIndex
-	if err := yaml.NewDecoder(indexResponse.Body).Decode(&index); err != nil {
-		return nil, fmt.Errorf("decode chart repository index %s: %w", redactedIndexURL, err)
+	if index == nil {
+		fetched, err := acquirer.fetchHTTPIndex(ctx, request, opts)
+		if err != nil {
+			return nil, err
+		}
+		index = &fetched
 	}
 
-	chartURL, err := findChartURL(repository, request, index)
+	chartURL, err := findChartURL(repository, request, *index)
 	if err != nil {
 		return nil, err
 	}
@@ -72,9 +114,6 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 		return nil, fmt.Errorf("fetch chart archive %s: %s", redactedChartURL, redactedChartCredentialError(redactedFetchError(err, chartURL, true), credentials))
 	}
 	defer func() { _ = archiveResponse.Body.Close() }()
-	if archiveResponse.StatusCode == http.StatusUnauthorized || archiveResponse.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("fetch chart archive %s: HTTP %s", redactedChartURL, archiveResponse.Status)
-	}
 	if archiveResponse.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch chart archive %s: HTTP %s", redactedChartURL, archiveResponse.Status)
 	}
@@ -118,35 +157,64 @@ func repositoryIndexURL(repository string) (string, error) {
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/index.yaml"
 	return parsed.String(), nil
 }
+
+// findChartURL returns the archive URL of the index entry that request
+// names: under VersionAsWritten the entry with the version as written or
+// without a leading "v", and under the other policies the entry that helm
+// pull takes (helmIndexGet).
 func findChartURL(repository string, request Request, index repositoryIndex) (string, error) {
+	entry, err := findChartVersion(request, index)
+	if err != nil {
+		return "", err
+	}
+	if len(entry.URLs) == 0 {
+		return "", fmt.Errorf("chart %s version %s has no archive URLs", request.Name, entry.Version)
+	}
+	archiveURL, err := url.Parse(entry.URLs[0])
+	if err != nil {
+		return "", fmt.Errorf("parse chart archive URL %q: %w", entry.URLs[0], err)
+	}
+	if archiveURL.IsAbs() {
+		if archiveURL.Scheme != "http" && archiveURL.Scheme != "https" {
+			return "", fmt.Errorf("absolute chart URL %s must use http or https", redactedFetchURL(archiveURL.String(), true))
+		}
+		return archiveURL.String(), nil
+	}
+	base, err := url.Parse(repository)
+	if err != nil {
+		return "", err
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/"
+	return base.ResolveReference(archiveURL).String(), nil
+}
+
+func findChartVersion(request Request, index repositoryIndex) (repositoryChartVersion, error) {
 	versions := index.Entries[request.Name]
+	if request.VersionPolicy != VersionAsWritten {
+		helmVersions, err := index.helmEntries(request.Name)
+		if err != nil {
+			return repositoryChartVersion{}, err
+		}
+		versions = helmVersions
+	}
+	if request.VersionPolicy == VersionHelmLocked {
+		return helmFindVersionedEntry(versions, request.Name, strings.TrimSpace(request.Version))
+	}
+	if request.VersionPolicy != VersionAsWritten {
+		entry, err := helmIndexGet(versions, request.Name, strings.TrimSpace(request.Version))
+		if errors.Is(err, errChartVersionNotFound) {
+			return repositoryChartVersion{}, fmt.Errorf("chart %s version %s not found in repository index", request.Name, request.Version)
+		}
+		return entry, err
+	}
 	for _, candidate := range chartVersionCandidates(request.Version) {
 		for _, version := range versions {
-			if version.Version != candidate {
-				continue
+			if version.Version == candidate {
+				return version, nil
 			}
-			if len(version.URLs) == 0 {
-				return "", fmt.Errorf("chart %s version %s has no archive URLs", request.Name, candidate)
-			}
-			archiveURL, err := url.Parse(version.URLs[0])
-			if err != nil {
-				return "", fmt.Errorf("parse chart archive URL %q: %w", version.URLs[0], err)
-			}
-			if archiveURL.IsAbs() {
-				if archiveURL.Scheme != "http" && archiveURL.Scheme != "https" {
-					return "", fmt.Errorf("absolute chart URL %s must use http or https", redactedFetchURL(archiveURL.String(), true))
-				}
-				return archiveURL.String(), nil
-			}
-			base, err := url.Parse(repository)
-			if err != nil {
-				return "", err
-			}
-			base.Path = strings.TrimRight(base.Path, "/") + "/"
-			return base.ResolveReference(archiveURL).String(), nil
 		}
 	}
-	return "", fmt.Errorf("chart %s version %s not found in repository index", request.Name, request.Version)
+	return repositoryChartVersion{}, fmt.Errorf("chart %s version %s not found in repository index", request.Name, request.Version)
 }
 
 func chartVersionCandidates(version string) []string {

@@ -26,6 +26,10 @@ type Request struct {
 	Name       string
 	Version    string
 	Kind       RepositoryKind
+	// VersionPolicy says how Version names the chart version. A policy
+	// that resolves a version range resolves it before the cache lookup,
+	// so the cache entry and Result.Version are the resolved version.
+	VersionPolicy VersionPolicy
 }
 
 type Result struct {
@@ -46,6 +50,12 @@ type Result struct {
 	// Stale reports a cached chart older than Options.MaxAge (or of unknown
 	// age) that was reused because Options.Offline forbids refetching it.
 	Stale bool
+	// VersionListStale reports a version range that an offline run
+	// resolved from a recorded version list older than Options.MaxAge (or
+	// of unknown age). VersionListFetchedAt is when that list was fetched,
+	// zero when unknown.
+	VersionListStale     bool
+	VersionListFetchedAt time.Time
 }
 
 type Options struct {
@@ -59,6 +69,27 @@ type Options struct {
 	ForbiddenRoots  []string
 	PassCredentials bool
 	Credentials     ChartCredentials
+	// EntryHooks, when set, lets the caller act on the resolved cache
+	// entry while the acquirer holds its lock.
+	EntryHooks *EntryHooks
+}
+
+// EntryHooks act on a chart cache entry while the acquirer holds the lock
+// on that entry. The entry is the resolved one, so requests whose versions
+// resolve to one version, such as 1.2.* and ~1.2.0, share it.
+type EntryHooks struct {
+	// Refreshed reports whether this run already refreshed the entry at
+	// entryPath. A refresh then reuses the cached entry, so a run
+	// refreshes each entry at most once.
+	Refreshed func(entryPath string) bool
+	// MarkRefreshed records that a refresh fetched and published the entry
+	// at entryPath. A failed fetch is not recorded, so the next refresh
+	// request tries again.
+	MarkRefreshed func(entryPath string)
+	// Hold runs on a successful result before the acquirer releases the
+	// entry lock, so the caller can copy the entry before another request
+	// replaces it. Its result replaces the result.
+	Hold func(Result) (Result, error)
 }
 
 type ChartCredentials struct {

@@ -1,29 +1,40 @@
 package app
 
 import (
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/render"
 )
 
 // helmLocalSelectionPaths returns the repository paths that a Helm source
 // rendering from the local tree at root reads through helm.valueFiles and
 // helm.fileParameters. $ref and env-templated entries are not local paths.
-// A file parameter path that starts with "/" is relative to the repository
-// root, as in Argo CD. A file parameter also owns the symlinks that its
+// A value file or file parameter path that starts with "/" is relative to
+// the repository root, as in Argo CD. Each also owns the symlinks that its
 // path passes through and the paths they end at
-// (helmFileParameterSymlinkSelectionPaths).
-func helmLocalSelectionPaths(root string, source argoappv1.ApplicationSource) []string {
+// (helmFileParameterSymlinkSelectionPaths, helmValueFileSymlinkSelectionPaths).
+func helmLocalSelectionPaths(root string, globs helmGlobMemo, source argoappv1.ApplicationSource) []string {
 	if source.Helm == nil {
 		return nil
 	}
 	var paths []string
 	for _, valueFile := range source.Helm.ValueFiles {
-		if selectionPath, ok := helmLocalInputSelectionPath(source.Path, valueFile, true); ok {
+		sourcePath, file := source.Path, valueFile
+		if strings.HasPrefix(file, "/") {
+			sourcePath, file = "", strings.TrimLeft(file, "/")
+		}
+		if selectionPath, ok := helmLocalInputSelectionPath(sourcePath, file, true); ok {
 			paths = append(paths, selectionPath)
+		}
+		if helmInputPathHasGlob(valueFile) {
+			paths = append(paths, helmValueFileGlobSymlinkSelectionPaths(globs, root, source.Path, valueFile)...)
+		} else {
+			paths = append(paths, helmValueFileSymlinkSelectionPaths(root, source.Path, valueFile)...)
 		}
 	}
 	for _, parameter := range source.Helm.FileParameters {
@@ -48,6 +59,67 @@ func helmLocalSelectionPaths(root string, source argoappv1.ApplicationSource) []
 // env-templated path, a URL, or a path that does not resolve. Paths outside
 // root are left out: drydock never reads them.
 func helmFileParameterSymlinkSelectionPaths(root, appRel, name, file string) []string {
+	return helmInputSymlinkSelectionPaths(root, appRel, file, func(appPath, absRoot, file string) (render.HelmFileParameterInputs, error) {
+		return render.HelmFileParameterInputPaths(name, appPath, absRoot, file)
+	})
+}
+
+// helmValueFileSymlinkSelectionPaths returns the repository paths that
+// decide what the local value file path file reads when that is not the
+// path as written: each symlink on the way and the paths they end at
+// (render.HelmValueFileInputPaths). It owns nothing more for a plain path,
+// an env-templated path, a URL, or a path that does not resolve.
+func helmValueFileSymlinkSelectionPaths(root, appRel, file string) []string {
+	return helmInputSymlinkSelectionPaths(root, appRel, file, render.HelmValueFileInputPaths)
+}
+
+// helmGlobMemo holds the paths that each value file glob owns on one tree,
+// by root and pattern, so a glob that many Applications name expands once
+// per diff side.
+type helmGlobMemo map[string][]string
+
+// helmValueFileGlobSymlinkSelectionPaths expands the local value file glob
+// file, relative to appRel or, with a leading "/", to root, on the tree at
+// root, as the render expands it with doublestar. A backslash escapes the
+// next character, as in doublestar. Each match owns the symlinks on its way
+// and the file where it ends, as a value file written as that path does
+// (helmValueFileSymlinkSelectionPaths). The static directory of the glob is
+// owned elsewhere (helmLocalInputSelectionPath). memo, when set, keeps the
+// result.
+func helmValueFileGlobSymlinkSelectionPaths(memo helmGlobMemo, root, appRel, file string) []string {
+	if strings.TrimSpace(file) == "" || strings.Contains(file, "$") || strings.Contains(file, "://") {
+		return nil
+	}
+	pattern := path.Join(normalizeSelectPath(appRel), file)
+	if strings.HasPrefix(file, "/") {
+		pattern = path.Clean(strings.TrimLeft(file, "/"))
+	}
+	if pattern == "." || pattern == ".." || strings.HasPrefix(pattern, "../") || path.IsAbs(pattern) {
+		return nil
+	}
+	key := root + "\x00" + pattern
+	if paths, ok := memo[key]; ok {
+		return paths
+	}
+	matches, err := doublestar.Glob(os.DirFS(root), pattern)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, match := range matches {
+		paths = append(paths, helmValueFileSymlinkSelectionPaths(root, "", "/"+match)...)
+	}
+	if memo != nil {
+		memo[key] = paths
+	}
+	return paths
+}
+
+// helmInputSymlinkSelectionPaths returns the symlinks and ends that inputs
+// reports for the local path file, relative to appRel under root, as
+// repository paths. Paths outside root are left out: drydock never reads
+// them.
+func helmInputSymlinkSelectionPaths(root, appRel, file string, inputPaths func(appPath, absRoot, file string) (render.HelmFileParameterInputs, error)) []string {
 	if strings.TrimSpace(file) == "" || strings.Contains(file, "$") || strings.Contains(file, "://") {
 		return nil
 	}
@@ -59,7 +131,7 @@ func helmFileParameterSymlinkSelectionPaths(root, appRel, name, file string) []s
 	if err != nil {
 		return nil
 	}
-	inputs, err := render.HelmFileParameterInputPaths(name, filepath.Join(absRoot, filepath.FromSlash(appRel)), absRoot, filepath.FromSlash(file))
+	inputs, err := inputPaths(filepath.Join(absRoot, filepath.FromSlash(appRel)), absRoot, filepath.FromSlash(file))
 	if err != nil || (len(inputs.Symlinks) == 0 && inputs.Written == "") {
 		return nil
 	}
@@ -106,6 +178,12 @@ func helmRefSelectionPaths(tree *selectionTree, application argoappv1.Applicatio
 		for _, valueFile := range helm.ValueFiles {
 			if selectionPath, ok := helmRefInputSelectionPath(tree, plan, sourcePlan, valueFile, true); ok {
 				paths = append(paths, selectionPath)
+				_, refPath, _ := splitHelmValueFileRef(valueFile)
+				if helmInputPathHasGlob(refPath) {
+					paths = append(paths, helmValueFileGlobSymlinkSelectionPaths(tree.helmGlobs, tree.root, "", "/"+refPath)...)
+				} else {
+					paths = append(paths, helmValueFileSymlinkSelectionPaths(tree.root, "", "/"+refPath)...)
+				}
 			}
 		}
 		for _, parameter := range helm.FileParameters {
