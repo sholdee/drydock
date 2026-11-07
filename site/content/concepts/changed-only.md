@@ -197,11 +197,11 @@ the ref root is the local tree: a
 [self-repository](/concepts/source-acquisition/#self-repository-sources) ref, a
 ref `--repo-map`ped to the repository root, or one sharing the repository and
 revision of a source whose path is in the checkout. A ref drydock fetches,
-including a pinned commit SHA or OCI, owns nothing. A file parameter path that
-starts with `/` is relative to the repository root, as in Argo CD. When a file
-parameter path passes through a symlink, the source also owns each symlink on
-the way and the file where the path ends, so a change to the target of the
-symlink selects it. The same holds for the Kustomize inputs that an override
+including a pinned commit SHA or OCI, owns nothing. A value file or file
+parameter path that starts with `/` is relative to the repository root, as in
+Argo CD. When a value file or file parameter path passes through a symlink,
+the source also owns each symlink on the way and the file where the path ends,
+so a change to the target of the symlink selects it. The same holds for the Kustomize inputs that an override
 file adds: drydock reads every source with its override files merged in, as the
 render does.
 

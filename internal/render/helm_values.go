@@ -66,13 +66,8 @@ func CollectHelmLocalInputPaths(input HelmLocalInputOptions) ([]HelmLocalInputPa
 	// helm reads only the last file parameter per name (applyHelmParameters).
 	// File parameters stay out of the explicit identities: the renderer's
 	// value-file glob skips only explicit value files.
-	if err := out.collectExplicitIdentities(opts.ValueFiles); err != nil {
+	if err := out.collectValueFiles(opts.ValueFiles); err != nil {
 		return nil, err
-	}
-	for _, raw := range opts.ValueFiles {
-		if err := out.collectValueFile(raw); err != nil {
-			return nil, err
-		}
 	}
 	for _, parameter := range EffectiveHelmFileParameters(opts.HelmFileParameters) {
 		if err := out.collectFileParameter(parameter, false); err != nil {
@@ -151,6 +146,91 @@ func (c *helmLocalInputCollector) collectValueFile(raw string) error {
 		return c.collectGlob(file)
 	}
 	return c.collectLocal(file, c.opts.IgnoreMissingValueFiles)
+}
+
+// collectValueFiles adds the inputs of the value files files.
+func (c *helmLocalInputCollector) collectValueFiles(files []string) error {
+	if argoHelmValueFiles(c.opts) {
+		for _, raw := range files {
+			if err := c.collectArgoValueFile(raw); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := c.collectExplicitIdentities(files); err != nil {
+		return err
+	}
+	for _, raw := range files {
+		if err := c.collectValueFile(raw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectArgoValueFile adds the inputs of one value file that the Argo CD
+// resolver reads (planArgo): every symlink that resolving it passes
+// through and the file that helm reads (HelmValueFileInputPaths), for each
+// match of a glob too. Inputs are a set, so a file that the render reads
+// once for two entries is still one input. A missing file is an optional
+// input with ignoreMissingValueFiles.
+func (c *helmLocalInputCollector) collectArgoValueFile(raw string) error {
+	if _, err := c.resolvedInput(raw); err != nil {
+		return err
+	}
+	loader := newHelmValueFileLoader(context.Background(), c.source.RepoRoot, helmValueFilesBaseDir(c.source, c.opts), helmValueFilesBoundaryRoot(c.source, c.opts), c.opts.RefRoots, c.opts.IgnoreMissingValueFiles, c.opts, nil)
+	target, err := loader.resolveArgoHelmValueFile(raw)
+	if err != nil {
+		return err
+	}
+	if target.url != "" {
+		return fmt.Errorf("remote Helm value file %q is not persistent-cache eligible", remote.RedactURL(target.url))
+	}
+	if target.glob() {
+		matches, err := loader.expandArgoHelmValueGlob(raw, target)
+		if err != nil {
+			return err
+		}
+		if len(matches) == 0 {
+			return fmt.Errorf("optional missing Helm value file glob %q cannot be represented in committed path digest", target.file)
+		}
+		for _, match := range matches {
+			rel, err := filepath.Rel(target.root, match)
+			if err != nil {
+				return err
+			}
+			if err := c.addArgoValueFileInputs(target.root, target.root, rel, target.file, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	p, err := helmArgoInputPathFor(c.source.RepoRoot, helmValueFilesBaseDir(c.source, c.opts), helmValueFilesBoundaryRoot(c.source, c.opts), c.opts, "helm value file", raw)
+	if err != nil {
+		return err
+	}
+	return c.addArgoValueFileInputs(p.appPath, p.root, p.path, target.file, c.opts.IgnoreMissingValueFiles)
+}
+
+// addArgoValueFileInputs adds the symlinks and the ends of the local value
+// file path file, relative to appPath and under root. The file must exist
+// unless optional is set.
+func (c *helmLocalInputCollector) addArgoValueFileInputs(appPath, root, file, display string, optional bool) error {
+	inputs, err := HelmValueFileInputPaths(appPath, root, file)
+	if err != nil {
+		return err
+	}
+	if inputs.Read == "" {
+		return fmt.Errorf("helm value file %q does not resolve to a file", display)
+	}
+	if _, err := os.Stat(inputs.Read); err != nil {
+		if !optional || !os.IsNotExist(err) {
+			return err
+		}
+		return c.addFileParameterInputs(inputs, true)
+	}
+	return c.addFileParameterInputs(inputs, false)
 }
 
 // collectFileParameter adds the inputs of one helm.fileParameters path:
@@ -421,12 +501,18 @@ type plannedHelmValueFile struct {
 	url     string
 	root    string
 	path    string
+	// argo marks a local file that the Argo CD resolver planned
+	// (planArgo), which helm reads through symlinks.
+	argo bool
 }
 
 // planAll resolves every value file path, expanding globs, without reading
 // any file, as the repo-server's getResolvedValueFiles does before it runs
 // helm (reposerver/repository/repository.go:1468-1581 at v3.6.1).
 func (l *helmValueFileLoader) planAll(files []string) ([]plannedHelmValueFile, error) {
+	if argoHelmValueFiles(l.opts) {
+		return l.planArgo(files)
+	}
 	if err := l.collectExplicitIdentities(files); err != nil {
 		return nil, err
 	}
@@ -551,6 +637,9 @@ func (l *helmValueFileLoader) read(planned plannedHelmValueFile) (loadedHelmValu
 		values, err := l.loadRemote(planned.url)
 		return values, err == nil, err
 	}
+	if planned.argo {
+		return l.loadArgoLocal(planned)
+	}
 	return l.loadLocalResolved(planned.root, planned.path, planned.display)
 }
 
@@ -573,36 +662,54 @@ func (l *helmValueFileLoader) loadLocalResolved(root, resolved, display string) 
 }
 
 func (l *helmValueFileLoader) loadRemote(file string) (loadedHelmValueFile, error) {
+	data, err := readHelmRemoteFile(l.ctx, l.opts, l.repoRoot, "helm value file", file)
+	if err != nil {
+		return loadedHelmValueFile{}, err
+	}
+	values, err := l.decode(remote.RedactURL(file), data)
+	if err != nil {
+		return loadedHelmValueFile{}, err
+	}
+	return loadedHelmValueFile{display: remote.RedactURL(file), values: values}, nil
+}
+
+// readHelmRemoteFile returns the data of the remote value file or file
+// parameter file, a URL that helm fetches with its HTTP getter
+// (pkg/cli/values readFile at helm v4.3.1). drydock fetches it through the
+// remote-resource cache, so --offline reads only a cached copy. The scheme
+// must be allowed (helm.valuesFileSchemes) and must be http or https.
+// label names the kind of file in errors.
+func readHelmRemoteFile(ctx context.Context, opts RenderOptions, repoRoot, label, file string) ([]byte, error) {
 	parsed, err := url.Parse(file)
 	if err != nil {
-		return loadedHelmValueFile{}, fmt.Errorf("parse helm value file URL %q: %w", remote.RedactURL(file), err)
+		return nil, fmt.Errorf("parse %s URL %q: %w", label, remote.RedactURL(file), err)
 	}
-	if !helmValueFileSchemeAllowed(parsed.Scheme, l.opts) {
-		return loadedHelmValueFile{}, fmt.Errorf("helm value file URL scheme %q is not allowed", parsed.Scheme)
+	if !helmValueFileSchemeAllowed(parsed.Scheme, opts) {
+		return nil, fmt.Errorf("%s URL scheme %q is not allowed", label, parsed.Scheme)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return loadedHelmValueFile{}, fmt.Errorf("helm value file URL scheme %q is configured but not supported by drydock", parsed.Scheme)
+		return nil, fmt.Errorf("%s URL scheme %q is configured but not supported by drydock", label, parsed.Scheme)
 	}
-	acquirer := l.opts.RemoteResourceAcquirer
+	acquirer := opts.RemoteResourceAcquirer
 	if acquirer == nil {
 		acquirer = remote.DefaultAcquirer{}
 	}
-	forbiddenRoots := l.opts.RemoteResourceForbiddenRoots
+	forbiddenRoots := opts.RemoteResourceForbiddenRoots
 	if len(forbiddenRoots) == 0 {
-		forbiddenRoots = []string{l.repoRoot}
+		forbiddenRoots = []string{repoRoot}
 	}
 	request := remote.Request{URL: file, Kind: remote.RequestHTTPFile}
-	acquired, err := acquirer.Acquire(l.ctx, request, remote.Options{
-		CacheDir:       l.opts.RemoteResourceCacheDir,
-		Offline:        l.opts.OfflineRemoteResources,
-		Refresh:        l.opts.RefreshRemoteResources,
+	acquired, err := acquirer.Acquire(ctx, request, remote.Options{
+		CacheDir:       opts.RemoteResourceCacheDir,
+		Offline:        opts.OfflineRemoteResources,
+		Refresh:        opts.RefreshRemoteResources,
 		ForbiddenRoots: forbiddenRoots,
-		Credentials:    l.opts.RemoteResourceCredentials,
-		GitCredentials: l.opts.RemoteResourceGitCredentials,
+		Credentials:    opts.RemoteResourceCredentials,
+		GitCredentials: opts.RemoteResourceGitCredentials,
 	})
 	if err != nil {
-		recordRemoteCacheEvent(l.opts, request, err, remote.Result{})
-		return loadedHelmValueFile{}, fmt.Errorf("acquire helm value file %s: %s", remote.RedactURL(file), remote.RedactCredentialError(err.Error(), l.opts.RemoteResourceCredentials, l.opts.RemoteResourceGitCredentials))
+		recordRemoteCacheEvent(opts, request, err, remote.Result{})
+		return nil, fmt.Errorf("acquire %s %s: %s", label, remote.RedactURL(file), remote.RedactCredentialError(err.Error(), opts.RemoteResourceCredentials, opts.RemoteResourceGitCredentials))
 	}
 	release := acquired.Release
 	defer func() {
@@ -610,19 +717,15 @@ func (l *helmValueFileLoader) loadRemote(file string) (loadedHelmValueFile, erro
 			release()
 		}
 	}()
-	recordRemoteCacheEvent(l.opts, request, nil, acquired)
+	recordRemoteCacheEvent(opts, request, nil, acquired)
 	if err := rejectSymlinkedPath(filepath.Dir(acquired.Path), acquired.Path); err != nil {
-		return loadedHelmValueFile{}, fmt.Errorf("helm value file %s: %w", remote.RedactURL(file), err)
+		return nil, fmt.Errorf("%s %s: %w", label, remote.RedactURL(file), err)
 	}
 	data, err := os.ReadFile(acquired.Path)
 	if err != nil {
-		return loadedHelmValueFile{}, fmt.Errorf("read helm value file %s: %w", remote.RedactURL(file), err)
+		return nil, fmt.Errorf("read %s %s: %w", label, remote.RedactURL(file), err)
 	}
-	values, err := l.decode(remote.RedactURL(file), data)
-	if err != nil {
-		return loadedHelmValueFile{}, err
-	}
-	return loadedHelmValueFile{display: remote.RedactURL(file), values: values}, nil
+	return data, nil
 }
 
 // parseHelmValueFile decodes a values file exactly as `helm template --values`

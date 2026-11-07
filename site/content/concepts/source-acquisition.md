@@ -119,10 +119,14 @@ already be available under `charts/`. Missing local dependencies fail with a
 clear vendored-chart requirement.
 
 Helm `valueFiles` support local paths, `$ref/...` paths, glob expansion,
-HTTP(S) remote value files, and discovered `helm.valuesFileSchemes`. Remote
-value files use the remote-resource cache and `--remote-*` credentials, not the
-chart cache. Explicitly empty `helm.valuesFileSchemes` disables remote
-value-file URLs.
+HTTP(S) remote value files, and discovered `helm.valuesFileSchemes`. Local
+paths resolve as in the Argo CD repo-server: a path that starts with `/` is
+relative to the repository root, symlinks in the repository are followed, and
+a file that the list names twice is read once, at its first place. drydock
+never reads a value file outside the repository or in `.git`. Remote value
+files and `fileParameters` URLs use the remote-resource cache and `--remote-*`
+credentials, not the chart cache. Explicitly empty `helm.valuesFileSchemes`
+disables remote value-file URLs.
 
 `source.helm.passCredentials` affects only HTTP chart repositories with
 explicit `--helm-*` credentials. By default, drydock sends those credentials to

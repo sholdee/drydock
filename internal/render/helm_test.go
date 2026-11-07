@@ -783,8 +783,8 @@ func TestHelmRendererRejectsValueFilePathEscape(t *testing.T) {
 	if err == nil {
 		t.Fatal("Render() error = nil, want path escape error")
 	}
-	if !strings.Contains(err.Error(), "escapes value files") {
-		t.Fatalf("Render() error = %v, want value files escape", err)
+	if !strings.Contains(err.Error(), "error resolving helm value files: error resolving value file path: file '../../../outside.yaml' resolved to outside repository root") {
+		t.Fatalf("Render() error = %v, want the repo-server's escape error", err)
 	}
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
@@ -794,7 +794,10 @@ func TestHelmRendererRejectsValueFilePathEscape(t *testing.T) {
 	}
 }
 
-func TestHelmRendererRejectsSymlinkedValueFiles(t *testing.T) {
+// A $ref value file that is a symlink to a file outside the ref root fails
+// as in the repo-server: the resolver follows the symlink and the target is
+// outside the root.
+func TestHelmRendererRejectsValueFileSymlinkOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	valuesRoot := t.TempDir()
 	outside := t.TempDir()
@@ -813,10 +816,10 @@ value: outside
 		ValueFiles: []string{"$values/values.yaml"},
 	})
 	if err == nil {
-		t.Fatal("Render() error = nil, want symlink error")
+		t.Fatal("Render() error = nil, want outside error")
 	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("Render() error = %v, want symlink error", err)
+	if !strings.Contains(err.Error(), "error resolving value file path: error resolving value file path: file '/values.yaml' resolved to outside repository root") {
+		t.Fatalf("Render() error = %v, want the repo-server's outside error", err)
 	}
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
@@ -1044,7 +1047,7 @@ func TestHelmRendererRejectsDisallowedRemoteValueFileSchemes(t *testing.T) {
 			name:       "default allows only http and https",
 			opts:       RenderOptions{},
 			valueFile:  "s3://bucket/values.yaml",
-			wantErr:    `scheme "s3" is not allowed`,
+			wantErr:    `error resolving value file path: the URL scheme 's3' is not allowed`,
 			wantNoCall: true,
 		},
 		{
@@ -1053,7 +1056,7 @@ func TestHelmRendererRejectsDisallowedRemoteValueFileSchemes(t *testing.T) {
 				HelmValueFileSchemesSet: true,
 			},
 			valueFile:  "https://values.example.test/team/demo.yaml",
-			wantErr:    `scheme "https" is not allowed`,
+			wantErr:    `error resolving value file path: the URL scheme 'https' is not allowed`,
 			wantNoCall: true,
 		},
 		{
@@ -2265,8 +2268,8 @@ func TestHelmRendererRejectsValueFileEscapingRepoRoot(t *testing.T) {
 	if err == nil {
 		t.Fatal("Render() error = nil, want repo root escape error")
 	}
-	if !strings.Contains(err.Error(), "escapes value files") {
-		t.Fatalf("Render() error = %v, want value files escape", err)
+	if !strings.Contains(err.Error(), "error resolving helm value files: error resolving value file path: file '../../../outside.yaml' resolved to outside repository root") {
+		t.Fatalf("Render() error = %v, want the repo-server's escape error", err)
 	}
 }
 
