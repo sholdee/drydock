@@ -14,6 +14,7 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 type diagReport struct {
@@ -71,6 +72,7 @@ func newDiagCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(cmd, &flags)
+	bindSelectorFlag(cmd, &flags)
 	cmd.Flags().BoolVar(&options.includeSettings, "settings", false, "include redacted Argo CD settings summary in structured diagnostic output")
 	cmd.Flags().BoolVar(&options.includeRender, "render", false, "include render-backed diagnostics by rendering Applications")
 	cmd.Flags().BoolVar(&options.includePluginExecutions, "plugin-executions", false, "include plugin execution metadata in structured diagnostic output; renders Applications")
@@ -88,6 +90,10 @@ func runDiagCommand(cmd *cobra.Command, deps Dependencies, flags commonFlags, op
 	if parseErr != nil {
 		return parseErr
 	}
+	selector, parseErr := parseApplicationSelector(flags.selector)
+	if parseErr != nil {
+		return parseErr
+	}
 	repoMaps, err := parseRepoMaps(flags.repoMaps)
 	if err != nil {
 		return err
@@ -100,9 +106,13 @@ func runDiagCommand(cmd *cobra.Command, deps Dependencies, flags commonFlags, op
 		return err
 	}
 	request.RecordCacheEvents = flags.cacheEvents
-	result, err := runDiag(context.Background(), deps.Orchestrator, request, diagMode{
+	mode := diagMode{
 		Render: options.includeRender || flags.cacheEvents || options.includePluginExecutions,
-	})
+	}
+	result, err := runDiag(context.Background(), deps.Orchestrator, request, mode, applicationSelectorFunc(selector))
+	if err == nil {
+		result.Diagnostics = append(result.Diagnostics, diagSelectorNoMatchDiagnostics(selector, len(result.Applications), mode)...)
+	}
 	result.Diagnostics = diagnostic.FilterProjectDiagnostics(diagnostic.WithStableCodes(result.Diagnostics), request.ProjectDiagnosticsMode)
 	if err != nil && len(result.Diagnostics) == 0 {
 		return err
@@ -179,15 +189,34 @@ func sameCleanPath(left, right string) bool {
 	return filepath.Clean(left) == filepath.Clean(right)
 }
 
+// diagStaticSelectorHint ends the selector.no-match warning of a diag run
+// without rendering: static discovery does not see the child Applications
+// that only rendering finds, so the selector may match one of them.
+const diagStaticSelectorHint = "; static discovery does not see child Applications that only rendering finds, and --render includes them"
+
+// diagSelectorNoMatchDiagnostics is selectorNoMatchDiagnostics for diag. A
+// static run adds diagStaticSelectorHint to the warning.
+func diagSelectorNoMatchDiagnostics(selector labels.Selector, selected int, mode diagMode) []diagnostic.Diagnostic {
+	diagnostics := selectorNoMatchDiagnostics(selector, selected)
+	if !mode.Render {
+		for i := range diagnostics {
+			diagnostics[i].Message += diagStaticSelectorHint
+		}
+	}
+	return diagnostics
+}
+
 type diagMode struct {
 	Render bool
 }
 
-func runDiag(ctx context.Context, orchestrator Orchestrator, request app.DiagRequest, mode diagMode) (app.DiagResult, error) {
+// runDiag runs the static or the render-backed diagnostics. selectApps, when
+// it is not nil, limits the Applications that are validated and rendered.
+func runDiag(ctx context.Context, orchestrator Orchestrator, request app.DiagRequest, mode diagMode, selectApps app.ApplicationSelector) (app.DiagResult, error) {
 	if mode.Render {
-		return orchestrator.Diag(ctx, request)
+		return orchestrator.Diag(ctx, request, selectApps)
 	}
-	return orchestrator.DiagStatic(ctx, request)
+	return orchestrator.DiagStatic(ctx, request, selectApps)
 }
 
 func nonNilDiagnostics(diagnostics []diagnostic.Diagnostic) []diagnostic.Diagnostic {

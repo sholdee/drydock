@@ -1780,7 +1780,7 @@ func TestOrchestratorDiagReturnsExecPolicyPluginMetadata(t *testing.T) {
 		pluginPolicy:            policy,
 		pluginPolicyFingerprint: fingerprint,
 		pluginPolicyExecTrusted: true,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Diag() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
 	}
@@ -3416,7 +3416,7 @@ plugins:
 		assertWarning(t, result.Diagnostics)
 	})
 	t.Run("Diag", func(t *testing.T) {
-		result, err := (Orchestrator{}).Diag(context.Background(), request)
+		result, err := (Orchestrator{}).Diag(context.Background(), request, nil)
 		if err != nil {
 			t.Fatalf("Diag() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
 		}

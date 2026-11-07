@@ -39,6 +39,9 @@ uncommitted changes, against committed `main`. `--repo . --ref feature
 ## Useful Diff Flags
 
 - `--changed-only=false` renders all discovered Applications.
+- `-l team=payments` diffs only the Applications whose labels match. With
+  changed-only, an Application must match and be changed. See
+  [Select Applications by label](/reference/cli/#select-applications-by-label).
 - `--strict-changed-only` fails if changed-file ownership is incomplete.
 - `--changed-only-include 'apps/**'` considers only matching changed paths.
 - `--changed-only-ignore '.github/**'` removes matching paths before ownership.

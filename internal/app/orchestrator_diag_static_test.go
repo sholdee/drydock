@@ -33,7 +33,7 @@ func TestOrchestratorDiagStaticReportsProjectDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeStaticProjectDenialFixture(t, root)
 
-	static, err := Orchestrator{}.DiagStatic(context.Background(), DiagRequest{Path: root})
+	static, err := Orchestrator{}.DiagStatic(context.Background(), DiagRequest{Path: root}, nil)
 	if err != nil {
 		t.Fatalf("DiagStatic() error = %v", err)
 	}
@@ -46,7 +46,7 @@ func TestOrchestratorDiagStaticReportsProjectDiagnostics(t *testing.T) {
 
 	// The render-backed path reports the same spec-level denial, so static
 	// and rendered diag agree on everything that does not need manifests.
-	rendered, err := Orchestrator{}.Diag(context.Background(), DiagRequest{Path: root})
+	rendered, err := Orchestrator{}.Diag(context.Background(), DiagRequest{Path: root}, nil)
 	if err != nil {
 		t.Fatalf("Diag() error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestOrchestratorDiagStaticHonoursProjectDiagnosticsOff(t *testing.T) {
 	root := t.TempDir()
 	writeStaticProjectDenialFixture(t, root)
 
-	result, err := Orchestrator{}.DiagStatic(context.Background(), DiagRequest{Path: root, ProjectDiagnosticsMode: diagnostic.ProjectDiagnosticsModeOff})
+	result, err := Orchestrator{}.DiagStatic(context.Background(), DiagRequest{Path: root, ProjectDiagnosticsMode: diagnostic.ProjectDiagnosticsModeOff}, nil)
 	if err != nil {
 		t.Fatalf("DiagStatic() error = %v", err)
 	}
@@ -74,7 +74,7 @@ func TestOrchestratorDiagStaticStrictFailsProjectDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeStaticProjectDenialFixture(t, root)
 
-	result, err := Orchestrator{}.DiagStatic(context.Background(), DiagRequest{Path: root, Strict: true})
+	result, err := Orchestrator{}.DiagStatic(context.Background(), DiagRequest{Path: root, Strict: true}, nil)
 	if err == nil {
 		t.Fatalf("DiagStatic() error = nil, want strict failure: %#v", result.Diagnostics)
 	}
@@ -103,7 +103,7 @@ spec:
       namespace: workloads
 `)
 
-	result, err := Orchestrator{}.DiagStatic(context.Background(), DiagRequest{Path: root, Strict: true})
+	result, err := Orchestrator{}.DiagStatic(context.Background(), DiagRequest{Path: root, Strict: true}, nil)
 	if err != nil {
 		t.Fatalf("DiagStatic() error = %v", err)
 	}

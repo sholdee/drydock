@@ -132,13 +132,33 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 
 func bindPathDiscoveryFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.path, "path", flags.path, "repository path to inspect")
-	cmd.Flags().StringVarP(&flags.selector, "selector", "l", flags.selector, "label selector for Applications")
 	cmd.Flags().StringVar(&flags.discoveryMode, "discovery-mode", flags.discoveryMode, "Application discovery mode: fleet or static")
 	cmd.Flags().IntVar(&flags.maxDiscoveryDepth, "max-discovery-depth", flags.maxDiscoveryDepth, "maximum recursive rendered Application discovery depth")
 	cmd.Flags().StringArrayVar(&flags.discoverKustomize, "discover-kustomize", flags.discoverKustomize, "additional local Kustomize path to render for Argo CD Application discovery")
 	cmd.Flags().StringArrayVar(&flags.discoverIgnore, "discover-ignore", flags.discoverIgnore, "repository-relative glob excluded from discovery before decoding")
 	cmd.Flags().StringArrayVar(&flags.discoverManifest, "discover-manifest", flags.discoverManifest, "local Application/ApplicationSet YAML file outside the repository to add to discovery; a diff feeds the same file to both sides")
 	cmd.Flags().StringArrayVar(&flags.repoMaps, "repo-map", flags.repoMaps, "repository URL mapping in from=to form")
+}
+
+// bindSelectorFlag registers -l/--selector. Only commands that run on many
+// Applications register it as a working flag, and each of them filters on
+// it: a command that names one Application (build app, test app, diff app)
+// has nothing for a selector to choose (bindIgnoredSelectorFlag).
+func bindSelectorFlag(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().StringVarP(&flags.selector, "selector", "l", flags.selector, "label selector for Applications")
+}
+
+// singleApplicationSelectorDeprecation is the notice that build app, test
+// app, and diff app print when -l/--selector is passed.
+const singleApplicationSelectorDeprecation = "-l does not apply to a single Application and is ignored"
+
+// bindIgnoredSelectorFlag keeps -l/--selector on a command that names one
+// Application. Those commands once accepted the flag and ignored it, so
+// scripts may still pass it. The flag stays accepted and ignored, hidden from
+// help, and prints a deprecation notice when it is used.
+func bindIgnoredSelectorFlag(cmd *cobra.Command, flags *commonFlags) {
+	bindSelectorFlag(cmd, flags)
+	_ = cmd.Flags().MarkDeprecated("selector", singleApplicationSelectorDeprecation)
 }
 
 func bindAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {

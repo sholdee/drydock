@@ -47,13 +47,16 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 
 	var diagnostics []diagnostic.Diagnostic
 	var leftList, rightList diffSideOutcome
-	if request.ChangedOnly {
-		changedPaths, err := filteredChangedOnlyPaths(request)
-		if err != nil {
-			return BuildResult{}, BuildResult{}, diagnostics, err
-		}
-		if len(changedPaths) == 0 {
-			return BuildResult{}, BuildResult{}, diagnostics, nil
+	if request.ChangedOnly || selectsByLabels(request.LabelSelector) {
+		var changedPaths []string
+		if request.ChangedOnly {
+			changedPaths, err = filteredChangedOnlyPaths(request)
+			if err != nil {
+				return BuildResult{}, BuildResult{}, diagnostics, err
+			}
+			if len(changedPaths) == 0 {
+				return BuildResult{}, BuildResult{}, diagnostics, nil
+			}
 		}
 
 		leftList, rightList = runDiffSidePair(ctx, concurrent, o.ListApplications, leftBuildRequest, rightBuildRequest)
@@ -71,7 +74,7 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
 		rightBuildRequest.discovered = rightList.result.discovered
 
-		leftApplications, rightApplications, selectionDiags, err := changedOnlyApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList.result, rightList.result, changedPaths, o.pluginRenderer(leftBuildRequest) != nil)
+		leftApplications, rightApplications, selectionDiags, err := o.diffSideApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList.result, rightList.result, changedPaths)
 		diagnostics = append(diagnostics, selectionDiags...)
 		if err != nil {
 			return BuildResult{}, BuildResult{}, diagnostics, err
@@ -91,6 +94,56 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 	return leftBuild.result, rightBuild.result, diagnostics, nil
 }
 
+// diffSideApplications returns the Applications each side of a diff renders
+// after both sides are listed: the changed-only selection
+// (changedOnlyApplications) when request.ChangedOnly is set, or every listed
+// Application, narrowed to the label selection (selectDiffSidesByLabels) when
+// request.LabelSelector is set. A selector that matches no listed
+// Application adds a SelectorNoMatchCode warning.
+func (o Orchestrator) diffSideApplications(ctx context.Context, request DiffRequest, leftBuildRequest, rightBuildRequest BuildRequest, leftList, rightList BuildResult, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []diagnostic.Diagnostic, error) {
+	leftApplications, rightApplications := leftList.Applications, rightList.Applications
+	var diagnostics []diagnostic.Diagnostic
+	if request.ChangedOnly {
+		var err error
+		leftApplications, rightApplications, diagnostics, err = changedOnlyApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList, rightList, changedPaths, o.pluginRenderer(leftBuildRequest) != nil)
+		if err != nil {
+			return nil, nil, diagnostics, err
+		}
+	}
+	if !selectsByLabels(request.LabelSelector) {
+		return leftApplications, rightApplications, diagnostics, nil
+	}
+	diagnostics = selectedRenderAllDiagnostics(diagnostics)
+	leftApplications, rightApplications, matched := selectDiffSidesByLabels(request.LabelSelector, leftList.Applications, rightList.Applications, leftApplications, rightApplications)
+	if !matched {
+		diagnostics = append(diagnostics, SelectorNoMatchDiagnostic(request.LabelSelector))
+	}
+	return leftApplications, rightApplications, diagnostics, nil
+}
+
+// renderAllApplications ends the message of each changed-only render-all
+// warning. Under a label selector, the render-all renders only the selected
+// Applications, so selectedRenderAllDiagnostics replaces it with
+// renderAllSelectedApplications.
+const (
+	renderAllApplications         = "rendering all Applications"
+	renderAllSelectedApplications = "rendering all selected Applications"
+)
+
+// selectedRenderAllDiagnostics returns diagnostics with each changed-only
+// render-all message changed to say that only the selected Applications
+// render.
+func selectedRenderAllDiagnostics(diagnostics []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	out := make([]diagnostic.Diagnostic, 0, len(diagnostics))
+	for _, diag := range diagnostics {
+		if diag.Category == "changed-only" {
+			diag.Message = strings.Replace(diag.Message, renderAllApplications, renderAllSelectedApplications, 1)
+		}
+		out = append(out, diag)
+	}
+	return out
+}
+
 // changedOnlySettingsCode identifies the changed-only render-all an Argo CD
 // settings change forces. It is strict-exempt (strictExemptDiagnostic):
 // rendering every Application is the complete answer, not an ownership gap,
@@ -102,7 +155,7 @@ func changedOnlySettingsDiagnostic() diagnostic.Diagnostic {
 		Code:     changedOnlySettingsCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  "Argo CD settings changed; rendering all Applications",
+		Message:  "Argo CD settings changed; " + renderAllApplications,
 	}
 }
 
@@ -135,7 +188,7 @@ func changedOnlyProjectsDiagnostic() diagnostic.Diagnostic {
 		Code:     changedOnlyProjectsCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  "first AppProject declared or last AppProject removed on one side; rendering all Applications",
+		Message:  "first AppProject declared or last AppProject removed on one side; " + renderAllApplications,
 	}
 }
 
@@ -169,7 +222,7 @@ func changedOnlySymlinksUnknownDiagnostic(err error) diagnostic.Diagnostic {
 		Code:     changedOnlySymlinksCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  fmt.Sprintf("could not check the repository for out-of-bounds symlinks (%v); rendering all Applications", err),
+		Message:  fmt.Sprintf("could not check the repository for out-of-bounds symlinks (%v); %s", err, renderAllApplications),
 	}
 }
 
@@ -184,7 +237,7 @@ func changedOnlySymlinksDiagnostic(left, right string) diagnostic.Diagnostic {
 		Code:     changedOnlySymlinksCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  fmt.Sprintf("the first out-of-bounds symlink of the repository changed (left: %s, right: %s); Argo CD fails every Application that renders from a repository with one, so rendering all Applications", describe(left), describe(right)),
+		Message:  fmt.Sprintf("the first out-of-bounds symlink of the repository changed (left: %s, right: %s); Argo CD fails every Application that renders from a repository with one, so %s", describe(left), describe(right), renderAllApplications),
 	}
 }
 
@@ -297,7 +350,7 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	diag := diagnostic.Diagnostic{
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  fmt.Sprintf("changed-only could not map %d changed path(s); rendering all Applications: %s", len(unowned), strings.Join(unowned, ", ")),
+		Message:  fmt.Sprintf("changed-only could not map %d changed path(s); %s: %s", len(unowned), renderAllApplications, strings.Join(unowned, ", ")),
 	}
 	if request.StrictChangedOnly || request.Strict {
 		diag.Severity = diagnostic.SeverityError

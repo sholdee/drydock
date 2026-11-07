@@ -32,6 +32,7 @@ func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
+	bindSelectorFlag(apps, &appsFlags)
 
 	appFlags := defaultCommonFlags()
 	appFlags.output = string(cliformat.OutputYAML)
@@ -46,6 +47,7 @@ func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
+	bindIgnoredSelectorFlag(appCmd, &appFlags)
 
 	cmd.AddCommand(apps, appCmd)
 	return cmd
@@ -56,11 +58,24 @@ func runBuildApps(cmd *cobra.Command, deps Dependencies, flags commonFlags) erro
 	if err != nil {
 		return err
 	}
+	selector, err := parseApplicationSelector(flags.selector)
+	if err != nil {
+		return err
+	}
 	repoMaps, err := parseRepoMaps(flags.repoMaps)
 	if err != nil {
 		return err
 	}
-	result, err := deps.Orchestrator.Build(context.Background(), buildRequestFromFlags(cmd, flags, repoMaps))
+	request := buildRequestFromFlags(cmd, flags, repoMaps)
+	var result app.BuildResult
+	if selectApps := applicationSelectorFunc(selector); selectApps != nil {
+		result, err = deps.Orchestrator.BuildSelection(context.Background(), request, selectApps)
+		if err == nil {
+			result.Diagnostics = append(result.Diagnostics, selectorNoMatchDiagnostics(selector, len(result.Applications))...)
+		}
+	} else {
+		result, err = deps.Orchestrator.Build(context.Background(), request)
+	}
 	if err != nil {
 		if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 			return renderErr

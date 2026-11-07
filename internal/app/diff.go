@@ -22,6 +22,7 @@ import (
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 type DiffRequest struct {
@@ -48,6 +49,11 @@ type DiffRequest struct {
 	ApplicationSetOptions
 	CapabilityOptions
 	CRDScopeOptions
+	// LabelSelector, when it is set and not empty, limits the diff to the
+	// Applications whose metadata labels it matches
+	// (selectDiffSidesByLabels). With ChangedOnly, an Application is diffed
+	// only when it is selected and changed.
+	LabelSelector labels.Selector
 
 	changedPaths          []string
 	persistentRenderCache *persistentRenderCache

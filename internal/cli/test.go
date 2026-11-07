@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
-	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/app"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 //nolint:gocyclo // CLI flag binding and output-mode branching stay together for command readability.
@@ -39,6 +38,11 @@ func newTestCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			selector, err := parseApplicationSelector(appsFlags.selector)
+			if err != nil {
+				return err
+			}
+			emptyMessage := testEmptyMessage(selector)
 			repoMaps, err := parseRepoMaps(appsFlags.repoMaps)
 			if err != nil {
 				return err
@@ -49,17 +53,15 @@ func newTestCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			var liveReporter *testLiveReporter
 			if output == testOutputText && deps.isTerminal(cmd.OutOrStdout()) {
 				liveReporter = newTestLiveReporter(cmd.OutOrStdout(), cmd.ErrOrStderr(), deps.isTerminal(cmd.ErrOrStderr()))
+				liveReporter.emptyMessage = emptyMessage
 				buildRequest.StatusCallback = liveReporter.Handle
 			}
 			var result app.BuildResult
-			if strings.TrimSpace(appsFlags.selector) != "" {
-				selector, parseErr := parseApplicationSelector(appsFlags.selector)
-				if parseErr != nil {
-					return parseErr
+			if selectApps := applicationSelectorFunc(selector); selectApps != nil {
+				result, err = deps.Orchestrator.BuildSelection(context.Background(), buildRequest, selectApps)
+				if err == nil {
+					result.Diagnostics = append(result.Diagnostics, selectorNoMatchDiagnostics(selector, len(result.Applications))...)
 				}
-				result, err = deps.Orchestrator.BuildSelection(context.Background(), buildRequest, func(apps []argoappv1.Application) []argoappv1.Application {
-					return filterApplicationsBySelector(apps, selector)
-				})
 			} else {
 				result, err = deps.Orchestrator.Build(context.Background(), buildRequest)
 			}
@@ -88,13 +90,14 @@ func newTestCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 				}
 				return testCommandError(err, result.Statuses)
 			}
-			if renderErr := renderTestResult(cmd, result.Statuses, output, false, true); renderErr != nil {
+			if renderErr := renderTestResult(cmd, result.Statuses, output, false, emptyMessage); renderErr != nil {
 				return renderErr
 			}
 			return testCommandError(err, result.Statuses)
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
+	bindSelectorFlag(apps, &appsFlags)
 	bindLuaHealthTestFlag(apps, &appsFlags)
 
 	appFlags := defaultCommonFlags()
@@ -129,13 +132,14 @@ func newTestCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 					return eventsErr
 				}
 			}
-			if renderErr := renderTestResult(cmd, result.Statuses, output, deps.isTerminal(cmd.OutOrStdout()), false); renderErr != nil {
+			if renderErr := renderTestResult(cmd, result.Statuses, output, deps.isTerminal(cmd.OutOrStdout()), ""); renderErr != nil {
 				return renderErr
 			}
 			return testCommandError(err, result.Statuses)
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
+	bindIgnoredSelectorFlag(appCmd, &appFlags)
 	bindLuaHealthTestFlag(appCmd, &appFlags)
 
 	cmd.AddCommand(apps, appCmd)
@@ -146,10 +150,21 @@ func buildRequestFromFlags(cmd *cobra.Command, flags commonFlags, repoMaps []sou
 	return requestOptionsFromFlags(commandAwareFlags(cmd, flags), repoMaps).Build()
 }
 
-func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, output string, color, showEmptyMessage bool) error {
+// testEmptyMessage is the text that test apps prints when it tests no
+// Application.
+func testEmptyMessage(selector labels.Selector) string {
+	if selector != nil && !selector.Empty() {
+		return "No Applications matched the selector."
+	}
+	return "No Applications discovered."
+}
+
+// renderTestResult writes the statuses in output format. In text format, an
+// empty statuses list prints emptyMessage, or nothing when it is empty.
+func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, output string, color bool, emptyMessage string) error {
 	switch output {
 	case testOutputText:
-		return renderTestStatuses(cmd.OutOrStdout(), statuses, color, showEmptyMessage)
+		return renderTestStatuses(cmd.OutOrStdout(), statuses, color, emptyMessage)
 	case string(cliformat.OutputJSON):
 		return writeStructuredOutput(cmd.OutOrStdout(), output, nonNilTestStatuses(statuses))
 	case string(cliformat.OutputYAML):
@@ -159,12 +174,12 @@ func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, outp
 	}
 }
 
-func renderTestStatuses(w io.Writer, statuses []app.ApplicationStatus, color, showEmptyMessage bool) error {
+func renderTestStatuses(w io.Writer, statuses []app.ApplicationStatus, color bool, emptyMessage string) error {
 	if len(statuses) == 0 {
-		if !showEmptyMessage {
+		if emptyMessage == "" {
 			return nil
 		}
-		_, err := fmt.Fprintln(w, "No Applications discovered.")
+		_, err := fmt.Fprintln(w, emptyMessage)
 		return err
 	}
 	for _, status := range statuses {
@@ -214,6 +229,8 @@ type testLiveReporter struct {
 	started  time.Time
 	emitted  map[string]struct{}
 	progress bool
+	// emptyMessage is the summary when no Application was tested.
+	emptyMessage string
 }
 
 func newTestLiveReporter(out, errOut io.Writer, progress bool) *testLiveReporter {
@@ -223,6 +240,8 @@ func newTestLiveReporter(out, errOut io.Writer, progress bool) *testLiveReporter
 		started:  time.Now(),
 		emitted:  map[string]struct{}{},
 		progress: progress,
+		// The test apps command sets the selector message.
+		emptyMessage: testEmptyMessage(nil),
 	}
 }
 
@@ -267,7 +286,7 @@ func (reporter *testLiveReporter) RenderMissingStatuses(statuses []app.Applicati
 
 func (reporter *testLiveReporter) Summary(statuses []app.ApplicationStatus) error {
 	if len(statuses) == 0 {
-		_, err := fmt.Fprintln(reporter.out, "No Applications discovered.")
+		_, err := fmt.Fprintln(reporter.out, reporter.emptyMessage)
 		return err
 	}
 	counts := summarizeTestStatuses(statuses)

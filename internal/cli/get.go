@@ -8,6 +8,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
@@ -52,13 +53,16 @@ func newGetCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 				}
 				return err
 			}
+			applications := filterApplicationsBySelector(result.Applications, selector)
+			result.Diagnostics = append(result.Diagnostics, selectorNoMatchDiagnostics(selector, len(applications))...)
 			if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
 				return err
 			}
-			return renderGetApps(cmd, output, filterApplicationsBySelector(result.Applications, selector))
+			return renderGetApps(cmd, output, applications)
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
+	bindSelectorFlag(apps, &appsFlags)
 
 	imagesFlags := defaultCommonFlags()
 	imagesFlags.output = string(cliformat.OutputTable)
@@ -85,6 +89,9 @@ func newGetCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			buildResult, err := deps.Orchestrator.BuildSelection(context.Background(), buildRequest, func(apps []argoappv1.Application) []argoappv1.Application {
 				return filterApplicationsBySelector(apps, selector)
 			})
+			if err == nil {
+				buildResult.Diagnostics = append(buildResult.Diagnostics, selectorNoMatchDiagnostics(selector, len(buildResult.Applications))...)
+			}
 			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), buildResult.Diagnostics); renderErr != nil {
 				return renderErr
 			}
@@ -95,6 +102,7 @@ func newGetCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(images, &imagesFlags)
+	bindSelectorFlag(images, &imagesFlags)
 
 	cmd.AddCommand(apps, images)
 	return cmd
@@ -160,6 +168,29 @@ func filterApplicationsBySelector(applications []argoappv1.Application, selector
 		}
 	}
 	return sortApplications(filtered)
+}
+
+// applicationSelectorFunc returns the app.ApplicationSelector that keeps the
+// Applications whose metadata labels match selector, or nil when selector
+// selects every Application.
+func applicationSelectorFunc(selector labels.Selector) app.ApplicationSelector {
+	if selector == nil || selector.Empty() {
+		return nil
+	}
+	return func(applications []argoappv1.Application) []argoappv1.Application {
+		return filterApplicationsBySelector(applications, selector)
+	}
+}
+
+// selectorNoMatchDiagnostics returns the selector.no-match warning when
+// selector narrows the Applications and selected, the number of
+// Applications it kept, is zero. Without the warning, an empty result would
+// look like an empty repository or, for a diff, like no change.
+func selectorNoMatchDiagnostics(selector labels.Selector, selected int) []diagnostic.Diagnostic {
+	if selector == nil || selector.Empty() || selected > 0 {
+		return nil
+	}
+	return []diagnostic.Diagnostic{app.SelectorNoMatchDiagnostic(selector)}
 }
 
 func sortApplications(applications []argoappv1.Application) []argoappv1.Application {
