@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -350,7 +351,10 @@ func sourceKustomizeAddedComponents(repoRoot, sourceRoot string, kustomize *argo
 		optionalRefs = append(optionalRefs, keptIgnoreMissingComponentInputs(repoRoot, selection.keptRel)...)
 		components = []string{selection.kept}
 	}
-	matches, _ := sourceKustomizeComponentMatches(repoRoot, sourceRoot, components)
+	matches, _, err := sourceKustomizeComponentMatches(repoRoot, sourceRoot, components)
+	if err != nil {
+		return nil, nil, err
+	}
 	return matches, optionalRefs, nil
 }
 
@@ -358,11 +362,16 @@ func sourceKustomizeAddedComponents(repoRoot, sourceRoot string, kustomize *argo
 // edit add component` reads from the patterns in components, without the
 // source kustomization file itself, and the directories that the glob
 // patterns list (kustomizeComponentGlobDir), which changed-only selection
-// owns. When the arguments or the globs fail the command, the patterns come back
-// as written: the render then fails in applySourceKustomizeOptions.
-func sourceKustomizeComponentMatches(repoRoot, sourceRoot string, components []string) (matches, globDirs []string) {
+// owns. When the arguments or the globs fail the command, the patterns come
+// back as written: the render then fails in applySourceKustomizeOptions.
+// A glob that must read through a symlink fails here with the symlink
+// error, so no later step looks at the path the symlink leads to.
+func sourceKustomizeComponentMatches(repoRoot, sourceRoot string, components []string) (matches, globDirs []string, err error) {
 	patterns := sourceKustomizeComponentArgs(components)
-	matches = expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot, patterns)
+	matches, err = expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot, patterns)
+	if err != nil {
+		return nil, nil, err
+	}
 	if kustomizationFile, err := findKustomizationFile(sourceRoot); err == nil {
 		name := filepath.Base(kustomizationFile)
 		matches = slices.DeleteFunc(matches, func(match string) bool { return match == name })
@@ -372,7 +381,7 @@ func sourceKustomizeComponentMatches(repoRoot, sourceRoot string, components []s
 			globDirs = append(globDirs, globDir)
 		}
 	}
-	return matches, globDirs
+	return matches, globDirs, nil
 }
 
 // sourceKustomizeComponentArgs returns the component patterns that `kustomize
@@ -390,13 +399,19 @@ func sourceKustomizeComponentArgs(components []string) []string {
 }
 
 // expandKustomizeComponentPatternsOrWritten returns the matches of
-// patterns, or patterns as written when the globs fail.
-func expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot string, patterns []string) []string {
+// patterns, or patterns as written when the globs fail for any reason but
+// a symlink. The symlink error comes back as is.
+func expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot string, patterns []string) ([]string, error) {
 	matches, err := expandKustomizeComponentPatterns(sourceRoot, repoRoot, patterns)
-	if err != nil {
-		return patterns
+	var symlinkErr kustomizeComponentSymlinkError
+	switch {
+	case err == nil:
+		return matches, nil
+	case errors.As(err, &symlinkErr):
+		return nil, err
+	default:
+		return patterns, nil
 	}
-	return matches
 }
 
 // keptIgnoreMissingComponentInputs returns the kustomization file names in

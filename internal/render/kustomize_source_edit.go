@@ -478,11 +478,13 @@ func editAddKustomizeComponents(kustomization *types.Kustomization, kustomizatio
 // there, such as one outside the repository or one reached through a
 // symlink that leaves it, adds no matches, as a directory that cannot be
 // read adds none to filepath.Glob. A path whose text enters .git adds no
-// matches either. A glob that must list or look up a path through a
-// symlink fails with drydock's symlink error before it reads the path,
-// because drydock rejects a component path that passes through a symlink.
-// So a symlink in the repository to .git is never listed. Argo CD follows
-// such a symlink.
+// matches either. Each path is resolved element by element (resolve), so
+// a ".." after a symlink goes up from its target. A symlink that leads out
+// of the repository or into .git fails with drydock's symlink error before
+// anything there is listed or read. Any other symlink is followed: when it
+// leads to no match it adds nothing, and a match through it fails with the
+// symlink error, because drydock rejects a component path that passes
+// through a symlink. Argo CD follows every such symlink.
 func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []string) ([]string, error) {
 	var out []string
 	var root *os.Root
@@ -507,7 +509,7 @@ func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []strin
 		var symlinkErr kustomizeComponentSymlinkError
 		switch {
 		case errors.As(err, &symlinkErr):
-			return nil, fmt.Errorf("kustomize components %q: %w", pattern, symlinkErr.err)
+			return nil, fmt.Errorf("kustomize components %q: %w", pattern, symlinkErr)
 		case err != nil:
 			return nil, fmt.Errorf("kustomize edit add component: error checking the filesystem: %w", err)
 		}
@@ -579,26 +581,27 @@ func (g kustomizeComponentGlob) glob(pattern string, depth int) ([]string, error
 }
 
 // globDir mirrors glob in path/filepath: it adds the names in dirPath that
-// match pattern, in lexical order. A directory it cannot read adds none.
+// match pattern, in lexical order. A directory it cannot read adds none. A
+// directory reached through a symlink is listed only when the symlink stays
+// in the repository and out of .git; a match there fails with the symlink
+// error, and no match adds nothing.
 func (g kustomizeComponentGlob) globDir(dirPath, pattern string, matches []string) ([]string, error) {
-	rel, ok := g.rootPath(dirPath)
-	if !ok {
-		return matches, nil
-	}
-	if err := g.rejectSymlink(dirPath); err != nil {
+	resolved, err := g.resolve(dirPath, true)
+	if err != nil || !resolved.ok {
 		return matches, err
 	}
-	info, err := g.root.Stat(rel)
+	info, err := g.root.Stat(resolved.rel)
 	if err != nil || !info.IsDir() {
 		return matches, nil
 	}
-	file, err := g.root.Open(rel)
+	file, err := g.root.Open(resolved.rel)
 	if err != nil {
 		return matches, nil
 	}
 	defer func() { _ = file.Close() }()
 	names, _ := file.Readdirnames(-1)
 	slices.Sort(names)
+	found := len(matches)
 	for _, name := range names {
 		matched, err := filepath.Match(pattern, name)
 		if err != nil {
@@ -607,6 +610,9 @@ func (g kustomizeComponentGlob) globDir(dirPath, pattern string, matches []strin
 		if matched {
 			matches = append(matches, filepath.Join(dirPath, name))
 		}
+	}
+	if resolved.symlink != "" && len(matches) > found {
+		return matches, g.symlinkError(dirPath, resolved.symlink)
 	}
 	return matches, nil
 }
@@ -623,11 +629,14 @@ func (g kustomizeComponentGlob) confirmDir(path string) error {
 			return fmt.Errorf("path %q is ambiguous: resolves to %q after normalization, which is likely not the intended target; check for YAML indentation errors in your kustomization file", path, filepath.Clean(path))
 		}
 	}
-	rel, ok := g.rootPath(path)
-	if !ok {
+	resolved, err := g.resolve(path, true)
+	if err != nil {
+		return err
+	}
+	if !resolved.ok {
 		return errors.New("must build at directory: not a valid directory")
 	}
-	info, err := g.root.Stat(rel)
+	info, err := g.root.Stat(resolved.rel)
 	if err != nil || !info.IsDir() {
 		return errors.New("must build at directory: not a valid directory")
 	}
@@ -635,20 +644,25 @@ func (g kustomizeComponentGlob) confirmDir(path string) error {
 }
 
 // exists reports whether Lstat reads path. Lstat fails on an empty path.
-// A path whose parent passes through a symlink fails.
+// A path that exists through a symlink fails with the symlink error.
 func (g kustomizeComponentGlob) exists(path string) (bool, error) {
 	if path == "" {
 		return false, nil
 	}
-	rel, ok := g.rootPath(path)
-	if !ok {
-		return false, nil
-	}
-	if err := g.rejectSymlink(filepath.Dir(path)); err != nil {
+	resolved, err := g.resolve(path, false)
+	if err != nil || !resolved.ok || !g.lstatReads(resolved.rel) {
 		return false, err
 	}
+	if resolved.symlink != "" {
+		return false, g.symlinkError(path, resolved.symlink)
+	}
+	return true, nil
+}
+
+// lstatReads reports whether Lstat reads rel.
+func (g kustomizeComponentGlob) lstatReads(rel string) bool {
 	_, err := g.root.Lstat(rel)
-	return err == nil, nil
+	return err == nil
 }
 
 // kustomizeComponentSymlinkError is the error of a component glob that
@@ -661,34 +675,139 @@ func (e kustomizeComponentSymlinkError) Error() string {
 	return e.err.Error()
 }
 
-// rejectSymlink fails when path, relative to dir, passes through a
-// symlink inside the repository, before the glob reads it.
-func (g kustomizeComponentGlob) rejectSymlink(path string) error {
+// symlinkError is drydock's symlink error for path, relative to dir, which
+// passes through the symlink element.
+func (g kustomizeComponentGlob) symlinkError(path, element string) error {
 	clean := filepath.Clean(filepath.Join(g.dir, path))
-	if err := rejectSymlinkedPath(g.boundaryRoot, clean); err != nil {
-		return kustomizeComponentSymlinkError{err: err}
-	}
-	return nil
+	return kustomizeComponentSymlinkError{err: fmt.Errorf("path %q includes symlink component %q", clean, element)}
 }
 
-// rootPath returns path, relative to dir, as a path relative to the
-// repository root for root. The ".." elements stay in place, so the
-// os.Root resolves them after any symlink, as the OS does. ok is false for
-// a path that leaves the repository or enters a .git directory.
-func (g kustomizeComponentGlob) rootPath(path string) (string, bool) {
-	clean := filepath.Clean(filepath.Join(g.dir, path))
-	rel, err := filepath.Rel(g.boundaryRoot, clean)
-	if err != nil || pathsafety.RelEscapes(rel) || pathsafety.RelEntersGit(rel) {
+// kustomizeResolvedPath is a glob path resolved inside the repository.
+type kustomizeResolvedPath struct {
+	// rel is the path relative to the repository root, with every symlink
+	// resolved.
+	rel string
+	// ok is false for a path that leaves the repository or enters .git
+	// without a symlink: the glob adds no matches there.
+	ok bool
+	// symlink is the first symlink element that the path follows, or "".
+	symlink string
+}
+
+// kustomizeSymlinkHopLimit is the number of symlinks a path may follow, as
+// the OS limits it.
+const kustomizeSymlinkHopLimit = 40
+
+// kustomizePathWalk is the state of one resolve call.
+type kustomizePathWalk struct {
+	queue    []string
+	stack    []string
+	resolved kustomizeResolvedPath
+	hops     int
+}
+
+// resolve resolves path, relative to dir, element by element as the OS
+// does: each symlink is read and followed before the next element, so a
+// ".." after a symlink goes up from its target. followLast reports whether
+// a symlink in the last element is followed, as Stat follows it and Lstat
+// does not. resolve reads only symlinks: their names and targets. It never
+// looks up anything in .git. When a symlink leads out of the repository or
+// into .git, resolve fails with the symlink error before anything there is
+// listed or read.
+func (g kustomizeComponentGlob) resolve(path string, followLast bool) (kustomizeResolvedPath, error) {
+	dirRel, ok := g.dirRel()
+	if !ok {
+		return kustomizeResolvedPath{}, nil
+	}
+	walk := &kustomizePathWalk{queue: append(strings.Split(dirRel, string(filepath.Separator)), strings.Split(path, string(filepath.Separator))...)}
+	for len(walk.queue) > 0 {
+		element := walk.queue[0]
+		walk.queue = walk.queue[1:]
+		done, err := g.resolveElement(walk, path, element, followLast)
+		if done || err != nil {
+			return kustomizeResolvedPath{}, err
+		}
+	}
+	walk.resolved.rel = filepath.Join(walk.stack...)
+	if walk.resolved.rel == "" {
+		walk.resolved.rel = "."
+	}
+	walk.resolved.ok = true
+	return walk.resolved, nil
+}
+
+// resolveElement resolves one element of path in walk. done reports that
+// the path adds no matches.
+func (g kustomizeComponentGlob) resolveElement(walk *kustomizePathWalk, path, element string, followLast bool) (done bool, err error) {
+	switch {
+	case element == "" || element == ".":
+		return false, nil
+	case element == "..":
+		if len(walk.stack) == 0 {
+			return true, g.afterSymlink(path, walk.resolved)
+		}
+		walk.stack = walk.stack[:len(walk.stack)-1]
+		return false, nil
+	case strings.EqualFold(element, ".git"):
+		// Nothing in .git is looked up: a path whose text enters it adds
+		// no matches, and a symlink that leads into it fails.
+		return true, g.afterSymlink(path, walk.resolved)
+	}
+	candidate := filepath.Join(append(append([]string(nil), walk.stack...), element)...)
+	target, isSymlink := g.symlinkTarget(candidate)
+	if !isSymlink || (len(walk.queue) == 0 && !followLast) {
+		walk.stack = append(walk.stack, element)
+		return false, nil
+	}
+	walk.hops++
+	if walk.hops > kustomizeSymlinkHopLimit || target == "" {
+		return true, nil
+	}
+	if walk.resolved.symlink == "" {
+		walk.resolved.symlink = element
+	}
+	if filepath.IsAbs(target) {
+		rel, err := filepath.Rel(g.boundaryRoot, target)
+		if err != nil || pathsafety.RelEscapes(rel) {
+			return true, g.afterSymlink(path, walk.resolved)
+		}
+		walk.stack = nil
+		target = rel
+	}
+	walk.queue = append(strings.Split(target, string(filepath.Separator)), walk.queue...)
+	return false, nil
+}
+
+// symlinkTarget returns the target of rel when it is a symlink. An unread
+// symlink has an empty target.
+func (g kustomizeComponentGlob) symlinkTarget(rel string) (string, bool) {
+	info, statErr := g.root.Lstat(rel)
+	if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
 		return "", false
 	}
-	dirRel, err := filepath.Rel(g.boundaryRoot, g.dir)
-	if err != nil || pathsafety.RelEscapes(dirRel) {
+	target, readErr := g.root.Readlink(rel)
+	if readErr != nil {
+		return "", true
+	}
+	return target, true
+}
+
+// dirRel returns dir relative to the repository root.
+func (g kustomizeComponentGlob) dirRel() (string, bool) {
+	rel, err := filepath.Rel(g.boundaryRoot, g.dir)
+	if err != nil || pathsafety.RelEscapes(rel) {
 		return "", false
 	}
-	if dirRel == "." {
-		return path, true
+	return rel, true
+}
+
+// afterSymlink is the outcome of a path that leaves the repository or
+// enters .git: no matches without a symlink, the symlink error after one.
+func (g kustomizeComponentGlob) afterSymlink(path string, resolved kustomizeResolvedPath) error {
+	if resolved.symlink != "" {
+		return g.symlinkError(path, resolved.symlink)
 	}
-	return dirRel + string(filepath.Separator) + path, true
+	return nil
 }
 
 // kustomizeGlobHasMeta mirrors hasMeta in path/filepath on Unix.

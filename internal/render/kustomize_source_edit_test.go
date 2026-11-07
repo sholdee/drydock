@@ -1628,8 +1628,14 @@ func TestKustomizeSourceComponentThroughSymlinkToGitFailsFirst(t *testing.T) {
 					t.Fatalf("Render() error = %v names %q from .git", err, leaked)
 				}
 			}
-			if _, err := KustomizeInputDigestPaths(context.Background(), ResolvedSource{RepoRoot: root, Path: filepath.Join("apps", "demo")}, RenderOptions{Kustomize: &kustomize}); err == nil || !strings.Contains(err.Error(), `includes symlink component "gitlink"`) {
-				t.Fatalf("KustomizeInputDigestPaths() error = %v, want the symlink error", err)
+			_, digestErr := KustomizeInputDigestPaths(context.Background(), ResolvedSource{RepoRoot: root, Path: filepath.Join("apps", "demo")}, RenderOptions{Kustomize: &kustomize})
+			if digestErr == nil || !strings.Contains(digestErr.Error(), `includes symlink component "gitlink"`) {
+				t.Fatalf("KustomizeInputDigestPaths() error = %v, want the symlink error", digestErr)
+			}
+			for _, leaked := range []string{"secret-cm.yaml", "config", "sub/kustomization"} {
+				if strings.Contains(digestErr.Error(), leaked) {
+					t.Fatalf("KustomizeInputDigestPaths() error = %v names %q from .git", digestErr, leaked)
+				}
 			}
 			selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), &kustomize)
 			if err != nil {
@@ -1641,5 +1647,94 @@ func TestKustomizeSourceComponentThroughSymlinkToGitFailsFirst(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A wildcard in a middle part of a component path lists each folder that
+// it matches. A symlink there that adds no match, to a folder or to a file,
+// adds nothing, as filepath.Glob finds nothing there. A symlink that a
+// match passes through fails with the symlink error.
+func TestKustomizeSourceComponentGlobSymlinkWithoutMatch(t *testing.T) {
+	for _, tc := range []struct {
+		name, link, target string
+		wantErr            string
+	}{
+		{name: "folder symlink", link: "zlink", target: "b"},
+		{name: "file symlink", link: "README.md", target: filepath.Join("..", "docs", "README.md")},
+		{name: "folder symlink to a match", link: "zlink", target: "a", wantErr: `includes symlink component "zlink"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeSourceEditTestRepo(t, "")
+			writeFile(t, filepath.Join(root, "components", "a", "sub", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+			writeFile(t, filepath.Join(root, "components", "a", "sub", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: asub\n")
+			writeFile(t, filepath.Join(root, "docs", "README.md"), "docs\n")
+			if err := os.Symlink(tc.target, filepath.Join(root, "components", tc.link)); err != nil {
+				t.Fatalf("Symlink() error = %v", err)
+			}
+			kustomize := argoappv1.ApplicationSourceKustomize{Components: []string{"../../components/*/sub"}}
+			manifests, err := renderSourceEditTest(t, root, kustomize)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Render() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if findManifest(manifests, "ConfigMap", "asub") == nil {
+				t.Fatalf("manifests = %#v, want ConfigMap asub", manifests)
+			}
+			paths, _ := sourceEditTestDigest(t, root, &kustomize)
+			if !slices.Contains(paths, "components/a/sub/cm.yaml") {
+				t.Fatalf("digest paths = %q, want components/a/sub", paths)
+			}
+		})
+	}
+}
+
+// A ".." after a symlink goes up from the symlink's target, as the OS
+// resolves it. The glob resolves each element in order, so it finds that
+// "zlink/.." is in .git and fails before it lists anything there.
+func TestKustomizeSourceComponentGlobParentOfSymlinkIntoGit(t *testing.T) {
+	root := writeSourceEditTestRepo(t, "")
+	writeFile(t, filepath.Join(root, ".git", "deep", "x"), "x\n")
+	writeFile(t, filepath.Join(root, ".git", "secret-entry", "kustomization.yaml"), "kind: Component\n")
+	if err := os.Symlink(filepath.Join("..", ".git", "deep"), filepath.Join(root, "components", "zlink")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	kustomize := argoappv1.ApplicationSourceKustomize{Components: []string{"../../components/zlink/../*"}}
+	_, renderErr := renderSourceEditTest(t, root, kustomize)
+	_, digestErr := KustomizeInputDigestPaths(context.Background(), ResolvedSource{RepoRoot: root, Path: filepath.Join("apps", "demo")}, RenderOptions{Kustomize: &kustomize})
+	for name, err := range map[string]error{"Render": renderErr, "KustomizeInputDigestPaths": digestErr} {
+		if err == nil || !strings.Contains(err.Error(), `includes symlink component "zlink"`) {
+			t.Fatalf("%s() error = %v, want the symlink error", name, err)
+		}
+		for _, leaked := range []string{"secret-entry", "deep", "HEAD"} {
+			if strings.Contains(err.Error(), leaked) {
+				t.Fatalf("%s() error = %v names %q from .git", name, err, leaked)
+			}
+		}
+	}
+}
+
+// Under ignoreMissingComponents, a component in .git is checked as Argo CD
+// checks it, by its kustomization file, and then fails the render. Changed-
+// only selection never owns or walks it.
+func TestKustomizeSourceIgnoreMissingComponentInGit(t *testing.T) {
+	root := writeSourceEditTestRepo(t, "")
+	writeFile(t, filepath.Join(root, ".git", "sub", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+	kustomize := argoappv1.ApplicationSourceKustomize{Components: []string{"../../.git/sub", "../../components/b"}, IgnoreMissingComponents: true}
+	if _, err := renderSourceEditTest(t, root, kustomize); err == nil || !strings.Contains(err.Error(), "enters a .git directory") {
+		t.Fatalf("Render() error = %v, want enters a .git directory", err)
+	}
+	selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), &kustomize)
+	if err != nil {
+		t.Fatalf("KustomizeSelectionPaths() error = %v", err)
+	}
+	for _, path := range selection {
+		if strings.HasPrefix(path, ".git") {
+			t.Fatalf("selection paths = %q, want nothing in .git", selection)
+		}
 	}
 }

@@ -149,7 +149,10 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 // directory is the repository root, the pattern owns nothing more, like a
 // Helm value file glob without a static prefix.
 func (c *kustomizeInputCollector) collectSourceKustomizeComponent(ctx context.Context, sourceRoot, pattern string) error {
-	matches, globDirs := sourceKustomizeComponentMatches(c.repoRoot, sourceRoot, []string{pattern})
+	matches, globDirs, err := sourceKustomizeComponentMatches(c.repoRoot, sourceRoot, []string{pattern})
+	if err != nil {
+		return c.skip(ctx, err)
+	}
 	for _, globDir := range globDirs {
 		if err := c.addSelectionPrefix(globDir); err != nil {
 			if err := c.skip(ctx, err); err != nil {
@@ -158,30 +161,38 @@ func (c *kustomizeInputCollector) collectSourceKustomizeComponent(ctx context.Co
 		}
 	}
 	for _, component := range matches {
-		if err := c.addKustomizeRef(ctx, sourceRoot, "kustomize.components", component, false); err != nil {
+		if err := c.collectSourceKustomizeComponentMatch(ctx, sourceRoot, component); err != nil {
 			return err
 		}
-		if component == "" || isRemoteKustomizeRef(component) || filepath.IsAbs(component) {
-			continue
-		}
-		componentRoot := filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(component)))
+	}
+	return nil
+}
+
+// collectSourceKustomizeComponentMatch adds one component that a
+// spec.source.kustomize.components pattern matches, with its graph.
+func (c *kustomizeInputCollector) collectSourceKustomizeComponentMatch(ctx context.Context, sourceRoot, component string) error {
+	local := component != "" && !isRemoteKustomizeRef(component) && !filepath.IsAbs(component)
+	componentRoot := filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(component)))
+	// Check the path before anything under it is looked at, so a
+	// component in .git or behind a symlink is never walked.
+	if local {
 		if err := rejectSourceKustomizeComponentPath(c.repoRoot, component, componentRoot); err != nil {
-			if err := c.skip(ctx, err); err != nil {
-				return err
-			}
-			continue
+			return c.skip(ctx, err)
 		}
-		_, graph, err := collectKustomizeGraph(ctx, c.repoRoot, componentRoot, kustomizeInputWalk)
-		if err != nil {
-			if err := c.skip(ctx, err); err != nil {
-				return err
-			}
-			continue
-		}
-		for _, node := range graph {
-			if err := c.collectNode(ctx, node); err != nil {
-				return err
-			}
+	}
+	if err := c.addKustomizeRef(ctx, sourceRoot, "kustomize.components", component, false); err != nil {
+		return err
+	}
+	if !local {
+		return nil
+	}
+	_, graph, err := collectKustomizeGraph(ctx, c.repoRoot, componentRoot, kustomizeInputWalk)
+	if err != nil {
+		return c.skip(ctx, err)
+	}
+	for _, node := range graph {
+		if err := c.collectNode(ctx, node); err != nil {
+			return err
 		}
 	}
 	return nil
