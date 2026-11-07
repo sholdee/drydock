@@ -98,6 +98,15 @@ type localProvider struct {
 	// mappedAppRevisions memoizes the HEAD commit of each --repo-map target
 	// directory for the run, keyed by absolute path. nil computes every time.
 	mappedAppRevisions *sync.Map
+	// hydratorBranch is the branch whose content the tree at repoRoot
+	// holds: the --ref or --ref-orig name of a diff side that renders a Git
+	// ref, else the branch checked out at repoRoot, else "". A source
+	// hydrator sync source renders from repoRoot only at this branch.
+	hydratorBranch string
+	// hydratorSnapshots memoizes the snapshot of a branch of a --repo-map
+	// Git repository for a source hydrator sync source, keyed by the
+	// absolute path and the branch (hydratorSnapshot).
+	hydratorSnapshots *sync.Map
 	// rootDirtyPaths is the sorted complete dirty-path enumeration for the
 	// repo root when rootInputMode is dirty; empty otherwise. Per-path-set
 	// keying uses it to keep committed keys for untouched applications. An

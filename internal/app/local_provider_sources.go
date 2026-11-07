@@ -28,6 +28,9 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 	if chartFlowSource(source) {
 		return p.repoRoot, chartOnlySourceIdentity(source), nil
 	}
+	if source.HydratorSync {
+		return p.resolveHydratorSyncSource(ctx, source)
+	}
 	if p.sourceResolver != nil {
 		if mappedPath, ok := p.sourceResolver.MappedPath(source.RepoURL); ok {
 			p.recordCacheEvent(cacheevent.Event{Source: cacheevent.SourceGit, Action: cacheevent.ActionMapped, Target: source.RepoURL, Revision: source.TargetRevision})
@@ -78,6 +81,12 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 	if _, err := p.sourceResolver.Resolve(source.RepoURL, source.TargetRevision); err != nil {
 		return "", SourceIdentity{}, fmt.Errorf("source path %q is not present under local repository root and %w", source.Path, err)
 	}
+	return p.acquireGitSource(ctx, source)
+}
+
+// acquireGitSource reads source from the Git cache, or fetches it unless
+// drydock runs offline, and reports its identity.
+func (p localProvider) acquireGitSource(ctx context.Context, source render.ResolvedSource) (string, SourceIdentity, error) {
 	acquirer := p.gitAcquirer
 	if acquirer == nil {
 		acquirer = sourcepkg.DefaultGitAcquirer{}
@@ -169,6 +178,9 @@ func (p localProvider) sourceAppRevision(source render.ResolvedSource, root stri
 			return "", nil
 		}
 		return localTreeAppRevision(p.rootGitRepo, p.rootAppRevision, source.TargetRevision, source.RepoURL, multi)
+	}
+	if revision, ok := p.hydratorSnapshotRevision(source, root); ok {
+		return revision, nil
 	}
 	if p.sourceResolver == nil {
 		return "", nil
@@ -280,6 +292,9 @@ func (p localProvider) mappedAppRevision(root string) string {
 func (p localProvider) sourceResolvesToRepoRoot(source render.ResolvedSource) bool {
 	if chartFlowSource(source) {
 		return false
+	}
+	if source.HydratorSync {
+		return p.hydratorSyncIsLocalTree(source)
 	}
 	if p.sourceResolver != nil {
 		if mappedPath, ok := p.sourceResolver.MappedPath(source.RepoURL); ok {

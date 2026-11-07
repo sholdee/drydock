@@ -115,6 +115,12 @@ func settingsInstallMemoKey(application argoappv1.Application) (string, bool) {
 }
 
 func computeSettingsInstall(ctx context.Context, memo *sync.Map, provider localProvider, application argoappv1.Application) settingsInstall {
+	// The sync source of a source hydrator renders from another branch in
+	// most cases, so its values files are not files of this tree. drydock
+	// still reads the settings ConfigMaps that its render holds.
+	if application.Spec.SourceHydrator != nil {
+		return settingsInstall{}
+	}
 	plan, err := Plan(application)
 	if err != nil {
 		return settingsInstall{}
@@ -372,7 +378,7 @@ func explicitDiscoverKustomizePaths(request BuildRequest) map[string]struct{} {
 // application renders, from this repository root, a path that
 // --discover-kustomize renders too.
 func applicationRendersExplicitKustomizePath(provider localProvider, application argoappv1.Application, explicit map[string]struct{}) bool {
-	if len(explicit) == 0 {
+	if len(explicit) == 0 || application.Spec.SourceHydrator != nil {
 		return false
 	}
 	sources := applicationRenderSources(application.Spec)

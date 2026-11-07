@@ -19,6 +19,9 @@ type SourcePlan struct {
 	SourceRoot   string
 	RefOnly      bool
 	ExplicitType argoappv1.ApplicationSourceType
+	// HydratorSync marks the sync source of an Application with
+	// spec.sourceHydrator (render.ResolvedSource.HydratorSync).
+	HydratorSync bool
 	// AppRevision is the revision the Argo CD repo-server would report for
 	// this source as ARGOCD_APP_REVISION: a commit SHA for a Git source, a
 	// manifest digest for an OCI source. PrepareSource sets it. Empty means
@@ -41,10 +44,11 @@ func Plan(application argoappv1.Application) (PlanResult, error) {
 	sources := applicationRenderSources(application.Spec)
 	for i, source := range sources {
 		sourcePlan := SourcePlan{
-			Index:   i,
-			Name:    source.Name,
-			Source:  source,
-			RefOnly: source.Ref != "" && source.Path == "" && source.Chart == "",
+			Index:        i,
+			Name:         source.Name,
+			Source:       source,
+			RefOnly:      source.Ref != "" && source.Path == "" && source.Chart == "",
+			HydratorSync: application.Spec.SourceHydrator != nil,
 		}
 
 		if source.Ref != "" {

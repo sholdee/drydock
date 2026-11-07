@@ -1,9 +1,11 @@
 # Argo CD compares an Application with spec.sourceHydrator against its sync
 # source only: syncSource.path at syncSource.targetBranch, in the dry source
 # repository. It ignores spec.source. The hydrator is not enabled in the
-# smoke cluster, so the sync path is committed in the fixture as if the
-# hydrator had written it. Each of the three paths renders its own
-# ConfigMap, so rendering the wrong one fails the comparison.
+# smoke cluster, so the smoke commits the hydrated content on the
+# parity-hydrated branch of the fixture Git repository, as if the hydrator
+# had written it. On main, the same path holds another ConfigMap, and the
+# dry and decoy paths hold their own, so rendering the wrong path or the
+# wrong branch fails the comparison.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -21,7 +23,7 @@ spec:
       targetRevision: HEAD
       path: workloads/source-hydrator/dry
     syncSource:
-      targetBranch: main
+      targetBranch: parity-hydrated
       path: workloads/source-hydrator/hydrated
   destination:
     name: in-cluster

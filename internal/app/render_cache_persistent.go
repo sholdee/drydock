@@ -536,6 +536,7 @@ func sourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, p
 		RepoURL:        sourcePlan.Source.RepoURL,
 		TargetRevision: sourcePlan.Source.TargetRevision,
 		ExplicitType:   sourcePlan.ExplicitType,
+		HydratorSync:   sourcePlan.HydratorSync,
 	})
 	if err != nil {
 		return identity, "", false

@@ -21,6 +21,11 @@ type ResolvedSource struct {
 	RepoURL        string
 	TargetRevision string
 	ExplicitType   argoappv1.ApplicationSourceType
+	// HydratorSync marks the sync source of an Application with
+	// spec.sourceHydrator. Its TargetRevision is syncSource.targetBranch,
+	// and it renders from the local tree only when that branch is the one
+	// checked out there (localProvider.resolveHydratorSyncSource).
+	HydratorSync bool
 }
 
 type RenderOptions struct {

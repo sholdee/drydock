@@ -154,6 +154,7 @@ func resolvedSourceForPlan(sourcePlan SourcePlan) render.ResolvedSource {
 		RepoURL:        sourcePlan.Source.RepoURL,
 		TargetRevision: sourcePlan.Source.TargetRevision,
 		ExplicitType:   sourcePlan.ExplicitType,
+		HydratorSync:   sourcePlan.HydratorSync,
 	}
 }
 

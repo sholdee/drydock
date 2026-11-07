@@ -180,6 +180,12 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (resu
 	rightBuildRequest.rootRevision = request.rightPathRevision
 	leftBuildRequest.rootRepo = request.Repo
 	rightBuildRequest.rootRepo = request.Repo
+	if request.leftPathRevision != "" {
+		leftBuildRequest.rootRefName = request.RefOrig
+	}
+	if request.rightPathRevision != "" {
+		rightBuildRequest.rootRefName = request.Ref
+	}
 	parallelism, err := normalizeParallelism(request.Parallelism)
 	if err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err

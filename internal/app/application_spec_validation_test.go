@@ -9,6 +9,9 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	argoutil "github.com/argoproj/argo-cd/v3/util/argo"
+	git "github.com/go-git/go-git/v5"
+	gitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -186,12 +189,40 @@ func specValidationBuildRequest(root string) BuildRequest {
 	return BuildRequest{Path: root, RepoMaps: []sourcepkg.RepoMap{{URL: "https://example.test/repo.git", Path: root}}}
 }
 
-// TestBuildRendersHydratorSyncSource renders an Application with
-// spec.sourceHydrator. drydock renders the sync source, as the Argo CD
-// controller compares it; it never renders the dry source or spec.source.
-func TestBuildRendersHydratorSyncSource(t *testing.T) {
-	root := t.TempDir()
-	writeSpecValidationRepo(t, root, `apiVersion: argoproj.io/v1alpha1
+// hydratorBranchRepo makes a Git repository at root whose master branch
+// and env/prod branch hold different ConfigMaps at workloads/hydrated, with
+// master checked out and origin at https://example.test/repo.git.
+func hydratorBranchRepo(t *testing.T, root string) {
+	t.Helper()
+	writeSpecValidationRepo(t, root, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: placeholder
+`)
+	gitCommitAll(t, root, "master")
+	repo, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/repo.git"}}); err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worktree.Checkout(&git.CheckoutOptions{Branch: plumbing.NewBranchReferenceName("env/prod"), Create: true}); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(root, "workloads", "hydrated", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: from-hydrated-branch\n")
+	gitCommitAll(t, root, "env/prod")
+	if err := worktree.Checkout(&git.CheckoutOptions{Branch: plumbing.NewBranchReferenceName("master")}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func hydratorApplication(syncRepo, branch, syncPath string) string {
+	return `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: hydrated
@@ -211,30 +242,86 @@ spec:
       targetRevision: HEAD
       path: workloads/dry
     syncSource:
-      targetBranch: main
-      path: workloads/hydrated
-`)
-	request := specValidationBuildRequest(root)
-	request.Strict = true
-	result, err := Orchestrator{}.Build(context.Background(), request)
-	if err != nil {
-		t.Fatalf("Build() error = %v; the hydrator advisory must not fail --strict", err)
+      repoURL: ` + syncRepo + `
+      targetBranch: ` + branch + `
+      path: ` + syncPath + `
+`
+}
+
+// TestBuildRendersHydratorSyncSource renders an Application with
+// spec.sourceHydrator. drydock renders the sync source at its branch, as
+// the Argo CD controller compares it. It never renders the dry source or
+// spec.source, and it reads the local tree only when the tree holds the
+// sync branch.
+func TestBuildRendersHydratorSyncSource(t *testing.T) {
+	const self = "https://example.test/repo.git"
+	testCases := []struct {
+		name     string
+		syncRepo string
+		branch   string
+		syncPath string
+		repoMap  bool
+		want     string
+		wantErr  string
+	}{
+		{name: "repo-mapped Git repository at another branch", syncRepo: self, branch: "env/prod", syncPath: "workloads/hydrated", repoMap: true, want: "from-hydrated-branch"},
+		{name: "repo-mapped Git repository at the checked-out branch", syncRepo: self, branch: "master", syncPath: "workloads/hydrated", repoMap: true, want: "from-hydrated"},
+		{name: "local repository at the checked-out branch", syncRepo: self, branch: "master", syncPath: "workloads/hydrated", want: "from-hydrated"},
+		{name: "local repository at another branch", syncRepo: self, branch: "env/prod", syncPath: "workloads/hydrated", wantErr: "env/prod"},
+		// The review repro: the sync path is also the local dry path, in
+		// another repository.
+		{name: "other repository whose path exists locally", syncRepo: "https://github.com/my-org/deployments", branch: "environments/dev", syncPath: "workloads/dry", wantErr: "environments/dev"},
 	}
-	if len(result.Manifests) != 1 {
-		t.Fatalf("Manifests = %d, want only the sync source's ConfigMap", len(result.Manifests))
-	}
-	assertManifestNamed(t, result.Manifests, "from-hydrated")
-	advisories := 0
-	for _, diag := range result.Diagnostics {
-		if diag.Code == sourceHydratorCode {
-			advisories++
-			if diag.Severity != "warning" || !strings.Contains(diag.Message, `branch "main", path "workloads/hydrated"`) {
-				t.Fatalf("hydrator advisory = %#v, want a warning naming the sync branch and path", diag)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			hydratorBranchRepo(t, root)
+			writeTestFile(t, filepath.Join(root, "apps", "app.yaml"), hydratorApplication(testCase.syncRepo, testCase.branch, testCase.syncPath))
+			request := BuildRequest{Path: root, Strict: true, Offline: true, GitCacheDir: t.TempDir()}
+			if testCase.repoMap {
+				request.RepoMaps = []sourcepkg.RepoMap{{URL: self, Path: root}}
 			}
-		}
+			result, err := Orchestrator{}.Build(context.Background(), request)
+			if testCase.wantErr != "" {
+				if err == nil {
+					t.Fatalf("Build() rendered %d manifests, want a failure: the sync branch is not in the local tree or the Git cache", len(result.Manifests))
+				}
+				if len(result.Statuses) != 1 || !strings.Contains(result.Statuses[0].Message, testCase.wantErr) {
+					t.Fatalf("Statuses = %#v, want a failure naming %q", result.Statuses, testCase.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Build() error = %v; the hydrator advisory must not fail --strict", err)
+			}
+			if len(result.Manifests) != 1 {
+				t.Fatalf("Manifests = %d, want only the sync source's ConfigMap", len(result.Manifests))
+			}
+			assertManifestNamed(t, result.Manifests, testCase.want)
+			advisories := 0
+			for _, diag := range result.Diagnostics {
+				if diag.Code == sourceHydratorCode {
+					advisories++
+					if !strings.Contains(diag.Message, `branch "`+testCase.branch+`", path "`+testCase.syncPath+`"`) {
+						t.Fatalf("hydrator advisory = %q, want the sync branch and path", diag.Message)
+					}
+				}
+			}
+			if advisories != 1 {
+				t.Fatalf("hydrator advisories = %d in %#v, want 1", advisories, result.Diagnostics)
+			}
+		})
 	}
-	if advisories != 1 {
-		t.Fatalf("hydrator advisories = %d in %#v, want 1", advisories, result.Diagnostics)
+}
+
+// TestBuildFailsHydratorSyncFromPlainRepoMap pins that a --repo-map target
+// that is no Git repository cannot stand in for a sync branch.
+func TestBuildFailsHydratorSyncFromPlainRepoMap(t *testing.T) {
+	root := t.TempDir()
+	writeSpecValidationRepo(t, root, hydratorApplication("https://example.test/repo.git", "env/prod", "workloads/hydrated"))
+	result, err := Orchestrator{}.Build(context.Background(), specValidationBuildRequest(root))
+	if err == nil || len(result.Statuses) != 1 || !strings.Contains(result.Statuses[0].Message, "is not the top of a Git repository") {
+		t.Fatalf("Build() error = %v, statuses = %#v, want the plain --repo-map target refused", err, result.Statuses)
 	}
 }
 
@@ -342,5 +429,22 @@ func TestParitySpecCasesMatchUpstream(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Fatal("the expected file has no spec case")
+	}
+}
+
+// TestHydratorBranchForRequest pins the branch that a tree holds: the
+// --ref or --ref-orig name of a diff side that renders a Git ref, never a
+// commit SHA, and the checked-out branch otherwise.
+func TestHydratorBranchForRequest(t *testing.T) {
+	root := t.TempDir()
+	hydratorBranchRepo(t, root)
+	if got := hydratorBranchForRequest(root, BuildRequest{}); got != "master" {
+		t.Fatalf("worktree branch = %q, want master", got)
+	}
+	if got := hydratorBranchForRequest(root, BuildRequest{rootRevision: "0123456789abcdef0123456789abcdef01234567", rootRefName: "env/prod"}); got != "env/prod" {
+		t.Fatalf("ref side branch = %q, want env/prod", got)
+	}
+	if got := hydratorBranchForRequest(root, BuildRequest{rootRevision: "0123456789abcdef0123456789abcdef01234567", rootRefName: "0123456789abcdef0123456789abcdef01234567"}); got != "" {
+		t.Fatalf("SHA side branch = %q, want empty", got)
 	}
 }

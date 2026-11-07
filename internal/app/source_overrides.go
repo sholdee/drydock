@@ -37,6 +37,7 @@ func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.
 		RepoURL:        sourcePlan.Source.RepoURL,
 		TargetRevision: sourcePlan.Source.TargetRevision,
 		ExplicitType:   sourcePlan.ExplicitType,
+		HydratorSync:   sourcePlan.HydratorSync,
 	})
 	if strings.TrimSpace(source.Path) == "" {
 		return sourcePlan, nil

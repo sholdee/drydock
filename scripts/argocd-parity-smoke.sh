@@ -188,10 +188,16 @@ OCI_CHART_IGNORED_APPLICATION="parity-oci-helm-chart-ignored"
 # the same and warns kustomize.ignore-missing-components-dropped.
 COMPONENTS_DROPPED_APPLICATION="parity-kustomize-generators"
 # Sets spec.sourceHydrator. Argo CD compares only the sync source
-# (ApplicationSpec.GetSources), and the hydrator is not enabled in the smoke
-# cluster, so the sync path is committed in the fixture. drydock renders
-# the same path and warns source.hydrator-sync-source.
+# (ApplicationSpec.GetSources): syncSource.path at syncSource.targetBranch.
+# The hydrator is not enabled in the smoke cluster, so
+# prepare_fixture_git_image commits the hydrated content on
+# SOURCE_HYDRATOR_BRANCH, where it differs from main at the same path. The
+# drydock capture maps the fixture URL to FIXTURE_GIT_WORK, which has main
+# checked out, so drydock must read the branch from Git. It also warns
+# source.hydrator-sync-source.
 SOURCE_HYDRATOR_APPLICATION="parity-source-hydrator"
+SOURCE_HYDRATOR_BRANCH="parity-hydrated"
+SOURCE_HYDRATOR_BRANCH_CONFIGMAP="parity-source-hydrator-hydrated-branch"
 # Objects in namespaces that Argo CD does not reconcile
 # (repo/namespace-gate). The Application lives in NAMESPACE_DISABLED, which
 # application.namespaces does not list. The ApplicationSet lives in
@@ -827,6 +833,14 @@ prepare_fixture_git_image() {
   git -C "${FIXTURE_GIT_WORK}" add .
   git -C "${FIXTURE_GIT_WORK}" commit -m "seed argocd parity fixture" >/dev/null
   git -C "${FIXTURE_GIT_WORK}" tag -a "${APP_REVISION_ANNOTATED_TAG}" -m "annotated tag for the ARGOCD_APP_REVISION parity case"
+  # The source hydrator sync branch. Its ConfigMap at the sync path has
+  # another name than on main, so a side that renders main fails the
+  # comparison.
+  git -C "${FIXTURE_GIT_WORK}" checkout -q -b "${SOURCE_HYDRATOR_BRANCH}"
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: %s\n' "${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" \
+    > "${FIXTURE_GIT_WORK}/workloads/source-hydrator/hydrated/configmap.yaml"
+  git -C "${FIXTURE_GIT_WORK}" commit -q -am "hydrated manifests for the source hydrator parity case"
+  git -C "${FIXTURE_GIT_WORK}" checkout -q main
   git clone --bare --no-hardlinks "${FIXTURE_GIT_WORK}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
   prepare_oob_symlink_repo
@@ -1635,6 +1649,9 @@ capture_argocd_manifests() {
     fi
     capture_argocd_manifest "${app}" "${app}" "${output_dir}"
   done
+  # Without this check, both sides rendering main would pass.
+  grep -qF "name: ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" "${output_dir}/${SOURCE_HYDRATOR_APPLICATION}.yaml" \
+    || fail "Argo CD did not render ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP} from branch ${SOURCE_HYDRATOR_BRANCH} for ${SOURCE_HYDRATOR_APPLICATION}"
   for app in "${TENANT_APPLICATIONS[@]}"; do
     capture_argocd_manifest "${TENANT_NAMESPACE}/${app}" "${app}" "${output_dir}"
   done
@@ -1664,7 +1681,7 @@ capture_drydock_manifest() {
   local plugin_app revision_app stderr_file repo_map_path
   local build_args
   repo_map_path="${FIXTURE_REPO_PATH}"
-  for revision_app in "${APP_REVISION_GIT_APPLICATIONS[@]}"; do
+  for revision_app in "${APP_REVISION_GIT_APPLICATIONS[@]}" "${SOURCE_HYDRATOR_APPLICATION}"; do
     if [[ "${stem}" == "${revision_app}" ]]; then
       [[ -n "${FIXTURE_GIT_WORK}" ]] \
         || fail "FIXTURE_GIT_WORK is unset; prepare_fixture_git_image must run before capturing ${stem}"
@@ -1708,6 +1725,8 @@ capture_drydock_manifest() {
       "an oci:// repoURL with chart: set must warn once and render the artifact"
   fi
   if [[ "${stem}" == "${SOURCE_HYDRATOR_APPLICATION}" ]]; then
+    grep -qF "name: ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" "${output_dir}/${stem}.yaml" \
+      || fail "drydock did not render ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP} from branch ${SOURCE_HYDRATOR_BRANCH} for ${app_ref}"
     # The manifest comparison proves that drydock renders the sync source.
     # The warning tells users that drydock does not run the hydrator.
     require_drydock_capture_warning "${app_ref}" "${stderr_file}" \

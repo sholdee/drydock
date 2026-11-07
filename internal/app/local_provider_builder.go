@@ -113,6 +113,8 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		provider.rootGitRepo = request.rootRepo
 	}
 	provider.mappedAppRevisions = &sync.Map{}
+	provider.hydratorSnapshots = &sync.Map{}
+	provider.hydratorBranch = hydratorBranchForRequest(root, request)
 	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
 		provider.selfRepoURLKeys = matcher.urlKeys
 		provider.selfRepoRevisions = matcher.revisions
