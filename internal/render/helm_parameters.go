@@ -172,16 +172,16 @@ func helmFileParameterReader(ctx context.Context, target helmFileParameterTarget
 		if asked == "" || asked != target.helmPath {
 			return nil, fmt.Errorf("helm file parameter %q: helm --set-file reads %q, which is not the resolved path", target.file, value)
 		}
-		real, err := confineHelmFileParameterRead(target.root, asked, target.file)
+		realPath, err := confineHelmFileParameterRead(target.root, asked, target.file)
 		if err != nil {
 			return nil, err
 		}
-		data, err := pathsafety.ReadRegularFile(real)
+		data, err := pathsafety.ReadRegularFile(realPath)
 		if errors.Is(err, pathsafety.ErrNotRegular) {
-			if info, statErr := os.Stat(real); statErr == nil && info.IsDir() {
+			if info, statErr := os.Stat(realPath); statErr == nil && info.IsDir() {
 				// helm's os.ReadFile fails on a directory with "is a
 				// directory", at once.
-				_, err = os.ReadFile(real)
+				_, err = os.ReadFile(realPath)
 			}
 		}
 		if err != nil {

@@ -159,7 +159,7 @@ func (p localProvider) overrideInstanceName(application argoappv1.Application) s
 // but its out-of-bounds symlink check fails a repository with a symlink that
 // leaves it unless reposerver.allow.oob.symlinks is true.
 func readArgocdSourceOverride(root, filename string) ([]byte, bool, error) {
-	real, info, ok, err := statArgocdSourceOverride(filename)
+	realPath, info, ok, err := statArgocdSourceOverride(filename)
 	if err != nil || !ok {
 		return nil, false, err
 	}
@@ -171,7 +171,7 @@ func readArgocdSourceOverride(root, filename string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w", filename, err)
 	}
-	rel, err := filepath.Rel(realRoot, real)
+	rel, err := filepath.Rel(realRoot, realPath)
 	if err != nil || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) {
 		return nil, false, fmt.Errorf("%s: override file resolves to a path outside the repository, which drydock never reads", filename)
 	}
@@ -181,7 +181,7 @@ func readArgocdSourceOverride(root, filename string) ([]byte, bool, error) {
 	if !info.Mode().IsRegular() {
 		return nil, false, fmt.Errorf("%s: override file is not a regular file", filename)
 	}
-	data, err := pathsafety.ReadRegularFile(real)
+	data, err := pathsafety.ReadRegularFile(realPath)
 	if errors.Is(err, pathsafety.ErrNotRegular) {
 		return nil, false, fmt.Errorf("%s: override file is not a regular file", filename)
 	}
@@ -206,19 +206,19 @@ func statArgocdSourceOverride(filename string) (string, os.FileInfo, bool, error
 		}
 		return "", nil, false, err
 	}
-	real, err := filepath.EvalSymlinks(absFile)
+	realPath, err := filepath.EvalSymlinks(absFile)
 	if os.IsNotExist(err) {
 		return "", nil, false, nil
 	}
 	if err != nil {
 		return "", nil, false, fmt.Errorf("%s: %w", filename, err)
 	}
-	info, err := os.Stat(real)
+	info, err := os.Stat(realPath)
 	if err != nil {
 		return "", nil, false, fmt.Errorf("%s: %w", filename, err)
 	}
 	if info.IsDir() {
 		return "", nil, false, nil
 	}
-	return real, info, true, nil
+	return realPath, info, true, nil
 }
