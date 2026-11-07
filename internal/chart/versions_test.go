@@ -31,7 +31,7 @@ func newRangeIndexServer(t *testing.T) (*httptest.Server, map[string]int) {
 	var index strings.Builder
 	index.WriteString("apiVersion: v1\nentries:\n  demo:\n")
 	for _, version := range rangeIndexVersions {
-		fmt.Fprintf(&index, "    - version: %q\n", version)
+		fmt.Fprintf(&index, "    - name: demo\n      version: %q\n", version)
 		if version == "1.1.0" {
 			continue
 		}
@@ -484,7 +484,8 @@ func TestOfflineRangeOnAReadOnlyCache(t *testing.T) {
 // build finds the archive of a locked version (findVersionedEntry and
 // versionEquals, helm v4.3.1 pkg/downloader/manager.go:781-806): the first
 // entry with an archive URL whose version equals it as semver, so "v1.2.0"
-// takes 1.2.0, and an entry without a URL is skipped, unlike helm pull.
+// takes 1.2.0, an entry without a URL is skipped, unlike helm pull, and an
+// entry that helm drops when it loads the index is never found.
 func TestDefaultAcquirerFetchesLockedVersionsLikeHelm(t *testing.T) {
 	for _, tt := range []struct {
 		version, want, wantErr string
@@ -492,8 +493,11 @@ func TestDefaultAcquirerFetchesLockedVersionsLikeHelm(t *testing.T) {
 		{version: "1.2.3", want: "1.2.3"},
 		{version: "v1.2.0", want: "1.2.0"},
 		{version: "1.4.0", want: "v1.4.0"},
-		{version: "1.1.0", wantErr: "chart demo version 1.1.0 not found in repository index"},
-		{version: "not-semver", want: "not-semver"},
+		{version: "1.1.0", wantErr: "chart demo version 1.1.0: could not find : no matching version"},
+		// helm drops an index entry whose version is not semver when it
+		// loads the index, so a locked "not-semver" finds nothing, as the
+		// helm 4.3.1 binary reports.
+		{version: "not-semver", wantErr: "chart demo version not-semver: could not find : no matching version"},
 	} {
 		t.Run(tt.version, func(t *testing.T) {
 			server, _ := newRangeIndexServer(t)

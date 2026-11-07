@@ -11,9 +11,25 @@ import (
 	"strings"
 )
 
+// repositoryIndex is a chart repository index. Entries holds every entry as
+// written, in index order, which Kustomize helmCharts lookups and the
+// repo-server's own index read (versions.MaxVersion) use. helm holds the
+// index as helm loads it (loadHelmIndex), or helmErr when helm fails to.
 type repositoryIndex struct {
 	Entries map[string][]repositoryChartVersion `yaml:"entries"`
+	helm    map[string][]repositoryChartVersion
+	helmErr error
 }
+
+// helmEntries returns the entries of the chart name as helm loads the
+// index.
+func (index repositoryIndex) helmEntries(name string) ([]repositoryChartVersion, error) {
+	if index.helmErr != nil {
+		return nil, fmt.Errorf("load chart repository index: %w", index.helmErr)
+	}
+	return index.helm[name], nil
+}
+
 type repositoryChartVersion struct {
 	Version string   `yaml:"version"`
 	URLs    []string `yaml:"urls"`
@@ -48,10 +64,15 @@ func (acquirer DefaultAcquirer) fetchHTTPIndex(ctx context.Context, request Requ
 	if indexResponse.StatusCode != http.StatusOK {
 		return repositoryIndex{}, fmt.Errorf("fetch chart repository index %s: HTTP %s", redactedIndexURL, indexResponse.Status)
 	}
+	data, err := io.ReadAll(indexResponse.Body)
+	if err != nil {
+		return repositoryIndex{}, fmt.Errorf("read chart repository index %s: %s", redactedIndexURL, redactedFetchError(err, indexURL, false))
+	}
 	var index repositoryIndex
-	if err := yaml.NewDecoder(indexResponse.Body).Decode(&index); err != nil {
+	if err := yaml.Unmarshal(data, &index); err != nil {
 		return repositoryIndex{}, fmt.Errorf("decode chart repository index %s: %w", redactedIndexURL, err)
 	}
+	index.helm, index.helmErr = loadHelmIndex(data)
 	return index, nil
 }
 
@@ -169,6 +190,13 @@ func findChartURL(repository string, request Request, index repositoryIndex) (st
 
 func findChartVersion(request Request, index repositoryIndex) (repositoryChartVersion, error) {
 	versions := index.Entries[request.Name]
+	if request.VersionPolicy != VersionAsWritten {
+		helmVersions, err := index.helmEntries(request.Name)
+		if err != nil {
+			return repositoryChartVersion{}, err
+		}
+		versions = helmVersions
+	}
 	if request.VersionPolicy == VersionHelmLocked {
 		return helmFindVersionedEntry(versions, request.Name, strings.TrimSpace(request.Version))
 	}

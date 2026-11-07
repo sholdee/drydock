@@ -2158,7 +2158,7 @@ func newChartMaxAgeRepo(t *testing.T) *chartMaxAgeRepo {
 	repo.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/index.yaml":
-			_, _ = io.WriteString(w, "apiVersion: v1\nentries:\n  demo:\n    - version: 1.2.3\n      urls:\n        - demo-1.2.3.tgz\n")
+			_, _ = io.WriteString(w, "apiVersion: v1\nentries:\n  demo:\n    - name: demo\n      version: 1.2.3\n      urls:\n        - demo-1.2.3.tgz\n")
 		case "/demo-1.2.3.tgz":
 			repo.mu.Lock()
 			repo.downloads++

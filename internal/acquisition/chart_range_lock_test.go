@@ -50,7 +50,7 @@ func TestChartAcquirerSerializesRangesThatResolveToOneVersion(t *testing.T) {
 	var archiveRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/index.yaml" {
-			_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n    - version: 1.2.5\n      urls: [demo-1.2.5.tgz]\n"))
+			_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n    - name: demo\n      version: 1.2.5\n      urls: [demo-1.2.5.tgz]\n"))
 			return
 		}
 		archiveRequests.Add(1)
@@ -120,7 +120,7 @@ func TestChartAcquirerRefreshesAResolvedEntryOncePerRun(t *testing.T) {
 	var archiveRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/index.yaml" {
-			_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n    - version: 1.2.5\n      urls: [demo-1.2.5.tgz]\n"))
+			_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n    - name: demo\n      version: 1.2.5\n      urls: [demo-1.2.5.tgz]\n"))
 			return
 		}
 		archiveRequests.Add(1)
@@ -163,7 +163,7 @@ func TestChartAcquirerRetriesAFailedRefresh(t *testing.T) {
 	var fail atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/index.yaml" {
-			_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n    - version: 1.2.5\n      urls: [demo-1.2.5.tgz]\n"))
+			_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n    - name: demo\n      version: 1.2.5\n      urls: [demo-1.2.5.tgz]\n"))
 			return
 		}
 		archiveRequests.Add(1)

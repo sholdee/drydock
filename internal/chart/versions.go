@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -118,8 +117,14 @@ func IsExactVersion(version string) bool {
 // archive URL, or the tags of an OCI repository.
 type chartVersionsRecord struct {
 	// Found is false when the HTTP index has no entry for the chart.
-	Found    bool                   `json:"found"`
+	Found bool `json:"found"`
+	// Versions are the entries as helm loads the index (loadHelmIndex):
+	// valid entries only, in helm's sort order. For OCI they are the tags.
 	Versions []recordedChartVersion `json:"versions,omitempty"`
+	// AllVersions are the versions of every HTTP index entry as written, in
+	// index order, which the repo-server's own index read gives
+	// versions.MaxVersion.
+	AllVersions []string `json:"allVersions,omitempty"`
 	// FetchedAt is when the online resolve read the list. An offline
 	// resolve from a list older than the chart cache max age reports the
 	// result stale, as for an expired chart cache entry.
@@ -135,7 +140,11 @@ type recordedChartVersion struct {
 	HasURL  bool   `json:"hasURL,omitempty"`
 }
 
+// tags returns the versions that the repo-server's MaxVersion reads.
 func (record chartVersionsRecord) tags() []string {
+	if len(record.AllVersions) > 0 {
+		return append([]string(nil), record.AllVersions...)
+	}
 	tags := make([]string, 0, len(record.Versions))
 	for _, version := range record.Versions {
 		tags = append(tags, version.Version)
@@ -184,7 +193,7 @@ func readVersionsRecord(cacheDir string, request Request) (chartVersionsRecord, 
 
 // versionsRecordLockTimeout bounds the wait for the lock on the version
 // lists. A use that cannot get it in time records nothing.
-const versionsRecordLockTimeout = 5 * time.Second
+var versionsRecordLockTimeout = 5 * time.Second
 
 // writeVersionsRecord writes record as the version list of request.
 func writeVersionsRecord(cacheDir string, request Request, record chartVersionsRecord, forbiddenRoots []string) {
@@ -295,8 +304,15 @@ func (acquirer DefaultAcquirer) resolveVersion(ctx context.Context, request Requ
 			return resolvedVersion{}, err
 		}
 		index = &fetched
-		entries, found := fetched.Entries[request.Name]
+		raw, found := fetched.Entries[request.Name]
 		record.Found = found
+		for _, entry := range raw {
+			record.AllVersions = append(record.AllVersions, entry.Version)
+		}
+		entries, err := fetched.helmEntries(request.Name)
+		if err != nil {
+			return resolvedVersion{}, err
+		}
 		for _, entry := range entries {
 			record.Versions = append(record.Versions, recordedChartVersion{Version: entry.Version, HasURL: len(entry.URLs) > 0})
 		}
@@ -349,15 +365,12 @@ func selectChartVersion(request Request, record chartVersionsRecord) (string, er
 }
 
 // helmFindVersionedEntry is findVersionedEntry (helm v4.3.1
-// pkg/downloader/manager.go:781-806) on the entries sorted as helm loads an
-// index: the first entry with an archive URL whose version equals version
-// (versionEquals).
+// pkg/downloader/manager.go:781-806) on entries in the order that helm loads
+// an index (loadHelmIndex): the first entry with an archive URL whose
+// version equals version (versionEquals). A miss fails with the text of
+// `helm dependency build` (downloadAll, manager.go:316-319).
 func helmFindVersionedEntry(entries []repositoryChartVersion, name, version string) (repositoryChartVersion, error) {
-	sorted := append([]repositoryChartVersion(nil), entries...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return semverHigher(sorted[i].Version, sorted[j].Version)
-	})
-	for _, entry := range sorted {
+	for _, entry := range entries {
 		if len(entry.URLs) == 0 {
 			continue
 		}
@@ -365,7 +378,7 @@ func helmFindVersionedEntry(entries []repositoryChartVersion, name, version stri
 			return entry, nil
 		}
 	}
-	return repositoryChartVersion{}, fmt.Errorf("chart %s version %s not found in repository index", name, version)
+	return repositoryChartVersion{}, fmt.Errorf("chart %s version %s: could not find : no matching version", name, version)
 }
 
 // helmVersionEquals is versionEquals (helm v4.3.1
@@ -396,9 +409,9 @@ func helmIndexGetVersion(request Request, record chartVersionsRecord) (string, e
 
 // resolveHelmDependencyVersion is the remote branch of resolver.Resolve
 // (helm v4.3.1 internal/resolver/resolver.go:56-205) for one dependency:
-// the first version of the index, sorted from highest to lowest, that
-// parses as semver, has an archive URL (HTTP only), and matches the
-// version as a constraint.
+// the first version, in the order that helm loads the index or lists the
+// tags, that parses as semver, has an archive URL (HTTP only), and matches
+// the version as a constraint.
 func resolveHelmDependencyVersion(request Request, record chartVersionsRecord) (string, error) {
 	constraint, err := semver.NewConstraint(request.Version)
 	if err != nil {
@@ -407,7 +420,7 @@ func resolveHelmDependencyVersion(request Request, record chartVersionsRecord) (
 	if request.Kind == RepositoryHTTP && !record.Found {
 		return "", fmt.Errorf("%s chart not found in repo %s", request.Name, request.Repository)
 	}
-	for _, candidate := range sortedRecordedVersions(record.Versions) {
+	for _, candidate := range record.Versions {
 		v, err := semver.NewVersion(candidate.Version)
 		if err != nil || (request.Kind == RepositoryHTTP && !candidate.HasURL) {
 			continue
@@ -419,41 +432,15 @@ func resolveHelmDependencyVersion(request Request, record chartVersionsRecord) (
 	return "", fmt.Errorf("can't get a valid version for 1 subchart(s): %q (repository %q, version %q). Make sure a matching chart version exists in the repo, or change the version constraint in Chart.yaml", request.Name, request.Repository, request.Version)
 }
 
-// sortedRecordedVersions sorts versions from highest to lowest semver, with
-// the ones that do not parse last, as helm sorts a loaded index
-// (IndexFile.SortEntries, pkg/repo/v1/index.go:68-79,173-177).
-func sortedRecordedVersions(input []recordedChartVersion) []recordedChartVersion {
-	out := append([]recordedChartVersion(nil), input...)
-	sort.SliceStable(out, func(i, j int) bool {
-		return semverHigher(out[i].Version, out[j].Version)
-	})
-	return out
-}
-
-// semverHigher reports whether version a sorts before version b in a helm
-// index sorted from highest to lowest: a parses as semver and b does not,
-// or both parse and a is higher.
-func semverHigher(a, b string) bool {
-	va, errA := semver.NewVersion(a)
-	vb, errB := semver.NewVersion(b)
-	switch {
-	case errA != nil:
-		return false
-	case errB != nil:
-		return true
-	default:
-		return vb.LessThan(va)
-	}
-}
-
 // errChartVersionNotFound marks an index without a version that a request
 // names.
 var errChartVersionNotFound = errors.New("not found in repository index")
 
 // helmIndexGet is IndexFile.Get (helm v4.3.1 pkg/repo/v1/index.go:196-241),
-// which helm pull and `helm dependency build` use to find the archive of a
-// version: the entry whose version is version as written, or else the
-// highest entry that matches version as a constraint.
+// which helm pull uses to find the archive of a version, on entries in the
+// order that helm loads an index (loadHelmIndex): the entry whose version
+// is version as written, or else the first entry that matches version as a
+// constraint.
 func helmIndexGet(entries []repositoryChartVersion, name, version string) (repositoryChartVersion, error) {
 	var constraint *semver.Constraints
 	if version == "" {
@@ -470,11 +457,7 @@ func helmIndexGet(entries []repositoryChartVersion, name, version string) (repos
 			}
 		}
 	}
-	sorted := append([]repositoryChartVersion(nil), entries...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return semverHigher(sorted[i].Version, sorted[j].Version)
-	})
-	for _, entry := range sorted {
+	for _, entry := range entries {
 		test, err := semver.NewVersion(entry.Version)
 		if err != nil {
 			continue
