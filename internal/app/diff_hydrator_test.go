@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/go-git/go-git/v5/plumbing"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 func writeDiffHydratorApp(t *testing.T, root string) {
@@ -85,5 +88,32 @@ func TestDiffRefHydratorSyncBranchReadsEachSideTree(t *testing.T) {
 			}
 			assertSingleDiffContains(t, result, "-  value: old", "+  value: new")
 		})
+	}
+}
+
+// TestSelectionOwnsHydratorSyncPathOnlyWhenRenderedLocally pins changed-only
+// selection for a source hydrator: it owns the sync path only when the
+// render reads it from the local tree (hydratorSyncRendersFromRoot), not
+// whenever the path exists locally.
+func TestSelectionOwnsHydratorSyncPathOnlyWhenRenderedLocally(t *testing.T) {
+	root := t.TempDir()
+	writeDiffHydratedConfigMap(t, root, "local")
+	hydratorApp := func(name, repoURL, branch string) ApplicationSelectionInput {
+		app := argoappv1.Application{Name: name, Spec: argoappv1.ApplicationSpec{SourceHydrator: &argoappv1.SourceHydrator{
+			DrySource:  argoappv1.DrySource{RepoURL: selfRepoSpecURL, Path: "dry"},
+			SyncSource: argoappv1.SyncSource{RepoURL: repoURL, TargetBranch: branch, Path: "hydrated"},
+		}}}
+		return ApplicationSelectionInput{Application: app, Paths: []string{"apps/" + name + ".yaml"}}
+	}
+	inputs := []ApplicationSelectionInput{
+		hydratorApp("tracked", selfRepoSpecURL, "main"),
+		hydratorApp("other-branch", selfRepoSpecURL, "env/prod"),
+		hydratorApp("other-repo", "https://github.com/example/deployments", "main"),
+	}
+	selfRepo := selfRepoRefs{urlKeys: []string{sourcepkg.CanonicalGitURLKey(selfRepoRemoteURL)}, revisions: []string{"main"}}
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepo, inputs).inputs
+	selected, _ := SelectChangedApplicationInputs(got, []string{"hydrated/cm.yaml"})
+	if names := applicationNames(selected); !slices.Equal(names, []string{"tracked"}) {
+		t.Fatalf("selected = %v, want only the Application whose sync branch renders from this tree", names)
 	}
 }

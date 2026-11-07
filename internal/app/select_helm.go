@@ -96,7 +96,7 @@ func helmRefSelectionPaths(tree *selectionTree, application argoappv1.Applicatio
 		if sourcePlan.RefOnly {
 			continue
 		}
-		if pathSourceRendersFromRoot(tree, sourcePlan.Source) {
+		if sourceRendersFromRoot(tree, application, sourcePlan.Source) {
 			sourcePlan.Source = selectionSourceWithOverrides(tree.root, application, sourcePlan.Source)
 		}
 		if sourcePlan.Source.Helm == nil {
