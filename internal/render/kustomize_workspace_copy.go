@@ -105,8 +105,10 @@ func (c *preparedKustomizeWorkspaceCopier) copyPath(path string) error {
 	if err != nil || dstRel == ".." || strings.HasPrefix(dstRel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("copy destination path %q escapes destination root %q", dstPath, c.dstRoot)
 	}
-	if err := rejectSymlinkedDestination(c.dstRoot, filepath.Dir(dstPath)); err != nil {
-		return err
+	if dstRel != "." {
+		if err := rejectSymlinkedDestination(c.dstRoot, filepath.Dir(dstPath)); err != nil {
+			return err
+		}
 	}
 	if info.IsDir() {
 		if err := copyWorkspaceTreeWithForceCopy(path, dstPath, c.forceCopy); err != nil {
@@ -211,12 +213,19 @@ func (c *preparedKustomizeWorkspaceCopier) sourceRel(path string) (rel string, s
 	// A path through a symlinked folder is never copied. The render
 	// rejects such a path later, with the error of the field that names
 	// it. A copy could put files outside the workspace: the tree copy
-	// keeps symlinks, so the destination can resolve through one.
-	symlink, err := firstSymlinkedFolder(c.repoRoot, filepath.Dir(path))
-	if err != nil {
-		return "", false, err
+	// keeps symlinks, so the destination can resolve through one. The
+	// repository root itself has no folder to check: a remote Git base can
+	// be the whole acquired repository.
+	if rel != "." {
+		symlink, err := firstSymlinkedFolder(c.repoRoot, filepath.Dir(path))
+		if err != nil {
+			return "", false, err
+		}
+		if symlink != "" {
+			return "", true, nil
+		}
 	}
-	if symlink != "" || c.pathCovered(path) {
+	if c.pathCovered(path) {
 		return "", true, nil
 	}
 	return rel, false, nil
