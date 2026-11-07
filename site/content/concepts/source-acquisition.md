@@ -101,10 +101,14 @@ tree.
 An OCI Helm chart source is the schemeless shape Argo CD classifies as
 Helm-OCI: `repoURL: ghcr.io/org/charts` (host and optional path, no scheme)
 plus `chart:`, including nested chart names. It is pulled through the Helm
-registry client into the chart cache at the exact `targetRevision` version;
-semver constraints are not resolved for this shape, where Argo CD's
-repo-server resolves them against the registry tag list — a recorded
-follow-up. A `repoURL` that starts with `oci://` is never a Helm chart
+registry client into the chart cache.
+
+A chart source `targetRevision` can be a version range, such as `1.2.*` or
+`>=1.0.0 <2.0.0`, as in Argo CD. drydock reads the repository index or the
+registry tags on every online run, takes the highest version that matches,
+and caches the chart under that version. Each online run records the version
+list, so `--offline` resolves the range from the record. A render that
+resolved a range is not stored in the persistent render cache. A `repoURL` that starts with `oci://` is never a Helm chart
 source: Argo CD's repo-server dispatches on the scheme before it looks at
 `chart:`, and drydock follows it — see
 [OCI Artifact Sources](#oci-artifact-sources).

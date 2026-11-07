@@ -561,6 +561,28 @@ func argoRenderEnvAt(application argoappv1.Application, source argoappv1.Applica
 	}
 }
 
+// withArgoAppRevision returns env with ARGOCD_APP_REVISION and its two
+// short forms set to revision, as argoRenderEnvAt sets them.
+func withArgoAppRevision(env argoappv1.Env, revision string) argoappv1.Env {
+	out := make(argoappv1.Env, 0, len(env))
+	for _, entry := range env {
+		if entry == nil {
+			continue
+		}
+		copied := *entry
+		switch copied.Name {
+		case "ARGOCD_APP_REVISION":
+			copied.Value = revision
+		case "ARGOCD_APP_REVISION_SHORT":
+			copied.Value = shortenRevision(revision, 7)
+		case "ARGOCD_APP_REVISION_SHORT_8":
+			copied.Value = shortenRevision(revision, 8)
+		}
+		out = append(out, &copied)
+	}
+	return out
+}
+
 // shortenRevision mirrors the repo-server helper of the same name: the first
 // length bytes of revision, or all of it when it is shorter.
 func shortenRevision(revision string, length int) string {

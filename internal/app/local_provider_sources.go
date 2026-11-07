@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/argo-cd/v3/util/versions"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/ociartifact"
@@ -421,13 +422,15 @@ func chartFlowSource(source render.ResolvedSource) bool {
 }
 
 // chartOnlySourceIdentity derives the identity of a schemeless-OCI or HTTP(S)
-// chart-only source from the spec alone: drydock supports exact chart versions
-// only, so name+version fully determine content per registry contract. An
+// chart-only source from the spec alone: for a version that parses as semver,
+// name+version fully determine content per registry contract, as in the chart
+// cache. A version range resolves only when the render reads the repository,
+// so such a source is persistence-ineligible and always re-renders. An
 // oci:// source never takes this identity — it resolves to a digest through
 // resolveOCIArtifactSource, chart or no chart.
 func chartOnlySourceIdentity(source render.ResolvedSource) SourceIdentity {
 	version := strings.TrimSpace(source.TargetRevision)
-	if version == "" {
+	if version == "" || !versions.IsVersion(version) {
 		return SourceIdentity{}
 	}
 	return SourceIdentity{

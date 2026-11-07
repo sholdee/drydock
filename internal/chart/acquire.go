@@ -26,6 +26,10 @@ type Request struct {
 	Name       string
 	Version    string
 	Kind       RepositoryKind
+	// VersionPolicy says how Version names the chart version. A policy
+	// that resolves a version range resolves it before the cache lookup,
+	// so the cache entry and Result.Version are the resolved version.
+	VersionPolicy VersionPolicy
 }
 
 type Result struct {

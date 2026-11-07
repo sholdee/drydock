@@ -34,6 +34,15 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, err
 	}
 	opts.CacheDir = cacheDir
+	var index *repositoryIndex
+	if needsVersionResolution(request) {
+		resolved, fetched, err := acquirer.resolveVersion(ctx, request, opts)
+		if err != nil {
+			return Result{}, err
+		}
+		request.Version = resolved
+		index = fetched
+	}
 	key, err := NewCacheKey(request)
 	if err != nil {
 		return Result{}, err
@@ -64,7 +73,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, fmt.Errorf("offline cache miss for chart %s %s", request.Name, request.Version)
 	}
 
-	archive, err := acquirer.fetchChart(ctx, request, opts)
+	archive, err := acquirer.fetchChart(ctx, request, opts, index)
 	if err != nil {
 		return Result{}, err
 	}
@@ -184,10 +193,10 @@ func writeChartMetadata(keyDir, key string, request Request, createdAt time.Time
 		FetchTimeUnknown: fetchTimeUnknown,
 	})
 }
-func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request, opts Options) ([]byte, error) {
+func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request, opts Options, index *repositoryIndex) ([]byte, error) {
 	switch request.Kind {
 	case RepositoryHTTP:
-		return acquirer.fetchHTTPChart(ctx, request, opts)
+		return acquirer.fetchHTTPChart(ctx, request, opts, index)
 	case RepositoryOCI:
 		return acquirer.fetchOCIChart(ctx, request, opts)
 	default:

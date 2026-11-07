@@ -56,6 +56,10 @@ OCI artifact sources have revision-dependent offline behavior:
   constraint satisfiable from the recorded tag list renders offline; anything
   not yet recorded fails.
 
+Helm chart version ranges, in a chart source `targetRevision` or in a
+`Chart.yaml` dependency without a `Chart.lock`, resolve the same way from the
+version list that the last online run recorded in the chart cache.
+
 A revision that cannot be resolved offline — or a digest whose image was
 never pulled — fails with an `offline cache miss` error. The remediation is
 one online run of the same render against the same cache directory

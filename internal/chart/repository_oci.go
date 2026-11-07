@@ -33,6 +33,66 @@ func (acquirer DefaultAcquirer) fetchOCIChart(ctx context.Context, request Reque
 	}
 	return archive, nil
 }
+
+// OCITagLister lists the tags of an OCI chart repository, so a version
+// range resolves against them.
+type OCITagLister interface {
+	Tags(ctx context.Context, request Request, opts Options) ([]string, error)
+}
+
+// listOCIChartTags returns the tags of the OCI chart of request, as helm's
+// registry client lists them (Client.Tags, helm v4.3.1
+// pkg/registry/client.go:785-826): only strict semver tags, with "_" read
+// as "+", sorted from highest to lowest.
+func (acquirer DefaultAcquirer) listOCIChartTags(ctx context.Context, request Request, opts Options) ([]string, error) {
+	if err := validateRegistryConfig(opts.Credentials.RegistryConfig); err != nil {
+		return nil, err
+	}
+	var lister OCITagLister = HelmOCIPuller{Client: acquirer.Client}
+	if acquirer.OCIPuller != nil {
+		configured, ok := acquirer.OCIPuller.(OCITagLister)
+		if !ok {
+			return nil, fmt.Errorf("list OCI chart tags %s/%s: the OCI puller cannot list tags", redactedFetchURL(request.Repository, true), request.Name)
+		}
+		lister = configured
+	}
+	tags, err := lister.Tags(ctx, request, opts)
+	if err != nil {
+		repository := redactedFetchURL(request.Repository, true)
+		if isAuthError(err) {
+			return nil, fmt.Errorf("authenticate OCI chart %s/%s tag list: %s", repository, request.Name, redactedFetchError(err, request.Repository, false))
+		}
+		return nil, fmt.Errorf("list OCI chart tags %s/%s: %s", repository, request.Name, redactedFetchError(err, request.Repository, false))
+	}
+	return tags, nil
+}
+
+// Tags lists the tags of the OCI chart of request with helm's registry
+// client.
+func (puller HelmOCIPuller) Tags(ctx context.Context, request Request, opts Options) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	repository, err := parseOCIChartRepository(request.Repository)
+	if err != nil {
+		return nil, err
+	}
+	tempDir, err := os.MkdirTemp("", "drydock-oci-chart-tags-")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary OCI chart directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+	registryConfig, dockerConfigDir, err := prepareOCIRegistryConfig(tempDir, opts.Credentials.RegistryConfig)
+	if err != nil {
+		return nil, err
+	}
+	registryClient, err := newHelmOCIRegistryClient(puller.Client, registryConfig, dockerConfigDir)
+	if err != nil {
+		return nil, fmt.Errorf("create Helm OCI registry client: %w", err)
+	}
+	return registryClient.Tags(repository + "/" + request.Name)
+}
+
 func validateRegistryConfig(registryConfig string) error {
 	registryConfig = strings.TrimSpace(registryConfig)
 	if registryConfig == "" {

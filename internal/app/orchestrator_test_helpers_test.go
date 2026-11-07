@@ -447,11 +447,13 @@ data:
 }
 
 type recordingChartAcquirer struct {
-	chartDir   string
-	acquireErr error
-	fromCache  bool
-	requests   []chart.Request
-	options    []chart.Options
+	chartDir string
+	// resolvedVersion, when set, is the version that a range resolves to.
+	resolvedVersion string
+	acquireErr      error
+	fromCache       bool
+	requests        []chart.Request
+	options         []chart.Options
 }
 type recordingGitAcquirer struct {
 	path      string
@@ -499,11 +501,15 @@ func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request chart
 	if acquirer.acquireErr != nil {
 		return chart.Result{}, acquirer.acquireErr
 	}
+	version := request.Version
+	if acquirer.resolvedVersion != "" {
+		version = acquirer.resolvedVersion
+	}
 	return chart.Result{
 		ChartDir:   acquirer.chartDir,
 		Repository: request.Repository,
 		Name:       request.Name,
-		Version:    request.Version,
+		Version:    version,
 		Kind:       request.Kind,
 		FromCache:  acquirer.fromCache,
 	}, nil

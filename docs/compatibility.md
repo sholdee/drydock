@@ -472,9 +472,33 @@ Important boundaries:
   OCI. A single-source `oci://` Application with neither `path:` nor
   `chart:` is an invalid spec upstream (`InvalidSpecError`), and drydock
   fails it the same way. Earlier drydock releases rendered the artifact
-  root. The schemeless Helm-OCI chart flow resolves exact chart versions
-  only, where the repo-server also resolves semver constraints against the
-  registry tag list. That is a recorded follow-up.
+  root.
+- A chart source `targetRevision` resolves as in the Argo CD v3.6.1
+  repo-server (`newHelmClientResolveRevision`,
+  `reposerver/repository/repository.go:3029-3066`), on HTTP(S) and
+  schemeless OCI Helm repositories. A revision that parses as semver, also
+  `1.2` or `v1.2.3`, stays as written. helm then takes the index entry with
+  that version, or else the highest one that matches it as a constraint,
+  so `1.2` fetches the highest `1.2.x` on an HTTP repository. Any other
+  revision, such as `1.2.*`, `>=1.0.0 <2.0.0`, or `*`, is a constraint:
+  drydock takes the highest index version or registry tag that matches it
+  (`versions.MaxVersion`), with prereleases only for a constraint that
+  names one, and fetches that version. The chart cache entry, the cache
+  event revision, and `ARGOCD_APP_REVISION` hold the resolved version. A
+  constraint that matches nothing fails with the repo-server's `invalid
+  revision: version matching constraint not found in <n> tags`.
+- A version range is resolved on every online run, so it picks up a new
+  release. Each online resolve records the version list of the chart in
+  the chart cache, and an offline run resolves the range from that record.
+  Without a record, the offline run fails with `offline cache miss`. A
+  render that resolved a range is never stored in the persistent render
+  cache, because the next run can resolve another version.
+- Recorded divergence from strict Argo CD v3.6.1: on a schemeless OCI
+  repository, drydock lists the tags with helm's registry client, which
+  keeps only strict semver tags. The repo-server lists every tag, so a
+  constraint can also match a tag such as `v1.2.0` there.
+- Kustomize `helmCharts` versions are not resolved as ranges. They must
+  name an index version as written.
 - `$ref` value-file sources are Git-only, matching upstream: an OCI `$ref`
   source fails with a clear error.
 - Private OCI registries are supported for OCI artifact sources through
@@ -925,9 +949,9 @@ Supported:
   - An OCI artifact source gets the manifest digest (`sha256:...`), so
     `_SHORT` is `sha256:` and `_SHORT_8` is `sha256:` plus one hex digit,
     as in Argo CD.
-  - A chart from a Helm repository gets the chart version. drydock supports
-    exact versions only, and for an exact version the repo-server reports
-    the `targetRevision` as written.
+  - A chart from a Helm repository gets the chart version: the
+    `targetRevision` as written when it parses as semver, and the resolved
+    version for a version range.
 - Recorded divergences from strict Argo CD v3.6.1 for these variables:
   - When the `--path` tree or a `--repo-map` directory is not the top of a
     Git repository (for example a subdirectory of a repository), or HEAD

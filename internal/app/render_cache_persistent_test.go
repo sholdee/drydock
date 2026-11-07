@@ -1390,6 +1390,9 @@ func TestAcquisitionsPinStable(t *testing.T) {
 		{name: "exact chart version passes", records: []cacheevent.AcquisitionRecord{
 			{Kind: cacheevent.AcquisitionChart, RequestedRevision: "1.2.3", ResolvedRevision: "1.2.3"},
 		}, want: true},
+		{name: "chart version range blocks", records: []cacheevent.AcquisitionRecord{
+			{Kind: cacheevent.AcquisitionChart, RequestedRevision: "1.2.*", ResolvedRevision: "1.2.3"},
+		}, want: false},
 		{name: "empty chart version blocks", records: []cacheevent.AcquisitionRecord{
 			{Kind: cacheevent.AcquisitionChart, RequestedRevision: " ", ResolvedRevision: "1.2.3"},
 		}, want: false},
