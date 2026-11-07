@@ -12,6 +12,9 @@ import (
 	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/sholdee/drydock/internal/remote"
 )
 
 // The prepared Kustomize workspace holds repository files as hard links.
@@ -224,7 +227,7 @@ func TestPreparedKustomizeRenderKeepsSourceAndCacheTrees(t *testing.T) {
 	writeFile(t, filepath.Join(repoRoot, "app", "kustomization.yaml"), `# source kustomization comment
 resources:
   - `+baseRef+`
-  - https://github.com/example/repo.git//remote-base?ref=v1.2.3
+  - https://github.com/example/repo.git//remote-base?ref=HEAD
 generators:
   - gen.yaml
 helmCharts:
@@ -242,10 +245,20 @@ data:
 	writeFile(t, filepath.Join(repoRoot, "components", "extra", "cm.yaml"), decodeTestConfigMap("component", "value"))
 	writeFile(t, filepath.Join(repoRoot, "app", "patch.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  patched: \"true\"\n")
 
-	cacheRoot := filepath.Join(top, "cache", "git", "repo")
-	writeFile(t, filepath.Join(cacheRoot, "remote-base", "kustomization.yaml"), "# remote comment\nresources:\n  - "+subRef+"\n")
-	writeFile(t, filepath.Join(cacheRoot, "remote-base", "sub", "kustomization.yaml"), "# remote sub comment\nresources:\n  - cm.yaml\n")
-	writeFile(t, filepath.Join(cacheRoot, "remote-base", "sub", "cm.yaml"), decodeTestConfigMap("remote", "value"))
+	origin := filepath.Join(top, "origin")
+	writeFile(t, filepath.Join(origin, "remote-base", "kustomization.yaml"), "# remote comment\nresources:\n  - "+subRef+"\n")
+	writeFile(t, filepath.Join(origin, "remote-base", "sub", "kustomization.yaml"), "# remote sub comment\nresources:\n  - cm.yaml\n")
+	writeFile(t, filepath.Join(origin, "remote-base", "sub", "cm.yaml"), decodeTestConfigMap("remote", "value"))
+	commitGitFixture(t, origin)
+	cacheDir := filepath.Join(top, "cache")
+	acquirer := &localGitCacheAcquirer{repoURL: "file://" + filepath.ToSlash(origin)}
+	// Clone the base into the Git cache first, so the render reads a
+	// cache hit and the snapshot covers the cache worktree it reads.
+	seeded, err := acquirer.Acquire(context.Background(), remote.Request{Kind: remote.RequestGitRepo, Revision: "HEAD"}, remote.Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("seed Git cache: %v", err)
+	}
+	cacheRoot := seeded.Path
 
 	repoBefore := snapshotHardlinkTestTree(t, repoRoot)
 	cacheBefore := snapshotHardlinkTestTree(t, cacheRoot)
@@ -260,11 +273,14 @@ data:
 				Target: &argoappv1.KustomizeSelector{Kind: "ConfigMap", Name: "demo"},
 			}},
 		},
-		RemoteResourceAcquirer: &fakeRemoteAcquirer{path: cacheRoot},
-		RemoteResourceCacheDir: filepath.Join(top, "cache"),
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: cacheDir,
 	})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
+	}
+	if len(acquirer.paths) != 2 || acquirer.paths[1] != cacheRoot {
+		t.Fatalf("remote base read from %v, want the seeded Git cache %s", acquirer.paths, cacheRoot)
 	}
 	for _, name := range []string{"p-demo", "p-remote", "p-component", "p-demo-chart"} {
 		if !containsManifest(manifests, "ConfigMap", name) {
@@ -273,6 +289,46 @@ data:
 	}
 	assertTreeUnchanged(t, repoRoot, repoBefore)
 	assertTreeUnchanged(t, cacheRoot, cacheBefore)
+}
+
+// localGitCacheAcquirer acquires every remote Git ref from the local Git
+// repository repoURL (a file:// URL) through the Git cache of
+// remote.DefaultAcquirer. It records the path of each result.
+type localGitCacheAcquirer struct {
+	repoURL string
+	paths   []string
+}
+
+func (a *localGitCacheAcquirer) Acquire(ctx context.Context, request remote.Request, opts remote.Options) (remote.Result, error) {
+	request.URL = a.repoURL
+	request.RepoURL = a.repoURL
+	result, err := remote.DefaultAcquirer{}.Acquire(ctx, request, opts)
+	if err == nil {
+		a.paths = append(a.paths, result.Path)
+	}
+	return result, err
+}
+
+// commitGitFixture makes root a Git repository with one commit of every
+// file under it.
+func commitGitFixture(t *testing.T, root string) {
+	t.Helper()
+	repo, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatalf("PlainInit() error = %v", err)
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree() error = %v", err)
+	}
+	if err := worktree.AddWithOptions(&git.AddOptions{All: true}); err != nil {
+		t.Fatalf("Worktree.Add() error = %v", err)
+	}
+	if _, err := worktree.Commit("fixture", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Unix(1, 0)},
+	}); err != nil {
+		t.Fatalf("Worktree.Commit() error = %v", err)
+	}
 }
 
 // writeHardlinkTestRepo writes app/kustomization.yaml, which reads the base
@@ -293,8 +349,9 @@ type hardlinkTreeEntry struct {
 	modTime time.Time
 }
 
-// snapshotTree records the content hash, mode and mtime of every entry
-// under root.
+// snapshotHardlinkTestTree records the content hash, mode and mtime of
+// every entry under root. It skips .git directories: the workspace never
+// copies them, and Git may update its own files there.
 func snapshotHardlinkTestTree(t *testing.T, root string) map[string]hardlinkTreeEntry {
 	t.Helper()
 	out := map[string]hardlinkTreeEntry{}
@@ -305,6 +362,9 @@ func snapshotHardlinkTestTree(t *testing.T, root string) map[string]hardlinkTree
 		info, err := entry.Info()
 		if err != nil {
 			return err
+		}
+		if entry.IsDir() && entry.Name() == ".git" {
+			return filepath.SkipDir
 		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
