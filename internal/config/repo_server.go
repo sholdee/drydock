@@ -16,9 +16,9 @@ const DefaultHelmNamespace = "default"
 const serviceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount"
 
 // HelmNamespace returns the namespace helm uses in the Argo CD repo-server
-// when Argo CD or kustomize passes no --namespace: the rendered
-// RepoServerHelmNamespace, or DefaultHelmNamespace without a rendered
-// install.
+// when Argo CD or kustomize passes no --namespace: RepoServerHelmNamespace,
+// which drydock works out from the repo-server of a rendered or committed
+// install, or DefaultHelmNamespace without one.
 func (s ArgoSettings) HelmNamespace() string {
 	if s.RepoServerHelmNamespace != nil && s.RepoServerHelmNamespace.Value != "" {
 		return s.RepoServerHelmNamespace.Value
@@ -33,6 +33,11 @@ func (s ArgoSettings) HelmNamespace() string {
 const (
 	RepoServerUnknownSourceKey = "drydockUnknownSource"
 	RepoServerEnvFromKey       = "drydockEnvFrom"
+	// RepoServerNamespaceFileKey marks, on a sanitized volume, that the
+	// volume holds a file named namespace: a projected volume with a
+	// downwardAPI item at that path, or a Secret volume, which for a
+	// service account token Secret holds the namespace.
+	RepoServerNamespaceFileKey = "drydockNamespaceFile"
 )
 
 // RepoServerHelmNamespace works out the namespace that helm uses in the
@@ -47,12 +52,14 @@ const (
 // (DirectClientConfig.Namespace, tools/clientcmd/client_config.go:399-406
 // at client-go v0.37.0). Otherwise client-go reads the kubeconfig that
 // KUBECONFIG names; an empty KUBECONFIG is unset, and the repo-server has no
-// kubeconfig in its home directory. Without one,
+// kubeconfig in its home directory. Without one, a HELM_KUBECONTEXT names a
+// context that does not exist, client-go fails, and helm uses "default"
+// (ConfirmUsable, client_config.go:441-446). Otherwise,
 // DeferredLoadingClientConfig.Namespace (merged_client_builder.go:131-168)
 // uses the in-cluster namespace when a service account token is mounted:
-// POD_NAMESPACE, else the namespace of the token, which is the pod
-// namespace (inClusterClientConfig.Namespace, client_config.go:646-661).
-// Without a token it uses "default".
+// POD_NAMESPACE, else the namespace file next to the token, which is the
+// pod namespace (inClusterClientConfig.Namespace, client_config.go:646-661).
+// Without a token, or without the namespace file, it uses "default".
 //
 // The token is mounted when the pod spec automountServiceAccountToken is
 // true, or unset while the ServiceAccount does not set it to false, or when
@@ -67,10 +74,18 @@ func RepoServerHelmNamespace(deployment *unstructured.Unstructured, serviceAccou
 	podSpec, _, _ := unstructured.NestedMap(deployment.Object, "spec", "template", "spec")
 	container := repoServerContainer(podSpec)
 	env, unknown := containerNamespaceEnv(container, podNamespace)
-	if container[RepoServerEnvFromKey] == true {
-		notes = append(notes, "the repo-server container sets envFrom, which can set HELM_NAMESPACE, POD_NAMESPACE, or KUBECONFIG")
+	// A literal HELM_NAMESPACE decides alone, and nothing else is read. An
+	// env entry wins over envFrom for the same name, so envFrom cannot
+	// change it.
+	if _, helmUnknown := unknown["HELM_NAMESPACE"]; !helmUnknown {
+		if value := env["HELM_NAMESPACE"]; value != "" {
+			return value, nil
+		}
 	}
-	for _, name := range []string{"HELM_NAMESPACE", "KUBECONFIG", "POD_NAMESPACE"} {
+	if container[RepoServerEnvFromKey] == true {
+		notes = append(notes, "the repo-server container sets envFrom, which can set HELM_NAMESPACE, HELM_KUBECONTEXT, POD_NAMESPACE, or KUBECONFIG")
+	}
+	for _, name := range []string{"HELM_NAMESPACE", "KUBECONFIG", "HELM_KUBECONTEXT", "POD_NAMESPACE"} {
 		if source, ok := unknown[name]; ok {
 			notes = append(notes, name+" comes from "+source)
 		}
@@ -80,14 +95,20 @@ func RepoServerHelmNamespace(deployment *unstructured.Unstructured, serviceAccou
 	}
 	if env["KUBECONFIG"] != "" {
 		notes = append(notes, "KUBECONFIG names a kubeconfig file that drydock cannot read")
+	} else if env["HELM_KUBECONTEXT"] != "" {
+		// helm overrides the current context. Without a kubeconfig the
+		// context is not found, client-go fails, and helm falls back to
+		// "default" (ConfirmUsable, client_config.go:441-446).
+		return DefaultHelmNamespace, notes
 	}
-	if !serviceAccountTokenMounted(podSpec, container, serviceAccounts) {
+	mounted, namespaceFile := serviceAccountToken(podSpec, container, serviceAccounts)
+	if !mounted {
 		return DefaultHelmNamespace, notes
 	}
 	if value := env["POD_NAMESPACE"]; value != "" {
 		return value, notes
 	}
-	if podNamespace == "" {
+	if !namespaceFile || podNamespace == "" {
 		return DefaultHelmNamespace, notes
 	}
 	return podNamespace, notes
@@ -152,15 +173,30 @@ func containerNamespaceEnv(container map[string]any, podNamespace string) (known
 	return known, unknown
 }
 
-func serviceAccountTokenMounted(podSpec, container map[string]any, serviceAccounts []*unstructured.Unstructured) bool {
+// serviceAccountToken reports whether a service account token is mounted
+// at the token path of container, and whether the namespace file is there
+// too. The kubelet mounts both when the pod spec
+// automountServiceAccountToken is true, or unset while the ServiceAccount
+// does not set it to false. A volume that the container mounts at the token
+// path holds the namespace file only when the sanitizer marked it so
+// (RepoServerNamespaceFileKey).
+func serviceAccountToken(podSpec, container map[string]any, serviceAccounts []*unstructured.Unstructured) (mounted, namespaceFile bool) {
 	mounts, _ := container["volumeMounts"].([]any)
 	for _, item := range mounts {
-		if mount, ok := item.(map[string]any); ok && mount["mountPath"] == serviceAccountTokenPath {
-			return true
+		mount, ok := item.(map[string]any)
+		if !ok || mount["mountPath"] != serviceAccountTokenPath {
+			continue
 		}
+		volumes, _ := podSpec["volumes"].([]any)
+		for _, volumeItem := range volumes {
+			if volume, ok := volumeItem.(map[string]any); ok && volume["name"] == mount["name"] {
+				return true, volume[RepoServerNamespaceFileKey] == true
+			}
+		}
+		return true, false
 	}
 	if automount, ok := podSpec["automountServiceAccountToken"].(bool); ok {
-		return automount
+		return automount, automount
 	}
 	name, _ := podSpec["serviceAccountName"].(string)
 	if name == "" {
@@ -174,8 +210,8 @@ func serviceAccountTokenMounted(podSpec, container map[string]any, serviceAccoun
 			continue
 		}
 		if automount, ok := serviceAccount.Object["automountServiceAccountToken"].(bool); ok {
-			return automount
+			return automount, automount
 		}
 	}
-	return true
+	return true, true
 }

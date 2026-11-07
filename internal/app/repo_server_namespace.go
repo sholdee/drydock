@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -113,15 +114,17 @@ func collectRepoServerCandidates(root string, discovered discovery.Result, setti
 			item.namespace = candidate.Object.GetNamespace()
 			item.namespaceKnown = item.namespace != ""
 		}
+		// An object whose namespace drydock cannot tell runs in the Argo CD
+		// namespace, the ServiceAccount as its Deployment.
+		if !item.namespaceKnown {
+			item.namespace = controllerNamespace
+		}
 		if candidate.Kind == discovery.RepoServerServiceAccountKind {
 			serviceAccounts = append(serviceAccounts, item)
 			continue
 		}
 		if containers, _, _ := unstructured.NestedSlice(candidate.Object.Object, "spec", "template", "spec", "containers"); len(containers) == 0 {
 			continue
-		}
-		if !item.namespaceKnown {
-			item.namespace = controllerNamespace
 		}
 		if item.withSettings || item.namespace == controllerNamespace {
 			deployments = append(deployments, item)
@@ -178,80 +181,144 @@ func repoServerGroup(candidate discovery.SettingsCandidate) string {
 }
 
 // staticRepoServerNamespace works out the namespace of a committed
-// repo-server object as Argo CD and kustomize place it: its own namespace,
-// else the namespace of the kustomization in its directory that lists it,
-// else the destination namespace of the Applications on this cluster whose
-// source path holds the file. remote reports a file that only Applications
-// on other clusters render: that repo-server runs another Argo CD.
+// repo-server object as kustomize and Argo CD place it: the namespace of
+// the kustomization in its directory that lists it, which the kustomize
+// NamespaceTransformer sets over the object's own, else its own namespace,
+// else the destination namespace of the Applications on this cluster that
+// render the file. A kustomize.namespace of such an Application wins over
+// all of them, because Argo CD sets it on the kustomization. remote
+// reports a file that only Applications on other clusters render: that
+// repo-server runs another Argo CD.
 func staticRepoServerNamespace(root string, candidate discovery.SettingsCandidate, applications []discovery.ApplicationFile, settings config.ArgoSettings) (namespace string, known, remote bool, diags []diagnostic.Diagnostic) {
 	file := filepath.ToSlash(candidate.Path)
-	dir := path.Dir(file)
-	destinations, remoteOnly := staticFileDestinations(root, dir, applications, settings)
-	if remoteOnly {
+	renders := staticFileRenders(root, file, applications, settings)
+	if renders.remoteOnly {
 		return "", false, true, nil
+	}
+	if len(renders.overrides) > 0 {
+		return pickStaticNamespace(file, renders.overrides, "kustomize.namespace values")
+	}
+	if namespace := kustomizationNamespaceFor(root, path.Dir(file), path.Base(file)); namespace != "" {
+		return namespace, true, false, nil
 	}
 	if namespace := candidate.Object.GetNamespace(); namespace != "" {
 		return namespace, true, false, nil
 	}
-	if namespace := kustomizationNamespaceFor(root, dir, path.Base(file)); namespace != "" {
-		return namespace, true, false, nil
-	}
-	if len(destinations) == 0 {
+	if len(renders.destinations) == 0 {
 		return "", false, false, nil
 	}
-	if len(destinations) > 1 {
-		diags = append(diags, repoServerWarning(diagnostic.Provenance{Path: file}, fmt.Sprintf("Applications render the Argo CD repo-server in %s into the namespaces %s; drydock uses %q", file, strings.Join(destinations, ", "), destinations[0])))
-	}
-	return destinations[0], true, false, diags
+	return pickStaticNamespace(file, renders.destinations, "destination namespaces")
 }
 
-// staticFileDestinations returns, sorted and without duplicates, the
-// destination namespaces of the Applications on this cluster whose local
-// source path holds dir. remoteOnly reports that every such Application
-// renders to another cluster.
-func staticFileDestinations(root, dir string, applications []discovery.ApplicationFile, settings config.ArgoSettings) ([]string, bool) {
-	var namespaces []string
+func pickStaticNamespace(file string, namespaces []string, what string) (string, bool, bool, []diagnostic.Diagnostic) {
+	var diags []diagnostic.Diagnostic
+	if len(namespaces) > 1 {
+		diags = append(diags, repoServerWarning(diagnostic.Provenance{Path: file}, fmt.Sprintf("Applications render the Argo CD repo-server in %s with the %s %s; drydock uses %q", file, what, strings.Join(namespaces, ", "), namespaces[0])))
+	}
+	return namespaces[0], true, false, diags
+}
+
+// staticRenders is what the discovered Applications do with a committed
+// file.
+type staticRenders struct {
+	// destinations and overrides are the destination namespaces and the
+	// kustomize.namespace values of the Applications on this cluster that
+	// render the file, sorted and without duplicates.
+	destinations []string
+	overrides    []string
+	// remoteOnly reports that only Applications on other clusters render
+	// the file.
+	remoteOnly bool
+}
+
+func staticFileRenders(root, file string, applications []discovery.ApplicationFile, settings config.ArgoSettings) staticRenders {
+	var out staticRenders
 	inCluster, remote := 0, 0
 	for _, appFile := range applications {
 		if appFile.Tier == discovery.SourceTierExternalManifest {
 			continue
 		}
-		if !applicationRendersDir(root, appFile.Application, dir) {
-			continue
-		}
-		server, ok := project.ResolveDestinationServer(appFile.Application.Spec.Destination, settings)
-		if ok && server != argoappv1.KubernetesInternalAPIServerAddr {
-			remote++
-			continue
-		}
-		inCluster++
-		if namespace := appFile.Application.Spec.Destination.Namespace; namespace != "" && !slices.Contains(namespaces, namespace) {
-			namespaces = append(namespaces, namespace)
+		for _, source := range applicationSources(appFile.Application) {
+			if !sourceRendersCommittedFile(root, source, file, sourceTypeGatesFromSettings(settings)) {
+				continue
+			}
+			server, ok := project.ResolveDestinationServer(appFile.Application.Spec.Destination, settings)
+			if ok && server != argoappv1.KubernetesInternalAPIServerAddr {
+				remote++
+				break
+			}
+			inCluster++
+			out.destinations = appendSortedUnique(out.destinations, appFile.Application.Spec.Destination.Namespace)
+			if source.Kustomize != nil {
+				out.overrides = appendSortedUnique(out.overrides, source.Kustomize.Namespace)
+			}
+			break
 		}
 	}
-	sort.Strings(namespaces)
-	return namespaces, inCluster == 0 && remote > 0
+	out.remoteOnly = inCluster == 0 && remote > 0
+	return out
 }
 
-// applicationRendersDir reports whether a local source of application has
-// a path that holds dir.
-func applicationRendersDir(root string, application argoappv1.Application, dir string) bool {
-	for _, source := range applicationSources(application) {
-		if source.Path == "" || source.Chart != "" {
-			continue
+func appendSortedUnique(values []string, value string) []string {
+	if value == "" || slices.Contains(values, value) {
+		return values
+	}
+	values = append(values, value)
+	sort.Strings(values)
+	return values
+}
+
+// sourceRendersCommittedFile reports whether source renders the committed
+// file as it is. The source must render this repository: not an OCI
+// artifact, not a chart from a chart repository, and a path in the tree
+// (localProvider.sourceResolvesToRepoRoot). A Kustomize source renders the
+// file when its graph reads it. A directory source renders a file directly
+// in its path, or below it with directory.recurse. A Helm chart renders its
+// templates, not a committed file, and a plugin is not known.
+func sourceRendersCommittedFile(root string, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) bool {
+	sourcePath, ok := committedFileSourcePath(root, source, file)
+	if !ok {
+		return false
+	}
+	resolved := render.ResolvedSource{RepoRoot: root, Path: sourcePath}
+	if explicitType, err := source.ExplicitType(); err == nil && explicitType != nil {
+		resolved.ExplicitType = *explicitType
+	}
+	if resolved.ExplicitType == argoappv1.ApplicationSourceTypePlugin || source.Plugin != nil {
+		return false
+	}
+	renderer, err := selectLocalRenderer(resolved, gates)
+	if err != nil {
+		return false
+	}
+	switch renderer.(type) {
+	case render.KustomizeRenderer:
+		paths, err := render.KustomizeSelectionPaths(context.Background(), root, sourcePath, source.Kustomize)
+		return err == nil && slices.Contains(paths, file)
+	case render.DirectoryRenderer:
+		if path.Dir(file) == sourcePath || (sourcePath == "." && !strings.Contains(file, "/")) {
+			return true
 		}
-		sourcePath, err := cleanLocalSourcePath(source.Path)
-		if err != nil {
-			continue
-		}
-		sourcePath = filepath.ToSlash(sourcePath)
-		if sourcePath == "." || dir == sourcePath || strings.HasPrefix(dir, sourcePath+"/") {
-			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(sourcePath))); err == nil {
-				return true
-			}
-		}
+		return source.Directory != nil && source.Directory.Recurse
 	}
 	return false
+}
+
+// committedFileSourcePath returns the clean local path of source when the
+// source renders this repository and its path holds file.
+func committedFileSourcePath(root string, source argoappv1.ApplicationSource, file string) (string, bool) {
+	if source.Path == "" || !(localProvider{repoRoot: root}).sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {
+		return "", false
+	}
+	sourcePath, err := cleanLocalSourcePath(source.Path)
+	if err != nil {
+		return "", false
+	}
+	sourcePath = filepath.ToSlash(sourcePath)
+	if sourcePath != "." && file != sourcePath && !strings.HasPrefix(file, sourcePath+"/") {
+		return "", false
+	}
+	return sourcePath, true
 }
 
 // kustomizationNamespaceFor returns the namespace of the kustomization in

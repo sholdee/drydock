@@ -359,6 +359,8 @@ func settingsCandidateObject(kind string, obj *unstructured.Unstructured) *unstr
 		return sanitizedSecretObject(obj, []string{"name", "server", "namespaces", "clusterResources", "project"})
 	case RepoServerDeploymentKind:
 		return sanitizedRepoServerDeployment(obj)
+	case RepoServerServiceAccountKind:
+		return sanitizedRepoServerServiceAccount(obj)
 	default:
 		return obj.DeepCopy()
 	}
@@ -580,9 +582,10 @@ func unstructuredToTyped(in map[string]any, out any) error {
 // the namespace helm uses: HELM_NAMESPACE (helm EnvSettings), POD_NAMESPACE
 // (client-go in-cluster config), and KUBECONFIG.
 var repoServerNamespaceEnv = map[string]struct{}{
-	"HELM_NAMESPACE": {},
-	"POD_NAMESPACE":  {},
-	"KUBECONFIG":     {},
+	"HELM_NAMESPACE":   {},
+	"HELM_KUBECONTEXT": {},
+	"POD_NAMESPACE":    {},
+	"KUBECONFIG":       {},
 }
 
 // sanitizedRepoServerDeployment keeps only the fields of a repo-server
@@ -636,7 +639,7 @@ func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured
 		mountItems, _ := container["volumeMounts"].([]any)
 		for _, mountItem := range mountItems {
 			if mount, ok := mountItem.(map[string]any); ok {
-				mounts = append(mounts, map[string]any{"mountPath": mount["mountPath"]})
+				mounts = append(mounts, map[string]any{"name": mount["name"], "mountPath": mount["mountPath"]})
 			}
 		}
 		if len(mounts) > 0 {
@@ -645,7 +648,58 @@ func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured
 		keptContainers = append(keptContainers, kept)
 	}
 	keptSpec["containers"] = keptContainers
+	if volumes := sanitizedRepoServerVolumes(podSpec); len(volumes) > 0 {
+		keptSpec["volumes"] = volumes
+	}
 	_ = unstructured.SetNestedMap(out.Object, map[string]any{"spec": keptSpec}, "spec", "template")
+	return out
+}
+
+// sanitizedRepoServerVolumes keeps, for each volume of the pod, only its
+// name and whether it holds a file named namespace
+// (config.RepoServerNamespaceFileKey): a Secret volume, which for a service
+// account token Secret holds the namespace, or a projected volume with a
+// downwardAPI item at that path.
+func sanitizedRepoServerVolumes(podSpec map[string]any) []any {
+	items, _ := podSpec["volumes"].([]any)
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		volume, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		namespaceFile := false
+		if _, ok := volume["secret"]; ok {
+			namespaceFile = true
+		}
+		sources, _, _ := unstructured.NestedSlice(volume, "projected", "sources")
+		for _, sourceItem := range sources {
+			source, _ := sourceItem.(map[string]any)
+			downward, _, _ := unstructured.NestedSlice(source, "downwardAPI", "items")
+			for _, downwardItem := range downward {
+				if entry, ok := downwardItem.(map[string]any); ok && entry["path"] == "namespace" {
+					namespaceFile = true
+				}
+			}
+		}
+		out = append(out, map[string]any{"name": volume["name"], config.RepoServerNamespaceFileKey: namespaceFile})
+	}
+	return out
+}
+
+// sanitizedRepoServerServiceAccount keeps only the fields of a repo-server
+// ServiceAccount that decide whether its token is mounted.
+func sanitizedRepoServerServiceAccount(obj *unstructured.Unstructured) *unstructured.Unstructured {
+	out := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": obj.GetAPIVersion(),
+		"kind":       obj.GetKind(),
+	}}
+	out.SetName(obj.GetName())
+	out.SetNamespace(obj.GetNamespace())
+	out.SetLabels(obj.GetLabels())
+	if automount, ok := obj.Object["automountServiceAccountToken"].(bool); ok {
+		out.Object["automountServiceAccountToken"] = automount
+	}
 	return out
 }
 

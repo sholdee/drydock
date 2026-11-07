@@ -256,3 +256,151 @@ func readTestFile(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+const remoteClusterSecret = "apiVersion: v1\nkind: Secret\nmetadata:\n  name: remote\n  namespace: argocd\n  labels:\n    argocd.argoproj.io/secret-type: cluster\nstringData:\n  name: remote\n  server: https://remote.example.com\n"
+
+func writeRemoteApplication(t *testing.T, root, name, repoURL, sourcePath, directory string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", name+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+name+`
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+repoURL+`
+    targetRevision: HEAD
+    path: "`+sourcePath+`"
+`+directory+`  destination:
+    server: https://remote.example.com
+    namespace: elsewhere
+`)
+}
+
+// Only a source that renders the committed file decides about it. An OCI
+// artifact with path "." renders the artifact, not this repository, and a
+// directory source reads a subdirectory only with directory.recurse.
+func TestHelmNamespaceCommittedFileNeedsASourceThatRendersIt(t *testing.T) {
+	writeInstall := func(t *testing.T, root string) {
+		t.Helper()
+		writeTestFile(t, filepath.Join(root, "bootstrap", "argocd", "install.yaml"), strings.Replace(repoServerKustomizeInstall, "metadata:\n  name: argocd-repo-server\n", "metadata:\n  name: argocd-repo-server\n  namespace: argocd\n", 1))
+		writeTestFile(t, filepath.Join(root, "cluster.yaml"), remoteClusterSecret)
+	}
+	t.Run("OCI artifact with path dot", func(t *testing.T) {
+		root := t.TempDir()
+		writeInstall(t, root)
+		writeRemoteApplication(t, root, "oci", "oci://registry.example.com/artifact", ".", "")
+		// List only: the OCI artifact cannot render offline.
+		result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root, Offline: true})
+		if err != nil {
+			t.Fatalf("ListApplications() error = %v", err)
+		}
+		ns := result.Settings.HelmNamespace()
+		msgs := make([]string, 0, len(result.Diagnostics))
+		for _, item := range result.Diagnostics {
+			msgs = append(msgs, item.Message)
+		}
+		if ns != "argocd" || len(diagnosticsContaining(msgs, "repo-server")) != 0 {
+			t.Fatalf("HelmNamespace = %q, diagnostics %q, want argocd without a warning", ns, msgs)
+		}
+	})
+	t.Run("directory without recurse", func(t *testing.T) {
+		root := t.TempDir()
+		writeInstall(t, root)
+		writeRemoteApplication(t, root, "plain", reviewRepoURL, "bootstrap", "")
+		if ns, msgs := buildHelmNamespace(t, root); ns != "argocd" {
+			t.Fatalf("HelmNamespace = %q, diagnostics %q, want argocd", ns, msgs)
+		}
+	})
+	t.Run("directory with recurse on another cluster", func(t *testing.T) {
+		root := t.TempDir()
+		writeInstall(t, root)
+		writeRemoteApplication(t, root, "plain", reviewRepoURL, "bootstrap", "    directory:\n      recurse: true\n")
+		if ns, msgs := buildHelmNamespace(t, root); ns != "default" {
+			t.Fatalf("HelmNamespace = %q, diagnostics %q, want default: the install runs on another cluster", ns, msgs)
+		}
+	})
+	t.Run("kustomization that does not list the file", func(t *testing.T) {
+		root := t.TempDir()
+		writeInstall(t, root)
+		writeTestFile(t, filepath.Join(root, "bootstrap", "kustomization.yaml"), "resources:\n  - other.yaml\n")
+		writeTestFile(t, filepath.Join(root, "bootstrap", "other.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other\n")
+		writeRemoteApplication(t, root, "kust", reviewRepoURL, "bootstrap", "")
+		if ns, msgs := buildHelmNamespace(t, root); ns != "argocd" {
+			t.Fatalf("HelmNamespace = %q, diagnostics %q, want argocd", ns, msgs)
+		}
+	})
+}
+
+// The kustomize NamespaceTransformer sets the kustomization namespace over
+// the object's own namespace, and the Argo CD destination applies only
+// when both are empty.
+func TestHelmNamespaceKustomizationNamespaceWinsOverTheObject(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "argocd", "install.yaml"), strings.Replace(repoServerKustomizeInstall, "metadata:\n  name: argocd-repo-server\n", "metadata:\n  name: argocd-repo-server\n  namespace: other\n", 1))
+	writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), "namespace: argocd\nresources:\n  - install.yaml\n")
+	writeReviewApplication(t, root, "argocd", "argocd", "", "dest")
+	if ns, msgs := buildHelmNamespace(t, root); ns != "argocd" {
+		t.Fatalf("HelmNamespace = %q, diagnostics %q, want the kustomization namespace argocd", ns, msgs)
+	}
+	// Without the kustomization namespace, the object's own wins over the
+	// destination.
+	writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), "resources:\n  - install.yaml\n")
+	writeTestFile(t, filepath.Join(root, "argocd", "install.yaml"), strings.Replace(repoServerKustomizeInstall, "metadata:\n  name: argocd-repo-server\n", "metadata:\n  name: argocd-repo-server\n  namespace: argocd\n", 1))
+	if ns, msgs := buildHelmNamespace(t, root); ns != "argocd" {
+		t.Fatalf("HelmNamespace = %q, diagnostics %q, want the object namespace argocd", ns, msgs)
+	}
+	// With neither, the destination decides.
+	writeTestFile(t, filepath.Join(root, "argocd", "install.yaml"), repoServerKustomizeInstall)
+	writeReviewApplication(t, root, "argocd", "argocd", "", "argocd")
+	if ns, msgs := buildHelmNamespace(t, root); ns != "argocd" {
+		t.Fatalf("HelmNamespace = %q, diagnostics %q, want the destination namespace argocd", ns, msgs)
+	}
+}
+
+// A ServiceAccount whose namespace drydock cannot tell gets the same
+// fallback namespace as its Deployment, so its automountServiceAccountToken
+// counts.
+func TestHelmNamespaceServiceAccountWithUnknownNamespace(t *testing.T) {
+	root := t.TempDir()
+	install := strings.Replace(repoServerKustomizeInstall, "      automountServiceAccountToken: true\n", "      serviceAccountName: argocd-repo-server\n", 1)
+	install += "---\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: argocd-repo-server\nautomountServiceAccountToken: false\n"
+	writeTestFile(t, filepath.Join(root, "bootstrap", "install.yaml"), install)
+	ns, msgs := buildHelmNamespace(t, root)
+	if ns != "default" {
+		t.Fatalf("HelmNamespace = %q, diagnostics %q, want default: the ServiceAccount turns the token off", ns, msgs)
+	}
+}
+
+// testdata/repo-server-probe-ns is the probe-ns repository of the third
+// review: a committed kustomize install whose repo-server sets a literal
+// HELM_NAMESPACE next to an env entry from a ConfigMap, a second committed
+// repo-server in other/, and a Helm Application without a namespace. With
+// an OCI Application on another cluster at path ".", which renders its
+// artifact and not this repository, the committed install still counts.
+func TestHelmNamespaceProbeNSRepository(t *testing.T) {
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(filepath.Join("testdata", "repo-server-probe-ns"))); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(root, "cluster.yaml"), remoteClusterSecret)
+	writeRemoteApplication(t, root, "oci", "oci://registry.example.com/artifact", ".", "")
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root, Offline: true})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+	if got := result.Settings.HelmNamespace(); got != "committed-ns" {
+		t.Fatalf("HelmNamespace = %q, want committed-ns from the install with argocd-cm", got)
+	}
+	msgs := make([]string, 0, len(result.Diagnostics))
+	for _, item := range result.Diagnostics {
+		msgs = append(msgs, item.Message)
+	}
+	if got := diagnosticsContaining(msgs, `in other/rs.yaml gives the Helm namespace "other-ns", but drydock uses "committed-ns"`); len(got) != 1 {
+		t.Fatalf("diagnostics = %q, want one conflict warning for other/rs.yaml", msgs)
+	}
+	if got := diagnosticsContaining(msgs, "cannot tell the Helm namespace"); len(got) != 0 {
+		t.Fatalf("diagnostics = %q, want no unknown-input warning: a literal HELM_NAMESPACE decides", msgs)
+	}
+}

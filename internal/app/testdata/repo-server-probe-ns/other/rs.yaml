@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+  namespace: argocd
+spec:
+  template:
+    spec:
+      automountServiceAccountToken: true
+      containers:
+      - name: argocd-repo-server
+        image: x
+        env:
+        - name: HELM_NAMESPACE
+          value: other-ns
+        - name: X
+          valueFrom:
+            configMapKeyRef:
+              name: argocd-cmd-params-cm
+              key: x
