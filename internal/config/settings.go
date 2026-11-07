@@ -1,6 +1,10 @@
 package config
 
-import "github.com/sholdee/drydock/internal/diagnostic"
+import (
+	"strings"
+
+	"github.com/sholdee/drydock/internal/diagnostic"
+)
 
 type Provenance = diagnostic.Provenance
 
@@ -220,6 +224,32 @@ type ArgoSettings struct {
 	// controller reconciles an ApplicationSet only in its own namespace or in
 	// a namespace that this list matches.
 	ApplicationSetNamespaces Value[string] `json:"applicationSetNamespaces,omitempty" yaml:"applicationSetNamespaces,omitempty"`
+}
+
+// DefaultControllerNamespace is the Argo CD namespace that drydock assumes
+// when nothing in the repository names one.
+const DefaultControllerNamespace = "argocd"
+
+// ControllerNamespace resolves the namespace that the Argo CD controllers
+// run in. The argocd-cmd-params-cm ConfigMap lives there, so its
+// metadata.namespace decides when it names one. Otherwise fallback decides,
+// such as the namespace of an AppProject, and then
+// DefaultControllerNamespace. Every reader of the controller namespace uses
+// this one rule, so they cannot disagree.
+func (s ArgoSettings) ControllerNamespace(fallback string) string {
+	if namespace := strings.TrimSpace(s.CommandParametersNamespace); namespace != "" {
+		return namespace
+	}
+	if namespace := strings.TrimSpace(fallback); namespace != "" {
+		return namespace
+	}
+	return DefaultControllerNamespace
+}
+
+// ControllerNamespaceKnown reports whether an argocd-cmd-params-cm that
+// drydock read names its namespace, so ControllerNamespace does not guess.
+func (s ArgoSettings) ControllerNamespaceKnown() bool {
+	return s.CommandParametersFound && strings.TrimSpace(s.CommandParametersNamespace) != ""
 }
 
 func DefaultSettings() ArgoSettings {

@@ -23,7 +23,7 @@ import (
 func TestNamespaceGateMatchesUpstreamControllers(t *testing.T) {
 	lists := []string{"", "team-a", "team-*", "/^tenant-[0-9]+$/", "team-a, other", "*"}
 	namespaces := []string{"argocd", "gitops", "team-a", "team-b", "tenant-1", "tenant-x", "other"}
-	for _, controllerNamespace := range []string{"", "gitops"} {
+	for _, controllerNamespace := range []string{"argocd", "gitops"} {
 		for _, list := range lists {
 			settings := config.DefaultSettings()
 			settings.CommandParametersFound = true
@@ -32,9 +32,6 @@ func TestNamespaceGateMatchesUpstreamControllers(t *testing.T) {
 			settings.ApplicationSetNamespaces = config.Value[string]{Value: list}
 			gate := namespaceGateFromSettings(settings)
 			upstreamNamespace := controllerNamespace
-			if upstreamNamespace == "" {
-				upstreamNamespace = "argocd"
-			}
 			parsed := config.ParseNamespaceList(list)
 			for _, namespace := range namespaces {
 				wantApp := namespace == upstreamNamespace || glob.MatchStringInList(parsed, namespace, glob.REGEXP)
@@ -51,6 +48,12 @@ func TestNamespaceGateMatchesUpstreamControllers(t *testing.T) {
 	inactive := namespaceGateFromSettings(config.DefaultSettings())
 	if !inactive.applicationAllowed("team-b") || !inactive.applicationSetAllowed("team-b") {
 		t.Fatal("the gate must allow every namespace when no argocd-cmd-params-cm was read")
+	}
+	unnamed := config.DefaultSettings()
+	unnamed.CommandParametersFound = true
+	unnamed.ApplicationNamespaces = config.Value[string]{Value: "team-a"}
+	if gate := namespaceGateFromSettings(unnamed); !gate.applicationAllowed("team-b") || !gate.applicationSetAllowed("team-b") {
+		t.Fatal("the gate must allow every namespace when the argocd-cmd-params-cm names no namespace")
 	}
 }
 
@@ -86,6 +89,7 @@ func TestPruneNotEnabledNamespacesRemovesWhatArgoCDNeverCreates(t *testing.T) {
 	}
 	settings := config.DefaultSettings()
 	settings.CommandParametersFound = true
+	settings.CommandParametersNamespace = "argocd"
 	settings.ApplicationNamespaces = config.Value[string]{Value: "team-a"}
 	pruned, diags := pruneNotEnabledNamespaces(discovered, namespaceGateFromSettings(settings))
 	names := make([]string, 0, len(pruned.Applications))
@@ -319,5 +323,24 @@ func TestListApplicationsGateKeepsListSiblings(t *testing.T) {
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "ApplicationSet team-x/tenant-set is skipped") {
 		t.Fatalf("namespace warnings = %q, want one for team-x/tenant-set", warnings)
+	}
+}
+
+// TestListApplicationsKeepsEveryNamespaceWhenTheConfigMapNamesNone is the
+// review repro: a committed argocd-cmd-params-cm without metadata.namespace,
+// which a kustomization puts in the gitops namespace. drydock cannot tell
+// the controller namespace, so it must keep the gitops Application.
+func TestListApplicationsKeepsEveryNamespaceWhenTheConfigMapNamesNone(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: gitops\nresources:\n- argocd-cmd-params-cm.yaml\n")
+	writeTestFile(t, filepath.Join(root, "argocd", "argocd-cmd-params-cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argocd-cmd-params-cm\ndata:\n  server.insecure: \"true\"\n")
+	writeTestFile(t, filepath.Join(root, "apps", "app.yaml"), strings.NewReplacer("NAMESPACE", "gitops", "NAME", "myapp").Replace(namespaceGateApplicationTemplate))
+	writeTestFile(t, filepath.Join(root, "workloads", "demo", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")
+	names, warnings := listedApplications(t, root)
+	if got, want := strings.Join(names, ","), "gitops/myapp"; got != want {
+		t.Fatalf("Applications = %s, want %s", got, want)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("namespace warnings = %q, want none", warnings)
 	}
 }

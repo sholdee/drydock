@@ -27,12 +27,15 @@ const namespaceNotEnabledCode = "discovery.namespace-not-enabled"
 // CD never shows such an object: it sets no status on it, and the API server
 // refuses it with "namespace '<namespace>' is not permitted".
 //
-// The controller namespace is the metadata.namespace of the
-// argocd-cmd-params-cm ConfigMap, which lives there. When the ConfigMap names
-// none, drydock assumes argocd, as it does for Application instance names.
-// An object without a namespace is in the controller namespace. The gate applies only when drydock read an
-// argocd-cmd-params-cm ConfigMap: otherwise drydock cannot tell how the
-// cluster sets the lists, and it keeps every object.
+// The gate applies only when drydock read an argocd-cmd-params-cm that
+// names its namespace (config.ArgoSettings.ControllerNamespaceKnown). That
+// namespace is the controller namespace, as project validation resolves it
+// too (config.ArgoSettings.ControllerNamespace). Without the ConfigMap,
+// drydock cannot tell how the cluster sets the lists. Without its
+// namespace, for example when a kustomization sets the namespace of a
+// committed ConfigMap, drydock cannot tell which namespace the controllers
+// run in. In both cases it keeps every object. An object without a
+// namespace is in the controller namespace.
 type namespaceGate struct {
 	active                   bool
 	controllerNamespace      string
@@ -41,13 +44,9 @@ type namespaceGate struct {
 }
 
 func namespaceGateFromSettings(settings config.ArgoSettings) namespaceGate {
-	controllerNamespace := settings.CommandParametersNamespace
-	if controllerNamespace == "" {
-		controllerNamespace = defaultArgoCDControllerNamespace
-	}
 	return namespaceGate{
-		active:                   settings.CommandParametersFound,
-		controllerNamespace:      controllerNamespace,
+		active:                   settings.ControllerNamespaceKnown(),
+		controllerNamespace:      settings.ControllerNamespace(""),
 		applicationNamespaces:    config.ParseNamespaceList(settings.ApplicationNamespaces.Value),
 		applicationSetNamespaces: config.ParseNamespaceList(settings.ApplicationSetNamespaces.Value),
 	}

@@ -51,7 +51,7 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 
 		diags = append(diags, validateSources(app, proj)...)
 		diags = append(diags, validateDestination(app, proj, settings)...)
-		diags = append(diags, validateSourceNamespace(app, proj)...)
+		diags = append(diags, validateSourceNamespace(app, proj, settings)...)
 		diags = append(diags, rbacMetadataDiagnostics(proj)...)
 		if hasLocalProjects {
 			diags = append(diags, repositoryMetadataDiagnostics(app, settings)...)
@@ -401,18 +401,20 @@ func NormalizeClusterServer(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
-func validateSourceNamespace(app argoappv1.Application, proj argoappv1.AppProject) []diagnostic.Diagnostic {
-	if proj.IsAppNamespacePermitted(&app, controllerNamespace(proj)) {
+func validateSourceNamespace(app argoappv1.Application, proj argoappv1.AppProject, settings config.ArgoSettings) []diagnostic.Diagnostic {
+	if proj.IsAppNamespacePermitted(&app, controllerNamespace(proj, settings)) {
 		return nil
 	}
 	return []diagnostic.Diagnostic{projectWarning(app, fmt.Sprintf("Application %s source namespace %q is not permitted by AppProject %q", applicationName(app), app.Namespace, proj.Name))}
 }
 
-func controllerNamespace(proj argoappv1.AppProject) string {
-	if proj.Namespace != "" {
-		return proj.Namespace
-	}
-	return "argocd"
+// controllerNamespace is the namespace of the Argo CD controllers, which
+// always reconcile Applications there. It uses the shared rule
+// (config.ArgoSettings.ControllerNamespace): the namespace of the
+// argocd-cmd-params-cm ConfigMap when it names one, else the namespace of
+// the AppProject, which also lives there, else argocd.
+func controllerNamespace(proj argoappv1.AppProject, settings config.ArgoSettings) string {
+	return settings.ControllerNamespace(proj.Namespace)
 }
 
 func rbacMetadataDiagnostics(proj argoappv1.AppProject) []diagnostic.Diagnostic {
