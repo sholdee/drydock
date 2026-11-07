@@ -17,24 +17,28 @@ func appRevisionSelectionApp(name string, source argoappv1.ApplicationSource) ar
 	}
 }
 
-// A config management plugin source counts as a reader: the repo-server
-// always puts ARGOCD_APP_REVISION in the plugin environment. A plugin that
-// an .argocd-source override adds counts too. A plain directory does not.
+// A config management plugin source counts as a reader when the run renders
+// it with a command, also a plugin that an .argocd-source override adds. A
+// plain directory does not count.
 func TestApplicationReadsAppRevisionCountsPluginSources(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "override", ".argocd-source.yaml"), "plugin:\n  name: added-by-override\n")
 	writeTestFile(t, filepath.Join(root, "plain", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+	always := func(argoappv1.ApplicationSource) bool { return true }
+	never := func(argoappv1.ApplicationSource) bool { return false }
 	for _, tc := range []struct {
-		name   string
-		source argoappv1.ApplicationSource
-		want   bool
+		name       string
+		source     argoappv1.ApplicationSource
+		pluginRuns func(argoappv1.ApplicationSource) bool
+		want       bool
 	}{
-		{name: "plugin", source: argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "plain", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "cmp"}}, want: true},
-		{name: "plugin from override", source: argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "override"}, want: true},
-		{name: "plain directory", source: argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "plain"}, want: false},
+		{name: "plugin that runs", source: argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "plain", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "cmp"}}, pluginRuns: always, want: true},
+		{name: "plugin that does not run", source: argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "plain", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "cmp"}}, pluginRuns: never, want: false},
+		{name: "plugin from override that runs", source: argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "override"}, pluginRuns: always, want: true},
+		{name: "plain directory", source: argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "plain"}, pluginRuns: always, want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := applicationReadsAppRevision(root, defaultArgoCDControllerNamespace, appRevisionSelectionApp(tc.name, tc.source)); got != tc.want {
+			if got := applicationReadsAppRevision(root, defaultArgoCDControllerNamespace, appRevisionSelectionApp(tc.name, tc.source), tc.pluginRuns); got != tc.want {
 				t.Fatalf("applicationReadsAppRevision() = %t, want %t", got, tc.want)
 			}
 			// The cache key test stays narrower: plugin sources never persist.
@@ -42,6 +46,83 @@ func TestApplicationReadsAppRevisionCountsPluginSources(t *testing.T) {
 				t.Fatalf("sourceReadsAppRevision() = true, want false: the key test must not count plugin sources")
 			}
 		})
+	}
+}
+
+// pluginRunsWithBuildEnv asks what renderPluginSource asks: only a trusted
+// exec or container policy plugin with --enable-plugins, or an injected
+// PluginRenderer, runs a command with the build environment.
+func TestPluginRunsWithBuildEnvFollowsTheRenderer(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	policy, _ := testExecPluginPolicy(t, "exec-renderer", []string{"renderer"})
+	application := appRevisionSelectionApp("plugin", argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "manifests/plugin", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "exec-renderer"}})
+	unknown := appRevisionSelectionApp("unknown", argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "manifests/plugin", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "no-such-plugin"}})
+	trusted := BuildRequest{Path: root}
+	trusted.EnablePlugins = true
+	trusted.pluginPolicy = policy
+	trusted.pluginPolicyExecTrusted = true
+	disabled := trusted
+	disabled.EnablePlugins = false
+	untrusted := trusted
+	untrusted.pluginPolicyExecTrusted = false
+	for _, tc := range []struct {
+		name        string
+		request     BuildRequest
+		application argoappv1.Application
+		injected    bool
+		want        bool
+	}{
+		{name: "trusted exec policy with --enable-plugins", request: trusted, application: application, want: true},
+		{name: "plugins not enabled", request: disabled, application: application, want: false},
+		{name: "untrusted policy", request: untrusted, application: application, want: false},
+		{name: "no policy for the plugin", request: trusted, application: unknown, want: false},
+		{name: "injected plugin renderer", request: disabled, application: unknown, injected: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pluginRunsWithBuildEnv(tc.request, tc.injected, tc.application, *tc.application.Spec.Source); got != tc.want {
+				t.Fatalf("pluginRunsWithBuildEnv() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+// A plugin Application that drydock cannot render, because no trusted policy
+// matches it or plugins are off, stays out of the changed-only selection, so
+// a change elsewhere does not make the diff fail with plugin.unsupported.
+func TestDiffChangedOnlyLeavesUnrenderablePluginSourcesOut(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "plugin.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plugin
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+appRevisionTestRepoURL+`
+    targetRevision: main
+    path: manifests/plugin
+    plugin:
+      name: no-such-plugin
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	writePersistentDirectoryCacheApp(t, root, "other")
+	base := gitCommitAll(t, root, "base")
+	writePersistentDirectorySource(t, root, "other", "changed")
+	gitCommitAll(t, root, "change other")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base, ChangedOnly: true})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	for _, diag := range result.Diagnostics {
+		if diag.Code == diagnostic.CodePluginUnsupported || diag.Code == changedOnlyAppRevisionCode {
+			t.Fatalf("Diagnostics = %#v, want the unrenderable plugin Application left out", result.Diagnostics)
+		}
 	}
 }
 
@@ -65,7 +146,7 @@ func TestWithAppRevisionSelectionSelectsRenderedDescendants(t *testing.T) {
 		{Application: unrelated},
 	}
 	side := selectionSide{inputs: inputs}
-	leftSelected, rightSelected, readers := withAppRevisionSelection(BuildRequest{Path: left}, BuildRequest{Path: right}, side, side, config.ArgoSettings{}, config.ArgoSettings{}, nil, nil)
+	leftSelected, rightSelected, readers := withAppRevisionSelection(BuildRequest{Path: left}, BuildRequest{Path: right}, side, side, config.ArgoSettings{}, config.ArgoSettings{}, nil, nil, false)
 	if readers != 1 {
 		t.Fatalf("readers = %d, want 1", readers)
 	}

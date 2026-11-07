@@ -71,7 +71,7 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
 		rightBuildRequest.discovered = rightList.result.discovered
 
-		leftApplications, rightApplications, selectionDiags, err := changedOnlyApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList.result, rightList.result, changedPaths)
+		leftApplications, rightApplications, selectionDiags, err := changedOnlyApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList.result, rightList.result, changedPaths, o.pluginRenderer(leftBuildRequest) != nil)
 		diagnostics = append(diagnostics, selectionDiags...)
 		if err != nil {
 			return BuildResult{}, BuildResult{}, diagnostics, err
@@ -233,7 +233,7 @@ func changedOnlySymlinksRenderAll(ctx context.Context, memo *symlinkBoundsMemo, 
 // render-affecting Argo CD setting changed, either side declares no
 // AppProject while the other does, or a changed path is owned by no
 // Application (an error under --strict-changed-only or --strict).
-func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuildRequest, rightBuildRequest BuildRequest, leftList, rightList BuildResult, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []diagnostic.Diagnostic, error) {
+func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuildRequest, rightBuildRequest BuildRequest, leftList, rightList BuildResult, changedPaths []string, injectedPlugins bool) ([]argoappv1.Application, []argoappv1.Application, []diagnostic.Diagnostic, error) {
 	// A render-affecting settings change reaches every render, whichever
 	// Application owns the file that carries it (a self-managed argocd
 	// Application, a sibling's Kustomize graph): selecting only that owner
@@ -288,7 +288,7 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 		if reached > 0 {
 			scanDiags = append(scanDiags, changedOnlySettingsScopedDiagnostic(reached))
 		}
-		leftSelected, rightSelected, readers := withAppRevisionSelection(leftBuildRequest, rightBuildRequest, leftSide, rightSide, leftList.Settings, rightList.Settings, leftSelected, rightSelected)
+		leftSelected, rightSelected, readers := withAppRevisionSelection(leftBuildRequest, rightBuildRequest, leftSide, rightSide, leftList.Settings, rightList.Settings, leftSelected, rightSelected, injectedPlugins)
 		if readers > 0 {
 			scanDiags = append(scanDiags, changedOnlyAppRevisionDiagnostic(readers))
 		}

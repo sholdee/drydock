@@ -10,6 +10,8 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/gitref"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
+	"github.com/sholdee/drydock/internal/render"
 )
 
 // changedOnlyAppRevisionCode identifies a changed-only selection that the
@@ -25,7 +27,7 @@ func changedOnlyAppRevisionDiagnostic(selected int) diagnostic.Diagnostic {
 		Code:     changedOnlyAppRevisionCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  fmt.Sprintf("the two sides render different commits; selecting %d Application(s) whose spec reads ARGOCD_APP_REVISION, ARGOCD_APP_REVISION_SHORT, or ARGOCD_APP_REVISION_SHORT_8, or that render through a config management plugin", selected),
+		Message:  fmt.Sprintf("the two sides render different commits; selecting %d Application(s) whose spec reads ARGOCD_APP_REVISION, ARGOCD_APP_REVISION_SHORT, or ARGOCD_APP_REVISION_SHORT_8, or that run a config management plugin command", selected),
 	}
 }
 
@@ -41,33 +43,38 @@ func diffSideTreeRevision(request BuildRequest) string {
 
 // withAppRevisionSelection adds to the changed-only selection every
 // Application that reads an ARGOCD_APP_REVISION variable, and every
-// Application with a config management plugin source, when the two sides
-// render different commits. Its output changes with the commit, as in Argo
-// CD (newEnv, reposerver/repository/repository.go:1864-1878), even when no
+// Application with a config management plugin source that this run renders
+// with a command (pluginRunsWithBuildEnv), when the two sides render
+// different commits. Its output changes with the commit, as in Argo CD
+// (newEnv, reposerver/repository/repository.go:1864-1878), even when no
 // path it owns changed. The test is the one that keys the persistent render
 // cache (sourceReadsAppRevision), applied to the spec and to each local
 // source merged with its .argocd-source overrides on that side. Applications
 // they render are selected too. It returns how many Applications read a
-// variable.
-func withAppRevisionSelection(leftRequest, rightRequest BuildRequest, left, right selectionSide, leftSettings, rightSettings config.ArgoSettings, leftSelected, rightSelected []argoappv1.Application) ([]argoappv1.Application, []argoappv1.Application, int) {
+// variable. injectedPlugins reports a PluginRenderer that renders every
+// plugin source.
+func withAppRevisionSelection(leftRequest, rightRequest BuildRequest, left, right selectionSide, leftSettings, rightSettings config.ArgoSettings, leftSelected, rightSelected []argoappv1.Application, injectedPlugins bool) ([]argoappv1.Application, []argoappv1.Application, int) {
 	if diffSideTreeRevision(leftRequest) == diffSideTreeRevision(rightRequest) {
 		return leftSelected, rightSelected, 0
 	}
 	keys := map[string]struct{}{}
 	for _, side := range []struct {
-		root     string
+		request  BuildRequest
 		settings config.ArgoSettings
 		inputs   []ApplicationSelectionInput
 	}{
-		{leftRequest.Path, leftSettings, left.inputs},
-		{rightRequest.Path, rightSettings, right.inputs},
+		{leftRequest, leftSettings, left.inputs},
+		{rightRequest, rightSettings, right.inputs},
 	} {
 		controllerNamespace := trackingOptionsFromSettings(side.settings).ControllerNamespace
 		if controllerNamespace == "" {
 			controllerNamespace = defaultArgoCDControllerNamespace
 		}
 		for _, input := range side.inputs {
-			if applicationReadsAppRevision(side.root, controllerNamespace, input.Application) {
+			pluginRuns := func(source argoappv1.ApplicationSource) bool {
+				return pluginRunsWithBuildEnv(side.request, injectedPlugins, input.Application, source)
+			}
+			if applicationReadsAppRevision(side.request.Path, controllerNamespace, input.Application, pluginRuns) {
 				keys[applicationKey(input.Application)] = struct{}{}
 			}
 		}
@@ -85,36 +92,80 @@ func withAppRevisionSelection(leftRequest, rightRequest BuildRequest, left, righ
 
 // applicationReadsAppRevision reports whether a source of application reads
 // an ARGOCD_APP_REVISION variable, in its spec or after the .argocd-source
-// overrides under root are merged into it, as PrepareSource merges them.
-// Every config management plugin source counts: the repo-server always puts
-// the variables in the plugin environment (getPluginEnvs,
-// reposerver/repository/repository.go:2398-2408), so its output can change
+// overrides under root are merged into it, as PrepareSource merges them. A
+// config management plugin source counts when pluginRuns reports that the
+// run renders it with a command: the repo-server always puts the variables
+// in the plugin environment (getPluginEnvs,
+// reposerver/repository/repository.go:2398-2408), so that output can change
 // with each commit. Plugin sources never persist, so this widening does not
 // reach the render cache key (sourceReadsAppRevision).
-func applicationReadsAppRevision(root, controllerNamespace string, application argoappv1.Application) bool {
+func applicationReadsAppRevision(root, controllerNamespace string, application argoappv1.Application, pluginRuns func(argoappv1.ApplicationSource) bool) bool {
 	sources := application.Spec.Sources
 	if len(sources) == 0 && application.Spec.Source != nil {
 		sources = argoappv1.ApplicationSources{*application.Spec.Source}
 	}
+	reads := func(source argoappv1.ApplicationSource) bool {
+		return sourceReadsAppRevision(source) || (source.Plugin != nil && pluginRuns != nil && pluginRuns(source))
+	}
 	for _, source := range sources {
-		if source.Plugin != nil || sourceReadsAppRevision(source) {
-			return true
+		merged := source
+		if strings.TrimSpace(source.Path) != "" {
+			if clean, err := cleanLocalSourcePath(source.Path); err == nil {
+				sourceDir := filepath.Join(root, clean)
+				if info, err := os.Stat(sourceDir); err == nil && info.IsDir() {
+					if overridden, err := mergeArgocdSourceOverrides(source, sourceDir, application.InstanceName(controllerNamespace)); err == nil {
+						merged = overridden
+					}
+				}
+			}
 		}
-		if strings.TrimSpace(source.Path) == "" {
-			continue
-		}
-		clean, err := cleanLocalSourcePath(source.Path)
-		if err != nil {
-			continue
-		}
-		sourceDir := filepath.Join(root, clean)
-		if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
-			continue
-		}
-		merged, err := mergeArgocdSourceOverrides(source, sourceDir, application.InstanceName(controllerNamespace))
-		if err == nil && (merged.Plugin != nil || sourceReadsAppRevision(merged)) {
+		if reads(source) || reads(merged) {
 			return true
 		}
 	}
 	return false
+}
+
+// pluginRunsWithBuildEnv reports whether the render of source, a config
+// management plugin source of application on the side that request
+// renders, runs a command that gets the build environment. It asks the
+// same questions as renderPluginSource: an injected PluginRenderer renders
+// every plugin source, and otherwise only a trusted exec or container
+// policy plugin with --enable-plugins runs a command. A native policy
+// engine, the built-in argocd-vault-plugin compatibility and the native
+// Kustomize CMP render in process without the build environment, and a
+// plugin that drydock cannot render fails with plugin.unsupported, so none
+// of them counts.
+func pluginRunsWithBuildEnv(request BuildRequest, injectedPlugins bool, application argoappv1.Application, source argoappv1.ApplicationSource) bool {
+	if source.Plugin == nil {
+		return false
+	}
+	if injectedPlugins {
+		return true
+	}
+	opts, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
+	if err != nil {
+		return false
+	}
+	opts.EnablePlugins = request.EnablePlugins
+	provider := localProvider{
+		repoRoot:                request.Path,
+		pluginPolicy:            request.pluginPolicy,
+		pluginPolicyExecTrusted: request.pluginPolicyExecTrusted,
+	}
+	plan, _, handled, err := provider.planPolicyPluginRender(render.ResolvedSource{
+		RepoRoot: request.Path,
+		Path:     source.Path,
+		RepoURL:  source.RepoURL,
+		Chart:    source.Chart,
+	}, opts)
+	if !handled || err != nil {
+		return false
+	}
+	switch plan.plugin.Engine {
+	case pluginpolicy.EngineExec, pluginpolicy.EngineContainer:
+		return opts.EnablePlugins && provider.pluginPolicyExecTrusted
+	default:
+		return false
+	}
 }
