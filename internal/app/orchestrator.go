@@ -1119,9 +1119,12 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // Applications as usual. The empty-steps lint (appset.rollout-no-steps)
 // stays promotable: with progressive syncs on it aborts reconciliation of
 // the whole ApplicationSet, which then contributes no Applications.
+// selector.no-match is advisory too: the command did what the -l selector
+// asked, and an empty selection is a valid answer, so --strict must not
+// fail a run that the user narrowed on purpose.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode, SelectorNoMatchCode:
 		return true
 	}
 	return false

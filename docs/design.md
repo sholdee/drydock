@@ -409,6 +409,16 @@ diagnostic `diff.changed-only-app-revision` (warning, exempt like
 never persist, so they never reach the persistent key, which uses
 `sourceReadsAppRevision` alone.
 
+A label selector (`-l`, `DiffRequest.LabelSelector`) narrows the selection
+after the changed-only selection: an Application renders only when it is both
+changed and selected. Labels are read on both sides, and an Application that
+exists on both sides is kept on both when either side matches. Under a
+selector, the render-all warnings above say `rendering all selected
+Applications`. A selector that matches no Application gives the warning
+`selector.no-match`, which is exempt from `--strict` (strictExemptDiagnostic),
+because an empty selection is the answer the user asked for. A changed-only
+diff with no changed path returns before discovery and gives no such warning.
+
 Operators can scope the changed path set with explicit include and ignore
 globs before ownership is evaluated. Include globs define the considered path
 universe; ignore globs remove paths from that universe and take precedence. If

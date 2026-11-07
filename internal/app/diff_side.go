@@ -113,11 +113,35 @@ func (o Orchestrator) diffSideApplications(ctx context.Context, request DiffRequ
 	if !selectsByLabels(request.LabelSelector) {
 		return leftApplications, rightApplications, diagnostics, nil
 	}
+	diagnostics = selectedRenderAllDiagnostics(diagnostics)
 	leftApplications, rightApplications, matched := selectDiffSidesByLabels(request.LabelSelector, leftList.Applications, rightList.Applications, leftApplications, rightApplications)
 	if !matched {
 		diagnostics = append(diagnostics, SelectorNoMatchDiagnostic(request.LabelSelector))
 	}
 	return leftApplications, rightApplications, diagnostics, nil
+}
+
+// renderAllApplications ends the message of each changed-only render-all
+// warning. Under a label selector, the render-all renders only the selected
+// Applications, so selectedRenderAllDiagnostics replaces it with
+// renderAllSelectedApplications.
+const (
+	renderAllApplications         = "rendering all Applications"
+	renderAllSelectedApplications = "rendering all selected Applications"
+)
+
+// selectedRenderAllDiagnostics returns diagnostics with each changed-only
+// render-all message changed to say that only the selected Applications
+// render.
+func selectedRenderAllDiagnostics(diagnostics []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	out := make([]diagnostic.Diagnostic, 0, len(diagnostics))
+	for _, diag := range diagnostics {
+		if diag.Category == "changed-only" {
+			diag.Message = strings.Replace(diag.Message, renderAllApplications, renderAllSelectedApplications, 1)
+		}
+		out = append(out, diag)
+	}
+	return out
 }
 
 // changedOnlySettingsCode identifies the changed-only render-all an Argo CD
@@ -131,7 +155,7 @@ func changedOnlySettingsDiagnostic() diagnostic.Diagnostic {
 		Code:     changedOnlySettingsCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  "Argo CD settings changed; rendering all Applications",
+		Message:  "Argo CD settings changed; " + renderAllApplications,
 	}
 }
 
@@ -164,7 +188,7 @@ func changedOnlyProjectsDiagnostic() diagnostic.Diagnostic {
 		Code:     changedOnlyProjectsCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  "first AppProject declared or last AppProject removed on one side; rendering all Applications",
+		Message:  "first AppProject declared or last AppProject removed on one side; " + renderAllApplications,
 	}
 }
 
@@ -198,7 +222,7 @@ func changedOnlySymlinksUnknownDiagnostic(err error) diagnostic.Diagnostic {
 		Code:     changedOnlySymlinksCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  fmt.Sprintf("could not check the repository for out-of-bounds symlinks (%v); rendering all Applications", err),
+		Message:  fmt.Sprintf("could not check the repository for out-of-bounds symlinks (%v); %s", err, renderAllApplications),
 	}
 }
 
@@ -213,7 +237,7 @@ func changedOnlySymlinksDiagnostic(left, right string) diagnostic.Diagnostic {
 		Code:     changedOnlySymlinksCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  fmt.Sprintf("the first out-of-bounds symlink of the repository changed (left: %s, right: %s); Argo CD fails every Application that renders from a repository with one, so rendering all Applications", describe(left), describe(right)),
+		Message:  fmt.Sprintf("the first out-of-bounds symlink of the repository changed (left: %s, right: %s); Argo CD fails every Application that renders from a repository with one, so %s", describe(left), describe(right), renderAllApplications),
 	}
 }
 
@@ -326,7 +350,7 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	diag := diagnostic.Diagnostic{
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  fmt.Sprintf("changed-only could not map %d changed path(s); rendering all Applications: %s", len(unowned), strings.Join(unowned, ", ")),
+		Message:  fmt.Sprintf("changed-only could not map %d changed path(s); %s: %s", len(unowned), renderAllApplications, strings.Join(unowned, ", ")),
 	}
 	if request.StrictChangedOnly || request.Strict {
 		diag.Severity = diagnostic.SeverityError
