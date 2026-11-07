@@ -63,7 +63,7 @@ func TestRenderInputCoverageDirectoryJsonnetImports(t *testing.T) {
 func TestWithSelectionOnlyPathsOwnsJsonnetImports(t *testing.T) {
 	root := t.TempDir()
 	application := writeJsonnetImportFixture(t, root)
-	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}}).inputs
 	for _, changed := range []string{"shared/lib.libsonnet", "shared/nested.libsonnet", "shared/text.txt", "other/target.libsonnet"} {
 		if selected, _ := SelectChangedApplicationInputs(got, []string{changed}); len(selected) != 1 {
 			t.Errorf("change to %s selected %d Applications, want the Jsonnet source (paths %v)", changed, len(selected), got[0].Paths)
@@ -129,7 +129,7 @@ func TestJsonnetImportScanBudgetKeepsCallersBounded(t *testing.T) {
 	if !found {
 		t.Fatalf("diagnostics = %#v, want the Jsonnet scan warning for fanout", result.Diagnostics)
 	}
-	side := withSelectionOnlyPaths(ctx, left, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}})
+	side := withSelectionOnlyPaths(ctx, left, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}})
 	leftSelected, _, unowned := selectChangedDiffSides(side, side, []string{"unrelated/README.md"}, nil)
 	if len(leftSelected) != 1 {
 		t.Fatal("an unrelated change did not select the source whose inputs are not known")
@@ -183,7 +183,7 @@ func TestWithSelectionOnlyPathsScansOnlyDirectorySources(t *testing.T) {
 		Name: "chart",
 		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "chart"}},
 	}
-	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}}).inputs
 	if selected, _ := SelectChangedApplicationInputs(got, []string{"shared/lib.libsonnet"}); len(selected) != 0 {
 		t.Fatalf("a Helm source owned a Jsonnet import (paths %v)", got[0].Paths)
 	}
@@ -211,7 +211,7 @@ func TestWithSelectionOnlyPathsMarksAFailedScanUnknown(t *testing.T) {
 		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "app"}},
 	}
-	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}})
+	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}})
 	if len(side.unscanned) != 1 {
 		t.Fatalf("unscanned = %v, want the source whose scan failed", side.unscanned)
 	}
@@ -242,7 +242,7 @@ func TestWithSelectionOnlyPathsJsonnetLibraries(t *testing.T) {
 			Directory: &argoappv1.ApplicationSourceDirectory{Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{"../outside"}}},
 		}},
 	}
-	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: jsonnetApp}, {Application: plainApp}})
+	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: jsonnetApp}, {Application: plainApp}})
 	if len(side.unscanned) != 0 {
 		t.Fatalf("unscanned = %v, want none", side.unscanned)
 	}
@@ -273,7 +273,7 @@ func TestWithSelectionOnlyPathsOwnsTheJsonnetLibraryLink(t *testing.T) {
 		Name: "tools",
 		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "tools"}},
 	}
-	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: jsonnetApp}, {Application: toolsApp}})
+	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: jsonnetApp}, {Application: toolsApp}})
 	selected, _ := SelectChangedApplicationInputs(side.inputs, []string{"tools/jlib"})
 	names := map[string]bool{}
 	for _, application := range selected {
@@ -301,7 +301,7 @@ func TestWithSelectionOnlyPathsDoesNotOwnARealLibraryDirectory(t *testing.T) {
 			Directory: &argoappv1.ApplicationSourceDirectory{Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{"manifests"}}},
 		}},
 	}
-	inputs := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	inputs := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}}).inputs
 	for _, changed := range []string{"manifests/plugin-data/values.txt", "manifests/new-app/cm.yaml"} {
 		selected, unowned := SelectChangedApplicationInputs(inputs, []string{changed})
 		if len(selected) != 0 || len(unowned) != 1 {

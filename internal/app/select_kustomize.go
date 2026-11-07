@@ -55,7 +55,7 @@ type selectionSide struct {
 // parent Application (ParentKey) owns only its own inputs here;
 // selectChangedDiffSides selects it with its parent. Directories in Paths
 // are never walked: a listed input is not a render root.
-func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcepkg.RepoMap, selfRepo selfRepoRefs, inputs []ApplicationSelectionInput) selectionSide {
+func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcepkg.RepoMap, selfRepo selfRepoRefs, gates sourceTypeGates, inputs []ApplicationSelectionInput) selectionSide {
 	tree := newSelectionTree(root, repoMaps, selfRepo)
 	memo := map[string][]string{}
 	kustomizeGraph := func(source argoappv1.ApplicationSource) []string {
@@ -67,12 +67,6 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		}
 		return paths
 	}
-	type symlinkSelection struct {
-		paths []string
-		// unknown reports a Jsonnet import scan that ran out of budget or
-		// failed: the source's inputs are not known.
-		unknown bool
-	}
 	symlinkMemo := map[string]symlinkSelection{}
 	symlinkInputs := func(source argoappv1.ApplicationSource) symlinkSelection {
 		var libs []string
@@ -82,26 +76,7 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		key := fmt.Sprintf("%q %q", source.Path, libs)
 		selection, ok := symlinkMemo[key]
 		if !ok {
-			// The symlinks under the source path and under each library
-			// that resolves, as the renderer resolves it, and the library
-			// paths and symlinks that decide where a library is.
-			libDirs, libLinks, libErr := render.DirectoryJsonnetLibInputs(root, source.Path, libs)
-			dirs := []string{source.Path}
-			for _, dir := range libDirs {
-				// A library at the repository root would cover every
-				// path, so it adds no tree to walk; the import scan
-				// still owns the files it finds there.
-				if dir != "." {
-					dirs = append(dirs, dir)
-				}
-			}
-			selection.paths = render.DirectorySymlinkInputPaths(root, dirs)
-			selection.paths = append(selection.paths, libLinks...)
-			// A scan that ran out of budget or failed, such as on an
-			// unreadable directory, leaves the imports unknown.
-			imports, err := render.DirectoryJsonnetImportPaths(ctx, root, source.Path, libs)
-			selection.unknown = err != nil || libErr != nil
-			selection.paths = append(selection.paths, imports...)
+			selection = directorySelectionInputs(ctx, root, source.Path, libs, gates)
 			symlinkMemo[key] = selection
 		}
 		return selection
@@ -132,7 +107,7 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			// Kustomize renderer and Helm charts and value files reject
 			// symlinks, and neither evaluates Jsonnet. Helm file parameters
 			// own their symlinks above.
-			if rendersAsDirectory(root, source) {
+			if rendersAsDirectory(root, source, gates) {
 				selection := symlinkInputs(source)
 				out[i].Paths = append(out[i].Paths, selection.paths...)
 				if selection.unknown {
@@ -154,10 +129,52 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 	return selectionSide{inputs: out, renderedDirs: renderedDirs, unscanned: unscanned}
 }
 
+// symlinkSelection is what a directory source reads outside its path, for
+// changed-only selection.
+type symlinkSelection struct {
+	paths []string
+	// unknown reports a Jsonnet import scan that ran out of budget or
+	// failed: the source's inputs are not known.
+	unknown bool
+}
+
+// directorySelectionInputs returns the paths that a directory source at
+// sourcePath reads through symlinks, Jsonnet libraries, and Jsonnet
+// imports. With Jsonnet off in argocd-cm, no library or import is read, so
+// only the symlinks under the source path count.
+func directorySelectionInputs(ctx context.Context, root, sourcePath string, libs []string, gates sourceTypeGates) symlinkSelection {
+	var selection symlinkSelection
+	if gates.jsonnetDisabled {
+		selection.paths = render.DirectorySymlinkInputPaths(root, []string{sourcePath})
+		return selection
+	}
+	// The symlinks under the source path and under each library that
+	// resolves, as the renderer resolves it, and the library paths and
+	// symlinks that decide where a library is.
+	libDirs, libLinks, libErr := render.DirectoryJsonnetLibInputs(root, sourcePath, libs)
+	dirs := []string{sourcePath}
+	for _, dir := range libDirs {
+		// A library at the repository root would cover every path, so it
+		// adds no tree to walk; the import scan still owns the files it
+		// finds there.
+		if dir != "." {
+			dirs = append(dirs, dir)
+		}
+	}
+	selection.paths = render.DirectorySymlinkInputPaths(root, dirs)
+	selection.paths = append(selection.paths, libLinks...)
+	// A scan that ran out of budget or failed, such as on an unreadable
+	// directory, leaves the imports unknown.
+	imports, err := render.DirectoryJsonnetImportPaths(ctx, root, sourcePath, libs)
+	selection.unknown = err != nil || libErr != nil
+	selection.paths = append(selection.paths, imports...)
+	return selection
+}
+
 // rendersAsDirectory reports whether the local renderer renders source as a
-// directory source, as selectLocalRenderer decides for the render. An
-// explicit plugin source is not one.
-func rendersAsDirectory(root string, source argoappv1.ApplicationSource) bool {
+// directory source, as selectLocalRenderer decides for the render with the
+// same source type gates. An explicit plugin source is not one.
+func rendersAsDirectory(root string, source argoappv1.ApplicationSource, gates sourceTypeGates) bool {
 	explicitType, err := source.ExplicitType()
 	if err != nil {
 		return false
@@ -169,7 +186,7 @@ func rendersAsDirectory(root string, source argoappv1.ApplicationSource) bool {
 		}
 		resolved.ExplicitType = *explicitType
 	}
-	renderer, err := selectLocalRenderer(resolved)
+	renderer, err := selectLocalRenderer(resolved, gates)
 	if err != nil {
 		return false
 	}

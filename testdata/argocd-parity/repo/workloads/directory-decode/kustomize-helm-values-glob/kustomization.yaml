@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# kustomize loads valuesFile as a file name. values-*.yaml is no glob, and
+# no file has that name.
+helmCharts:
+  - name: globvalues
+    releaseName: globvalues
+    valuesFile: values-*.yaml

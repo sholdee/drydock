@@ -1,0 +1,4 @@
+apiVersion: v2
+name: parity-gates-helm-chart-dir
+description: Local Helm chart that the source type gate phase renders with Helm off.
+version: 0.1.0

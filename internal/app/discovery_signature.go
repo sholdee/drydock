@@ -48,6 +48,18 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		// repository holds an out-of-bounds symlink, so it is a render
 		// input. It is signed as the value the repo-server parses.
 		AllowOutOfBoundsSymlinks bool `json:"allowOutOfBoundsSymlinks,omitempty"`
+		// DisabledSourceTypes lists the argocd-cm keys helm.enable,
+		// kustomize.enable, and jsonnet.enable that turn their tool off.
+		// They change the renderer of a source or the files a directory
+		// source evaluates, so they are render inputs. They are signed as
+		// Argo CD reads them, and the defaults leave the list empty, so the
+		// signature of settings without the keys does not change.
+		DisabledSourceTypes []string `json:"disabledSourceTypes,omitempty"`
+		// HelmNamespace is the namespace that helm uses without a
+		// --namespace, from the repo-server of a rendered or committed
+		// install. It is left out for "default", so settings without such
+		// an install keep their signature.
+		HelmNamespace string `json:"helmNamespace,omitempty"`
 	}{
 		KustomizeBuildOptions:             renderSettingsValues(settings.KustomizeBuildOptions),
 		HelmRepositories:                  renderSettingsRepositories(settings.HelmRepositories),
@@ -60,6 +72,8 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		ResourceCustomizations:            renderSettingsCustomizations(settings.ResourceCustomizations),
 		MaxCombinedDirectoryManifestsSize: maxCombinedDirectoryManifestsSizeSignature(settings),
 		AllowOutOfBoundsSymlinks:          allowOutOfBoundsSymlinks(settings),
+		DisabledSourceTypes:               settings.DisabledSourceTypeKeys(),
+		HelmNamespace:                     helmNamespaceSignature(settings),
 	}
 	data, err := json.Marshal(input)
 	if err != nil {
@@ -97,6 +111,11 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	// renderSig carries the parsed allow flag, so "TRUE" and "true", or ""
 	// and "no", are not a change.
 	settings.AllowOutOfBoundsSymlinks = config.Value[string]{}
+	// renderSig carries the source type keys as Argo CD reads them, so ""
+	// and "true" are not a change.
+	settings.SourceTypeEnable = nil
+	// renderSig carries the namespace that helm uses.
+	settings.RepoServerHelmNamespace = nil
 	// The progressive syncs flag changes ApplicationSet generation, not
 	// renders, so it is signed here as the value the controller parses.
 	progressiveSyncs := config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
@@ -285,4 +304,11 @@ func objectContentFingerprint(key string, value any) string {
 	}
 	sum := sha256.Sum256(data)
 	return key + ":" + hex.EncodeToString(sum[:])
+}
+
+func helmNamespaceSignature(settings config.ArgoSettings) string {
+	if namespace := settings.HelmNamespace(); namespace != config.DefaultHelmNamespace {
+		return namespace
+	}
+	return ""
 }

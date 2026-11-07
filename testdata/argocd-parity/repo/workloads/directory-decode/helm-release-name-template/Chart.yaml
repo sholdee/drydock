@@ -1,0 +1,4 @@
+apiVersion: v2
+name: helm-release-name-template
+description: Local Helm chart for an Argo CD parity render failure.
+version: 0.1.0

@@ -38,13 +38,13 @@ func (p localProvider) renderDefaultAVPCompatPluginSource(ctx context.Context, s
 	)
 	if source.Path != "" {
 		var renderer render.Renderer
-		renderer, err = selectLocalRenderer(source)
+		renderer, err = selectLocalRenderer(source, sourceTypeGates{})
 		if err != nil {
 			return nil, nil, true, err
 		}
 		manifests, diags, err = renderer.Render(ctx, source, nativeOptions)
 	} else {
-		manifests, diags, err = p.renderChartOnlySource(ctx, source, nativeOptions)
+		manifests, diags, err = p.renderChartOnlySource(ctx, source, nativeOptions, nil)
 	}
 	if err != nil {
 		return manifests, diags, true, err
@@ -70,6 +70,9 @@ func avpCompatNativeOptions(opts render.RenderOptions) render.RenderOptions {
 	nativeOptions.EnableAVPCompat = true
 	nativeOptions.QuietAVPCompat = true
 	nativeOptions.KeepOutputLineBreak = true
+	// A config management plugin sidecar runs its own tools, so the
+	// argocd-cm source type keys do not reach it.
+	nativeOptions.DirectoryJsonnetDisabled = false
 	return nativeOptions
 }
 
@@ -135,12 +138,12 @@ func (p localProvider) renderAVPCompatPolicyPluginSource(ctx context.Context, so
 	)
 	if source.Path != "" {
 		var renderer render.Renderer
-		renderer, err = selectLocalRenderer(source)
+		renderer, err = selectLocalRenderer(source, sourceTypeGates{})
 		if err == nil {
 			manifests, diags, err = renderer.Render(ctx, source, nativeOptions)
 		}
 	} else {
-		manifests, diags, err = p.renderChartOnlySource(ctx, source, nativeOptions)
+		manifests, diags, err = p.renderChartOnlySource(ctx, source, nativeOptions, nil)
 	}
 	if err != nil {
 		return manifests, diags, true, err

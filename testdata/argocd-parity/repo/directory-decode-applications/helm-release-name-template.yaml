@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-decode-helm-release-name-template
+  namespace: parity-directory-decode
+spec:
+  project: parity-directory-decode
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/directory-decode/helm-release-name-template
+    helm:
+      # Argo CD passes the release name as --name-template, so helm parses
+      # it as a Go template.
+      releaseName: '{{ .Missing.Field }'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-directory-decode-workloads

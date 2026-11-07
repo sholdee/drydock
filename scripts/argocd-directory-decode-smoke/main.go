@@ -25,6 +25,12 @@
 // that the Argo CD controller rejects before it renders anything, so Argo CD
 // must report an InvalidSpecError condition that contains argocdMessage,
 // and drydock must fail with stderr that contains drydockMessage.
+//
+// A case with source render has no failing file either. Its Helm chart or
+// Kustomize helmCharts entry fails in helm or kustomize with a message that
+// names no file, such as an invalid release name. Argo CD must report a
+// ComparisonError condition that contains argocdMessage, and drydock must
+// fail with stderr that contains drydockMessage.
 package main
 
 import (
@@ -68,6 +74,7 @@ const (
 	sourceKustomize          = "kustomize"
 	sourcePlugin             = "plugin"
 	sourceSpec               = "spec"
+	sourceRender             = "render"
 )
 
 // pluginOutputName is the name drydock gives the output of a config
@@ -91,7 +98,8 @@ type expectedFile struct {
 type expectedCase struct {
 	Name string `yaml:"name"`
 	// Source is the source type of the Application: directory (the
-	// default), helm, helm-file-parameters, kustomize, plugin, or spec.
+	// default), helm, helm-file-parameters, kustomize, plugin, render, or
+	// spec.
 	Source         string `yaml:"source"`
 	File           string `yaml:"file"`
 	ArgoCDMessage  string `yaml:"argocdMessage"`
@@ -102,6 +110,10 @@ type expectedCase struct {
 	// ArgoCDNamesObject is the name of the object in the failing file that
 	// the Argo CD message names instead of the file.
 	ArgoCDNamesObject string `yaml:"argocdNamesObject"`
+	// FileMissing marks a case that fails because the file is not there,
+	// such as a values file that kustomize loads. The fixture must not
+	// hold the file.
+	FileMissing bool `yaml:"fileMissing"`
 	// Repository names a fixture repository other than the main one. The
 	// smoke builds it from testdata/argocd-parity/<repository>-repo and
 	// serves it as <repository>.git, and the failing file may be one that
@@ -266,17 +278,23 @@ func (tc expectedCase) DrydockName() string {
 	return tc.File
 }
 
-// validateSource requires a failing file and a known source type. A spec
-// case has no file, and both of its messages must be set.
+// namesNoFile reports a spec or render case, which has no failing file.
+func (tc expectedCase) namesNoFile() bool {
+	return tc.SourceType() == sourceSpec || tc.SourceType() == sourceRender
+}
+
+// validateSource requires a failing file and a known source type. A spec or
+// render case has no file, and both of its messages must be set.
 func (tc expectedCase) validateSource() error {
-	if tc.SourceType() == sourceSpec {
+	if tc.namesNoFile() {
+		source := tc.SourceType()
 		switch {
 		case tc.File != "":
-			return fmt.Errorf("expected case %s has source spec and must not name a file", tc.Name)
+			return fmt.Errorf("expected case %s has source %s and must not name a file", tc.Name, source)
 		case tc.ArgoCDQuotesObject || tc.ArgoCDNamesObject != "":
-			return fmt.Errorf("expected case %s has source spec and must not set argocdQuotesObject or argocdNamesObject", tc.Name)
+			return fmt.Errorf("expected case %s has source %s and must not set argocdQuotesObject or argocdNamesObject", tc.Name, source)
 		case strings.TrimSpace(tc.ArgoCDMessage) == "" || strings.TrimSpace(tc.DrydockMessage) == "":
-			return fmt.Errorf("expected case %s has source spec and must set argocdMessage and drydockMessage", tc.Name)
+			return fmt.Errorf("expected case %s has source %s and must set argocdMessage and drydockMessage", tc.Name, source)
 		}
 		return nil
 	}
@@ -287,7 +305,7 @@ func (tc expectedCase) validateSource() error {
 	case sourceDirectory, sourceHelm, sourceHelmFileParameters, sourceKustomize, sourcePlugin:
 		return nil
 	}
-	return fmt.Errorf("expected case %s has source %q, want directory, helm, helm-file-parameters, kustomize, plugin, or spec", tc.Name, tc.Source)
+	return fmt.Errorf("expected case %s has source %q, want directory, helm, helm-file-parameters, kustomize, plugin, render, or spec", tc.Name, tc.Source)
 }
 
 // validateDrydockMessage requires that drydock's message names the file, or
@@ -318,7 +336,7 @@ func validateExpected(cases []expectedCase) error {
 		if err := tc.validateSource(); err != nil {
 			return err
 		}
-		if tc.SourceType() == sourceSpec {
+		if tc.namesNoFile() {
 			continue
 		}
 		if err := tc.validateArgoCDMessage(); err != nil {

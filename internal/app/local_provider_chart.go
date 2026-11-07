@@ -14,7 +14,15 @@ func chartSensitiveValues(credentials chart.ChartCredentials) []string {
 	return cacheevent.CompactSensitiveValues(credentials.Username, credentials.Password, credentials.BearerToken)
 }
 
-func (p localProvider) renderChartOnlySource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+// renderChartOnlySource acquires a chart from a chart repository and
+// renders it. The Argo CD v3.6.1 repo-server extracts the chart and passes
+// its directory to GenerateManifests as the source path
+// (reposerver/repository/repository.go:451-470), so the source type is
+// picked there as for a path source: with gates, argocd-cm helm.enable
+// "false" renders the chart directory as a plain directory. A nil gates is
+// for a config management plugin compatibility path, which runs helm
+// template whatever argocd-cm says.
+func (p localProvider) renderChartOnlySource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions, gates *sourceTypeGates) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	kind := render.ChartRepositoryKind(source.RepoURL, opts.OCIChartRepositories)
 
 	acquirer := p.chartAcquirer
@@ -76,11 +84,19 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 	if p.renderObserver != nil {
 		p.renderObserver(source)
 	}
-	return (render.HelmRenderer{}).Render(ctx, render.ResolvedSource{
+	chartSource := render.ResolvedSource{
 		RepoRoot:       acquired.ChartDir,
 		Path:           ".",
 		Chart:          source.Chart,
 		RepoURL:        source.RepoURL,
 		TargetRevision: source.TargetRevision,
-	}, opts)
+		ExplicitType:   source.ExplicitType,
+	}
+	var renderer render.Renderer = render.HelmRenderer{}
+	if gates != nil {
+		if renderer, err = selectLocalRenderer(chartSource, *gates); err != nil {
+			return nil, nil, err
+		}
+	}
+	return renderer.Render(ctx, chartSource, opts)
 }

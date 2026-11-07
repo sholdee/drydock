@@ -118,7 +118,7 @@ inputs:
     description: Newline-delimited repository URL mappings in URL=PATH form.
     required: false
   kube-version:
-    description: Kubernetes version for rendering capabilities. Overrides per-app kubeVersion.
+    description: Kubernetes version of the destination cluster for rendering capabilities. A per-app kubeVersion wins over it.
     required: false
   api-versions:
     description: Newline-delimited additional Kubernetes API versions for capability-gated rendering, unioned with per-app apiVersions. Accepts group/version or group/version/Kind form.

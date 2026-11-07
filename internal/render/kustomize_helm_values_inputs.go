@@ -136,8 +136,10 @@ func (c *kustomizeHelmValuesCollector) addValuesFile(path string) {
 // shouldLoadHelmValueFiles allows it: valuesMerge replace skips it. Without
 // valuesInline, Helm reads valuesFile. Helm always reads
 // additionalValuesFiles. Every file goes through the Helm value file loader
-// paths, relative to the kustomization directory, with globs and without
-// env substitution (HelmValueFileReads).
+// paths, relative to the kustomization directory, without env substitution
+// (HelmValueFileReads). kustomize reads each path as a file name, so glob
+// characters are escaped, as the render escapes them
+// (literalKustomizeHelmValuesFiles).
 func (c *kustomizeHelmValuesCollector) helmChartValueFileReads(node kustomizeGraphNode, helmChart types.HelmChart) (helmParsed, kustomizeParsed []string) {
 	nodeRel, err := relativeManifestPath(c.collector.repoRoot, node.Dir)
 	if err != nil {
@@ -148,6 +150,14 @@ func (c *kustomizeHelmValuesCollector) helmChartValueFileReads(node kustomizeGra
 		if len(files) == 0 {
 			return nil
 		}
+		literal := make([]string, 0, len(files))
+		for _, file := range files {
+			if hasHelmValueGlob(file) && !isRemoteHelmValueFile(file) {
+				file = escapeHelmValueGlob(file)
+			}
+			literal = append(literal, file)
+		}
+		files = literal
 		return HelmValueFileReads(c.collector.repoRoot, ResolvedSource{RepoRoot: c.collector.repoRoot, Path: nodeRel}, RenderOptions{
 			ValueFiles:             files,
 			ValueFilesBaseDir:      nodeRel,

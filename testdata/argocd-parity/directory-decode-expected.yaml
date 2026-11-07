@@ -246,6 +246,96 @@ cases:
     file: file-parameter-links/targets
     argocdMessage: "file-parameter-links/targets: is a directory"
     drydockMessage: "file-parameter-links/targets: is a directory"
+  # Kustomize helmCharts. kustomize loads the values.yaml of the chart when
+  # the entry sets no valuesFile, and fails when the chart has none
+  # (HelmChartInflationGeneratorPlugin.copyValuesFile at kustomize/api
+  # v0.21.3). Argo CD names the file by its full path.
+  - name: parity-decode-kustomize-helm-no-values
+    source: kustomize
+    file: charts/novalues/values.yaml
+    fileMissing: true
+    argocdMessage: "charts/novalues/values.yaml: no such file or directory"
+    drydockMessage: 'values file "charts/novalues/values.yaml": file does not exist'
+  # kustomize loads valuesFile as a file name and expands no glob.
+  - name: parity-decode-kustomize-helm-values-glob
+    source: kustomize
+    file: values-*.yaml
+    fileMissing: true
+    argocdMessage: "values-*.yaml: no such file or directory"
+    drydockMessage: 'read helm value file "values-*.yaml": file does not exist'
+  # kustomize loads helmCharts values files with LoadRestrictionsRootOnly
+  # unless kustomize.buildOptions sets --load-restrictor
+  # LoadRestrictionsNone (fileloader.go:320-332 at kustomize/api v0.21.3).
+  # Argo CD names absolute paths, drydock paths from the repository root.
+  - name: parity-decode-kustomize-helm-values-outside-root
+    source: render
+    argocdMessage: "could not load additionalValuesFile: security; file '"
+    drydockMessage: "could not load additionalValuesFile: security; file 'workloads/directory-decode/kustomize-helm-values-outside-root.yaml' is not in or below 'workloads/directory-decode/kustomize-helm-values-outside-root'"
+  # The default values file of a chart under a chart home outside the
+  # kustomization directory goes through the same restriction.
+  - name: parity-decode-kustomize-helm-charthome-outside-root
+    source: render
+    argocdMessage: "kustomize-helm-shared-charts/rootprobe/values.yaml' is not in or below '"
+    drydockMessage: "security; file 'workloads/directory-decode/kustomize-helm-shared-charts/rootprobe/values.yaml' is not in or below 'workloads/directory-decode/kustomize-helm-charthome-outside-root'"
+  # A directory outside the kustomization directory fails as a directory:
+  # the restriction checks for a directory first (loadrestrictions.go:20-27).
+  - name: parity-decode-kustomize-helm-values-directory-outside-root
+    source: render
+    argocdMessage: "kustomize-helm-values-outside-dir' must resolve to a file"
+    drydockMessage: "could not load additionalValuesFile: 'workloads/directory-decode/kustomize-helm-values-outside-dir' must resolve to a file"
+  # A values file that is a directory fails in the file loader.
+  - name: parity-decode-kustomize-helm-values-directory
+    source: render
+    argocdMessage: "kustomize-helm-values-directory/vals' must resolve to a file"
+    drydockMessage: "'workloads/directory-decode/kustomize-helm-values-directory/vals' must resolve to a file"
+  # Render cases have no failing file. helm or kustomize fails the render
+  # with a message that names no file, and Argo CD reports a
+  # ComparisonError.
+  #
+  # kustomize rejects a release name that helm would read as a flag
+  # (HelmChartInflationGeneratorPlugin.validateArgs).
+  - name: parity-decode-kustomize-helm-release-name-dash
+    source: render
+    argocdMessage: "releaseName must not start with '-', got \"-bad\""
+    drydockMessage: "releaseName must not start with '-', got \"-bad\""
+  # helm template checks the release name (availableName,
+  # pkg/action/install.go:619-624 at helm v4.3.1). Argo CD passes
+  # helm.releaseName, so 54 characters fail.
+  - name: parity-decode-helm-release-name-long
+    source: render
+    argocdMessage: 'release name check failed: release name "parity-decode-helm-release-name-long-aaaaaaaaaaaaaaaaa": invalid release name, must match regex ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ and the length must not be longer than 53'
+    drydockMessage: 'release name check failed: release name "parity-decode-helm-release-name-long-aaaaaaaaaaaaaaaaa": invalid release name, must match regex ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ and the length must not be longer than 53'
+  # Argo CD passes the release name as --name-template, and helm parses it
+  # as a Go template (action.TemplateName).
+  - name: parity-decode-helm-release-name-template
+    source: render
+    argocdMessage: 'template: name-template:1: unexpected "}" in operand'
+    drydockMessage: 'template: name-template:1: unexpected "}" in operand'
+  # Argo CD v3.6.1 accepts helm.version "", v3, and v4 (NewCmd,
+  # util/helm/cmd.go:36-48).
+  - name: parity-decode-helm-version
+    source: render
+    argocdMessage: "helm version 'v2' is not supported"
+    drydockMessage: "failed to create new helm command: helm version 'v2' is not supported"
+  # helm template renders only application charts (checkIfInstallable,
+  # pkg/cmd/install.go:360-371 at helm v4.3.1).
+  - name: parity-decode-helm-library
+    source: render
+    argocdMessage: library charts are not installable
+    drydockMessage: library charts are not installable
+  # The chart kubeVersion constraint must match the kube version
+  # (renderResources, pkg/action/action.go:288-291 at helm v4.3.1). The
+  # Application sets helm.kubeVersion, so both sides check v1.30.0.
+  - name: parity-decode-helm-kube-version
+    source: render
+    argocdMessage: "chart requires kubeVersion: >=99.0.0-0 which is incompatible with Kubernetes v1.30.0"
+    drydockMessage: "chart requires kubeVersion: >=99.0.0-0 which is incompatible with Kubernetes v1.30.0"
+  # helm v4.3.1 loads a chart of apiVersion v3, but helm template renders
+  # only v1 and v2 charts (Install.RunWithContext, pkg/action/install.go).
+  - name: parity-decode-helm-chart-v3
+    source: render
+    argocdMessage: invalid chart apiVersion
+    drydockMessage: invalid chart apiVersion
   # Spec cases have no failing file. The Argo CD controller checks the
   # sources of each Application before it renders anything
   # (ValidatePermissions, util/argo/argo.go:644-737 at v3.6.1). A failed

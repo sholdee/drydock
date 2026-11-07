@@ -26,6 +26,9 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	if opts.KustomizeSpecError != nil {
+		return nil, nil, opts.KustomizeSpecError
+	}
 	diags := sourceKustomizeDiagnostics(opts)
 	buildSettings, err := parseKustomizeBuildOptions(opts.BuildOptions)
 	if err != nil {
@@ -206,6 +209,20 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 		acquirer = chart.DefaultAcquirer{}
 	}
 
+	// kustomize configures every generator of a kustomization before it
+	// runs any (KustTarget.runGenerators, api/internal/target/kusttarget.go
+	// at kustomize/api v0.21.3), so the argument checks of every entry come
+	// before the chart and values errors of the first one.
+	buildSettings, err := parseKustomizeBuildOptions(opts.BuildOptions)
+	if err != nil {
+		return nil, err
+	}
+	loader := kustomizeValuesFileLoader{repoRoot: tempRepoRoot, dir: tempSourceRoot, rootOnly: buildSettings.LoadRestrictions != types.LoadRestrictionsNone}
+	for _, helmChart := range helmCharts {
+		if err := validateKustomizeHelmChartArgs(loader, helmChart); err != nil {
+			return nil, err
+		}
+	}
 	generatedResources := make([]string, 0, len(helmCharts))
 	for i, helmChart := range helmCharts {
 		if err := ctx.Err(); err != nil {
@@ -215,6 +232,16 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 		baseName := safeGeneratedKustomizeHelmBaseName(helmChart.Name, helmChart.Version)
 		generatedName := fmt.Sprintf("%03d-%03d-%s", graphIndex, i, baseName)
 		chartRel, err := resolveKustomizeHelmChart(ctx, tempRepoRoot, tempSourceRoot, chartHome, generatedName, helmChart, opts, acquirer)
+		if err != nil {
+			return nil, err
+		}
+		if err := requireKustomizeHelmDefaultValuesFile(tempRepoRoot, chartRel, chartHome, helmChart); err != nil {
+			return nil, err
+		}
+		if err := loader.checkValuesFile(helmChart, chartHome); err != nil {
+			return nil, err
+		}
+		helmChart, err = literalKustomizeHelmValuesFiles(tempSourceRoot, helmChart)
 		if err != nil {
 			return nil, err
 		}
@@ -349,8 +376,9 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 		AppName:                helmChart.Name,
 		ReleaseName:            helmChart.ReleaseName,
 		Namespace:              namespace,
+		HelmDefaultNamespace:   opts.HelmDefaultNamespace,
 		KubeVersion:            kustomizeHelmKubeVersion(helmChart, opts),
-		APIVersions:            append(append([]string(nil), opts.APIVersions...), helmChart.ApiVersions...),
+		APIVersions:            kustomizeHelmAPIVersions(helmChart, opts),
 		ValueFiles:             valueFiles,
 		ValueFilesBaseDir:      valueFilesBaseDir,
 		ValueFilesBoundaryRoot: ".",
@@ -390,11 +418,140 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 	}, nil
 }
 
+// kustomizeHelmKubeVersion and kustomizeHelmAPIVersions pick the kube
+// version and API versions of a helmCharts entry as kustomize does.
+// HelmChartInflationGeneratorPlugin.Config sets them from --helm-kube-version
+// and --helm-api-versions and then decodes the entry over them
+// (api/internal/builtins/HelmChartInflationGenerator.go:58-70 at
+// kustomize/api v0.21.3). The entry's kubeVersion and apiVersions are
+// omitted when empty, so a set field replaces the flag values and an empty
+// one keeps them. The two lists are never merged.
+//
+// drydock does not model one kustomize defect: Config copies the slice of
+// flag values without its backing array, so decoding the apiVersions of an
+// entry writes them over the flag values that every other entry of the same
+// build holds. An entry without apiVersions then sees the apiVersions of
+// another entry in place of the first flag values.
 func kustomizeHelmKubeVersion(helmChart types.HelmChart, opts RenderOptions) string {
 	if helmChart.KubeVersion != "" {
 		return helmChart.KubeVersion
 	}
 	return opts.KubeVersion
+}
+
+func kustomizeHelmAPIVersions(helmChart types.HelmChart, opts RenderOptions) []string {
+	if len(helmChart.ApiVersions) != 0 {
+		return append([]string(nil), helmChart.ApiVersions...)
+	}
+	return append([]string(nil), opts.APIVersions...)
+}
+
+// validateKustomizeHelmChartArgs runs the checks of
+// HelmChartInflationGeneratorPlugin.validateArgs
+// (api/internal/builtins/HelmChartInflationGenerator.go:100-150 at
+// kustomize/api v0.21.3), in its order. kustomize passes the release name
+// and the chart name to helm as arguments, so it rejects a value that helm
+// would read as a flag. It loads each local additionalValuesFiles entry as
+// a file name, and it checks valuesMerge.
+func validateKustomizeHelmChartArgs(loader kustomizeValuesFileLoader, helmChart types.HelmChart) error {
+	if helmChart.Name == "" {
+		return fmt.Errorf("chart name cannot be empty")
+	}
+	if strings.HasPrefix(helmChart.ReleaseName, "-") {
+		return fmt.Errorf("releaseName must not start with '-', got %q", helmChart.ReleaseName)
+	}
+	if strings.HasPrefix(helmChart.Name, "-") {
+		return fmt.Errorf("chart name must not start with '-', got %q", helmChart.Name)
+	}
+	for _, file := range helmChart.AdditionalValuesFiles {
+		if err := loader.check(file); err != nil {
+			return fmt.Errorf("could not load additionalValuesFile: %w", err)
+		}
+	}
+	switch helmChart.ValuesMerge {
+	case "", "merge", "override", "replace":
+		return nil
+	}
+	return fmt.Errorf("valuesMerge must be one of [merge override replace]")
+}
+
+// requireKustomizeHelmDefaultValuesFile fails a helmCharts entry without
+// valuesFile whose chart has no values.yaml, unless kustomize does not read
+// that file. kustomize sets valuesFile to the values.yaml of the chart and
+// loads it before it runs helm: through copyValuesFile without
+// valuesInline, and through replaceValuesInline with valuesInline unless
+// valuesMerge is replace (HelmChartInflationGeneratorPlugin.Generate and
+// createNewMergedValuesFile). The file loader then fails on the missing
+// file. The error names the file under the chart home, as kustomize does.
+func requireKustomizeHelmDefaultValuesFile(tempRepoRoot, chartRel, chartHome string, helmChart types.HelmChart) error {
+	if helmChart.ValuesFile != "" {
+		return nil
+	}
+	if len(helmChart.ValuesInline) != 0 && helmChart.ValuesMerge == "replace" {
+		return nil
+	}
+	if _, err := os.Lstat(filepath.Join(tempRepoRoot, filepath.FromSlash(chartRel), "values.yaml")); err == nil || !os.IsNotExist(err) {
+		return err
+	}
+	display := filepath.ToSlash(filepath.Join(localKustomizeHelmChartPath("", chartHome, helmChart), "values.yaml"))
+	return fmt.Errorf("kustomize helm chart %q: values file %q: %w", helmChart.Name, display, os.ErrNotExist)
+}
+
+// literalKustomizeHelmValuesFiles keeps glob characters in the local
+// valuesFile and additionalValuesFiles of a helmCharts entry as written.
+// kustomize loads each path as a file name and expands no glob
+// (HelmChartInflationGeneratorPlugin.validateArgs and copyValuesFile). The
+// Helm value file loader expands globs, so a path with glob characters is
+// escaped to match only itself, and a missing file fails here.
+func literalKustomizeHelmValuesFiles(kustomizationDir string, helmChart types.HelmChart) (types.HelmChart, error) {
+	literal := func(file string) (string, error) {
+		if !hasHelmValueGlob(file) || isRemoteHelmValueFile(file) {
+			return file, nil
+		}
+		if _, err := os.Lstat(filepath.Join(kustomizationDir, filepath.FromSlash(file))); err != nil {
+			if os.IsNotExist(err) {
+				return "", fmt.Errorf("read helm value file %q: %w", file, os.ErrNotExist)
+			}
+			return "", err
+		}
+		return escapeHelmValueGlob(file), nil
+	}
+	var err error
+	// With valuesInline and valuesMerge replace, kustomize writes the inline
+	// values to its own values file and never loads valuesFile
+	// (createNewMergedValuesFile).
+	if len(helmChart.ValuesInline) == 0 || helmChart.ValuesMerge != "replace" {
+		if helmChart.ValuesFile, err = literal(helmChart.ValuesFile); err != nil {
+			return helmChart, err
+		}
+	}
+	if len(helmChart.AdditionalValuesFiles) == 0 {
+		return helmChart, nil
+	}
+	files := make([]string, 0, len(helmChart.AdditionalValuesFiles))
+	for _, file := range helmChart.AdditionalValuesFiles {
+		escaped, err := literal(file)
+		if err != nil {
+			return helmChart, err
+		}
+		files = append(files, escaped)
+	}
+	helmChart.AdditionalValuesFiles = files
+	return helmChart, nil
+}
+
+// escapeHelmValueGlob escapes the glob characters of file, so the doublestar
+// glob of the Helm value file loader matches only the file itself.
+func escapeHelmValueGlob(file string) string {
+	var b strings.Builder
+	for _, r := range file {
+		switch r {
+		case '*', '?', '[', ']', '{', '}', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func writeKustomizeHelmGeneratedValuesFile(ctx context.Context, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName string, helmChart types.HelmChart, opts RenderOptions) (string, error) {
@@ -411,17 +568,17 @@ func writeKustomizeHelmGeneratedValuesFile(ctx context.Context, tempRepoRoot, te
 	if loadPrimaryValues {
 		valueFilesBase := valueFilesBaseDir
 		valueFile := helmChart.ValuesFile
-		ignoreMissing := false
 		if valueFile == "" {
+			// requireKustomizeHelmDefaultValuesFile made sure that the
+			// chart has a values.yaml.
 			valueFilesBase = chartRel
 			valueFile = "values.yaml"
-			ignoreMissing = true
 		}
 		valueFilesBoundary := "."
 		if valueFilesBase == chartRel {
 			valueFilesBoundary = chartRel
 		}
-		primaryValues, err = loadHelmValueFilesWith(ctx, tempRepoRoot, valueFilesBase, valueFilesBoundary, nil, []string{valueFile}, ignoreMissing, opts, parseKustomizeHelmValueFile)
+		primaryValues, err = loadHelmValueFilesWith(ctx, tempRepoRoot, valueFilesBase, valueFilesBoundary, nil, []string{valueFile}, false, opts, parseKustomizeHelmValueFile)
 		if err != nil {
 			return "", err
 		}
@@ -527,4 +684,83 @@ func writeGeneratedHelmManifests(root, rel string, manifests []Manifest) error {
 		return fmt.Errorf("write generated helm manifests %s: %w", rel, err)
 	}
 	return nil
+}
+
+// kustomizeValuesFileLoader checks a local helmCharts values file as the
+// kustomize file loader loads it (fileLoader.Load and
+// RestrictionRootOnly, api/internal/loader/fileloader.go:320-332 and
+// loadrestrictions.go:15-30 at kustomize/api v0.21.3). Under the default
+// LoadRestrictionsRootOnly a file outside the kustomization directory
+// fails, unless kustomize.buildOptions sets --load-restrictor
+// LoadRestrictionsNone. A directory fails, and so does a missing file. The
+// texts are kustomize's, with paths relative to the repository root
+// instead of absolute.
+type kustomizeValuesFileLoader struct {
+	repoRoot string
+	dir      string
+	rootOnly bool
+}
+
+func (l kustomizeValuesFileLoader) display(path string) string {
+	if rel, err := filepath.Rel(l.repoRoot, path); err == nil {
+		return filepath.ToSlash(rel)
+	}
+	return path
+}
+
+func (l kustomizeValuesFileLoader) check(file string) error {
+	if file == "" || isRemoteHelmValueFile(file) {
+		return nil
+	}
+	target := filepath.Clean(filepath.Join(l.dir, filepath.FromSlash(file)))
+	info, err := os.Stat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("read helm value file %q: %w", file, os.ErrNotExist)
+		}
+		return err
+	}
+	// RestrictionRootOnly checks for a directory before it checks the root
+	// (loadrestrictions.go:20-27).
+	if info.IsDir() {
+		return fmt.Errorf("'%s' must resolve to a file", l.display(target))
+	}
+	return l.checkRoot(target)
+}
+
+// checkRoot fails a path outside the kustomization directory under
+// LoadRestrictionsRootOnly.
+func (l kustomizeValuesFileLoader) checkRoot(target string) error {
+	if !l.rootOnly {
+		return nil
+	}
+	if rel, err := filepath.Rel(l.dir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("security; file '%s' is not in or below '%s'", l.display(target), l.display(l.dir))
+	}
+	return nil
+}
+
+// checkValuesFile checks valuesFile when kustomize loads it: unless the
+// entry has valuesInline with valuesMerge replace
+// (HelmChartInflationGeneratorPlugin.Generate).
+//
+// Without valuesFile, kustomize loads <chartHome>/<name>/values.yaml
+// (validateArgs, HelmChartInflationGenerator.go:119), also through the
+// restriction, so a chartHome outside the kustomization directory fails.
+// requireKustomizeHelmDefaultValuesFile already failed a missing file.
+func (l kustomizeValuesFileLoader) checkValuesFile(helmChart types.HelmChart, chartHome string) error {
+	if len(helmChart.ValuesInline) != 0 && helmChart.ValuesMerge == "replace" {
+		return nil
+	}
+	if helmChart.ValuesFile == "" {
+		return l.checkRoot(filepath.Join(l.dir, localKustomizeHelmChartPath("", chartHome, helmChart), "values.yaml"))
+	}
+	if hasHelmValueGlob(helmChart.ValuesFile) {
+		// literalKustomizeHelmValuesFiles reports a missing file name with
+		// glob characters.
+		if _, err := os.Lstat(filepath.Join(l.dir, filepath.FromSlash(helmChart.ValuesFile))); os.IsNotExist(err) {
+			return nil
+		}
+	}
+	return l.check(helmChart.ValuesFile)
 }

@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# The values file is outside the kustomization directory. kustomize loads
+# it with LoadRestrictionsRootOnly, the default, and fails.
+helmCharts:
+  - name: rootprobe
+    releaseName: rootprobe
+    additionalValuesFiles:
+      - ../kustomize-helm-values-outside-root.yaml

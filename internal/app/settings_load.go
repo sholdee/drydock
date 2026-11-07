@@ -48,6 +48,9 @@ func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config
 	}
 	merged, mergeDiags := config.MergeDiscovered(candidates)
 	diags = append(diags, mergeDiags...)
+	namespace, namespaceDiags := repoServerHelmNamespace(root, discovered, merged)
+	merged.RepoServerHelmNamespace = namespace
+	diags = append(diags, namespaceDiags...)
 	return merged, diags, nil
 }
 

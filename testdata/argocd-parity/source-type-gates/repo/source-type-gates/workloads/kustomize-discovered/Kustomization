@@ -1,0 +1,7 @@
+# A kustomization file without an extension, so the plain directory render
+# skips it. With Kustomize on, the namePrefix would rename the ConfigMap.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namePrefix: kustomized-
+resources:
+  - configmap.yaml

@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -862,5 +863,119 @@ func TestScanFindsHelmValuesWithAnySettingKeyDrydockReads(t *testing.T) {
 		if got[name] {
 			t.Errorf("Scan() found %s as an Argo CD values file, want it ignored", name)
 		}
+	}
+}
+
+// The repo-server Deployment candidate keeps only what decides the
+// namespace that helm uses, not the other env values of the install.
+func TestRepoServerDeploymentCandidateKeepsOnlyNamespaceInputs(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]any{
+			"name": "argocd-repo-server", "namespace": "argocd",
+		},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+			"automountServiceAccountToken": true,
+			"serviceAccountName":           "argocd-repo-server",
+			"containers": []any{map[string]any{
+				"name":  "repo-server",
+				"image": "quay.io/argoproj/argocd:v3.6.1",
+				"env": []any{
+					map[string]any{"name": "SECRET_LOOKING", "value": "never-kept"},
+					map[string]any{"name": "POD_NAMESPACE", "value": "argocd"},
+					map[string]any{"name": "HELM_NAMESPACE", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "hidden-secret", "key": "hidden-key"}}},
+					map[string]any{"name": "KUBECONFIG", "value": "$(HIDDEN_PATH)/config"},
+				},
+				"envFrom":      []any{map[string]any{"configMapRef": map[string]any{"name": "hidden-configmap"}}},
+				"volumeMounts": []any{map[string]any{"name": "tmp", "mountPath": "/tmp"}},
+			}},
+		}}},
+	}}
+	result, err := ScanObjects("rendered.yaml", []*unstructured.Unstructured{obj})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.SettingsCandidates) != 1 || result.SettingsCandidates[0].Kind != RepoServerDeploymentKind {
+		t.Fatalf("SettingsCandidates = %#v, want one repo-server candidate", result.SettingsCandidates)
+	}
+	kept, err := json.Marshal(result.SettingsCandidates[0].Object.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"never-kept", "SECRET_LOOKING", "quay.io", "hidden-secret", "hidden-key", "HIDDEN_PATH", "hidden-configmap"} {
+		if strings.Contains(string(kept), unwanted) {
+			t.Fatalf("candidate %s keeps %q", kept, unwanted)
+		}
+	}
+	for _, wanted := range []string{"POD_NAMESPACE", "automountServiceAccountToken", "/tmp", "valueFrom secretKeyRef", "a $(VAR) reference", "drydockEnvFrom"} {
+		if !strings.Contains(string(kept), wanted) {
+			t.Fatalf("candidate %s drops %q", kept, wanted)
+		}
+	}
+}
+
+// The repo-server candidates keep a volume only as its name and whether it
+// holds a namespace file, and a ServiceAccount only as its name, namespace,
+// labels, and automountServiceAccountToken.
+func TestRepoServerCandidatesKeepOnlyTokenInputs(t *testing.T) {
+	deployment := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": "argocd-repo-server", "namespace": "argocd"},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+			"containers": []any{map[string]any{"name": "repo-server", "volumeMounts": []any{map[string]any{"name": "token", "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount"}}}},
+			"volumes": []any{
+				map[string]any{"name": "token", "projected": map[string]any{"sources": []any{
+					map[string]any{"serviceAccountToken": map[string]any{"path": "token", "audience": "hidden-audience"}},
+					map[string]any{"downwardAPI": map[string]any{"items": []any{map[string]any{"path": "namespace", "fieldRef": map[string]any{"fieldPath": "metadata.namespace"}}}}},
+				}}},
+				map[string]any{"name": "creds", "secret": map[string]any{"secretName": "hidden-secret"}},
+				map[string]any{"name": "scratch", "emptyDir": map[string]any{}},
+				map[string]any{"name": "picked", "secret": map[string]any{"secretName": "hidden-secret", "items": []any{map[string]any{"key": "hidden-key", "path": "token"}}}},
+				map[string]any{"name": "mixed", "projected": map[string]any{"sources": []any{
+					map[string]any{"configMap": map[string]any{"name": "hidden-configmap", "items": []any{map[string]any{"key": "ns", "path": "namespace"}}}},
+				}}},
+			},
+		}}},
+	}}
+	serviceAccount := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion":                   "v1",
+		"kind":                         "ServiceAccount",
+		"metadata":                     map[string]any{"name": "argocd-repo-server", "namespace": "argocd", "annotations": map[string]any{"hidden": "annotation-value"}},
+		"automountServiceAccountToken": false,
+		"secrets":                      []any{map[string]any{"name": "hidden-token-secret"}},
+	}}
+	result, err := ScanObjects("rendered.yaml", []*unstructured.Unstructured{deployment, serviceAccount})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.SettingsCandidates) != 2 {
+		t.Fatalf("SettingsCandidates = %#v, want the Deployment and the ServiceAccount", result.SettingsCandidates)
+	}
+	for _, candidate := range result.SettingsCandidates {
+		kept, err := json.Marshal(candidate.Object.Object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, unwanted := range []string{"hidden-audience", "hidden-secret", "hidden-token-secret", "annotation-value", "emptyDir", "projected", "hidden-key", "hidden-configmap"} {
+			if strings.Contains(string(kept), unwanted) {
+				t.Fatalf("%s candidate %s keeps %q", candidate.Kind, kept, unwanted)
+			}
+		}
+	}
+	volumes, _, _ := unstructured.NestedSlice(result.SettingsCandidates[0].Object.Object, "spec", "template", "spec", "volumes")
+	want := []any{
+		map[string]any{"name": "token", config.RepoServerTokenFileKey: true, config.RepoServerNamespaceFileKey: true},
+		map[string]any{"name": "creds", config.RepoServerTokenFileKey: true, config.RepoServerNamespaceFileKey: true},
+		map[string]any{"name": "scratch", config.RepoServerTokenFileKey: false, config.RepoServerNamespaceFileKey: false},
+		map[string]any{"name": "picked", config.RepoServerTokenFileKey: true, config.RepoServerNamespaceFileKey: false},
+		map[string]any{"name": "mixed", config.RepoServerTokenFileKey: false, config.RepoServerNamespaceFileKey: true},
+	}
+	if !reflect.DeepEqual(volumes, want) {
+		t.Fatalf("volumes = %#v, want %#v", volumes, want)
+	}
+	if automount, ok := result.SettingsCandidates[1].Object.Object["automountServiceAccountToken"].(bool); !ok || automount {
+		t.Fatalf("ServiceAccount candidate = %#v, want automountServiceAccountToken false", result.SettingsCandidates[1].Object.Object)
 	}
 }

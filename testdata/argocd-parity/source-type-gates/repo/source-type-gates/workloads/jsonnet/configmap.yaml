@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-gates-jsonnet
+  namespace: parity-source-type-gates
+data:
+  note: rendered as a plain directory

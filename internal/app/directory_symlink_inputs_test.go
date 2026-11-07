@@ -57,7 +57,7 @@ func TestWithSelectionOnlyPathsOwnsSymlinkTargets(t *testing.T) {
 			Directory: &argoappv1.ApplicationSourceDirectory{Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{"libs"}}},
 		}},
 	}
-	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}}).inputs
 	for _, changed := range []string{"targets/end.yaml", "targets/mid.yaml", "targets/missing.yaml", "shared/lib.libsonnet"} {
 		selected, _ := SelectChangedApplicationInputs(got, []string{changed})
 		if len(selected) != 1 {

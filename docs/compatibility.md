@@ -39,7 +39,13 @@ must report a `ComparisonError` condition, drydock must fail to render, and
 both errors must name the same file. For a `.json` object without a `kind`,
 the Argo CD controller error quotes the object instead of the file, so the
 check matches the quoted object. Files that both sides skip, and files whose
-text both sides decode first, render in the main manifest comparison.
+text both sides decode first, render in the main manifest comparison. Helm
+and Kustomize `helmCharts` renders that Helm or kustomize fail with a message
+that names no file, such as an invalid release name or a library chart, are
+checked the same way by their message.
+
+A last phase turns Helm, Kustomize, and Jsonnet off in the live `argocd-cm`
+and compares Applications whose sources then render as plain directories.
 
 This check is scoped to generated desired state. Live-only runtime behavior
 such as Kubernetes defaulting, admission mutation, server-side diff, managed
@@ -585,10 +591,148 @@ Supported:
   `traefik-HelmChart.yaml` gives Helm. A directory never matches, and a
   symlink counts by its own name. Without a match, the source is a
   directory. Helm then fails on a directory that has no `Chart.yaml`, as in
-  Argo CD. drydock does not read the `argocd-cm` keys that turn a source
-  type off (`helm.enabled`, `kustomize.enabled`, `jsonnet.enabled`). Earlier
-  drydock releases checked for a kustomization file first and then for
-  `Chart.yaml` only.
+  Argo CD. Earlier drydock releases checked for a kustomization file first
+  and then for `Chart.yaml` only.
+- The `argocd-cm` keys `helm.enable`, `kustomize.enable`, and
+  `jsonnet.enable` as in Argo CD v3.6.1 (`GetEnabledSourceTypes`,
+  `util/settings/settings.go:621-625` and `1030-1047`). A missing or empty
+  key keeps the tool on. Any other value than the exact string `true` turns
+  it off, so `"True"` and `"no"` turn it off. When Helm or Kustomize is off,
+  a source of that type renders as a plain directory, also when the spec
+  names the type with a `helm` or `kustomize` block, and the settings of that
+  block have no effect (`GetAppSourceType`,
+  `reposerver/repository/repository.go:1955-1975`). A block that does not
+  parse, such as `helm.values: "- not a map"` or a `kubeVersion` that is not
+  a version, then does not fail the source, because Argo CD never reads it.
+  A chart from a chart repository follows the same rule: Argo CD extracts
+  the chart and picks the type in the chart directory (lines 451-470), so
+  with Helm off it renders that directory as a plain directory. When Jsonnet
+  is off, a directory source skips its `.jsonnet` files (`findManifests`,
+  line 2019), and its Jsonnet libraries and imports are no render cache or
+  changed-only inputs. Config management plugins are never turned off, and
+  the native argocd-vault-plugin compatibility path ignores the keys too,
+  because the plugin sidecar runs its own tools. drydock reads the keys from
+  `argocd-cm`, from the `configs.cm` values of the argo-cd Helm chart, and
+  from a rendered Argo CD install. The keys are part of the render settings
+  signature, so a change to them renders every Application again and
+  changes the persistent render cache keys. The defaults keep the signature
+  of settings without the keys. Earlier drydock releases did not read the
+  keys.
+- The Helm release name and namespace as Argo CD v3.6.1 passes them to
+  `helm template` (`util/helm/cmd.go:428-440`). The release name is
+  `helm.releaseName`, or else the Application name. Argo CD passes it as
+  `--name-template`, so Helm reads it as a Go template with the sprig
+  functions, and a template that does not parse fails the source. The
+  namespace is `helm.namespace`, or else the destination namespace. When
+  both are empty, Argo CD passes no `--namespace`, and Helm picks the
+  namespace from the repo-server environment (`EnvSettings.Namespace`,
+  `pkg/cli/environment.go:276-286` at Helm v4.3.1, and client-go
+  `DirectClientConfig.Namespace` and `DeferredLoadingClientConfig.Namespace`).
+  The rule, in order:
+  1. `HELM_NAMESPACE` in the repo-server container, when it is not empty.
+     It wins also over `KUBECONFIG`, and drydock then reads nothing else.
+  2. A `KUBECONFIG` that is not empty names a kubeconfig file, which drydock
+     cannot read. drydock warns and goes on as if it were unset. An empty
+     `KUBECONFIG` is unset. The repo-server has no kubeconfig of its own.
+  3. Without a kubeconfig, a `HELM_KUBECONTEXT` that is not empty names a
+     context that does not exist, so client-go fails and Helm uses
+     `default` (`ConfirmUsable`, `client_config.go:441-446`). This also
+     applies when drydock goes on without a `KUBECONFIG` that it cannot
+     read.
+  4. When a service account token is mounted, `POD_NAMESPACE`, else the
+     namespace file next to the token, which is the pod namespace. The
+     kubelet mounts both when the pod spec `automountServiceAccountToken` is
+     `true`, or unset while the ServiceAccount does not set it to `false`. A
+     volume that the container mounts at the token path counts only when it
+     holds a file named `token`, because client-go uses the in-cluster
+     config only with the token (`inClusterClientConfig.Possible`,
+     `client_config.go:666-671`). A Secret volume without `items` holds
+     both files, as a service account token Secret does. With `items`, and
+     for the `secret`, `configMap`, and `downwardAPI` sources of a projected
+     volume, a file counts only when an item has its path, and a
+     `serviceAccountToken` source gives the token at its path. Without the
+     namespace file, the namespace is `default`
+     (`inClusterClientConfig.Namespace`, `client_config.go:646-661`).
+  5. Else `default`.
+
+  The upstream `install.yaml` sets `automountServiceAccountToken: false`,
+  so the namespace is `default`. The argo-cd Helm chart sets
+  `repoServer.automountServiceAccountToken: true` by default, so the
+  namespace is the Argo CD namespace.
+
+  drydock reads the repo-server Deployment and its ServiceAccount from these
+  installs:
+  - The render of an Application on this cluster that installs Argo CD. An
+    Application whose destination is another cluster installs another Argo
+    CD, and its repo-server does not count. A repo-server without a
+    namespace gets the destination namespace.
+  - A committed file, with the rules for a committed `argocd-cm`: only a
+    file that also holds Argo CD objects or settings, such as the upstream
+    `install.yaml`, and not a file that a rendered install read. An
+    Application renders the file when one of its sources renders this
+    repository (not an `oci://` artifact and not a chart from a chart
+    repository) and reads the file: a Kustomize source whose kustomization
+    graph reads it, also a base outside the source path, or a directory
+    source with the file directly in its path, or below it with
+    `directory.recurse`, when its `include` and `exclude` globs let the
+    file through. A Helm chart renders its templates, and a plugin is not
+    known, so neither counts. For a Kustomize source, kustomize applies the
+    `namespace` of every kustomization on the way from the source to the
+    file, over the object's own, and the outermost one wins. Argo CD sets
+    the `kustomize.namespace` of the Application on the source
+    kustomization, so it wins over all of them, but only while the source
+    renders with Kustomize, not with `kustomize.enable` off. Without a
+    kustomization namespace, the object's own namespace counts, then the
+    destination namespace of such an Application. A file that no
+    Application renders gets the `namespace` of the kustomization in its
+    own directory that lists it; drydock does not search the repository for
+    kustomizations further up. A file that only Applications on other
+    clusters render does not count. When drydock cannot tell the namespace of a Deployment
+    or a ServiceAccount, it assumes the Argo CD namespace, and it warns for
+    the Deployment.
+
+  A Deployment without containers is a patch and does not count. A
+  repo-server counts when it comes from the same install as a discovered
+  `argocd-cm`, or when it runs in the Argo CD namespace. When several
+  count, drydock uses the first in this order: from the same install as an
+  `argocd-cm`, then rendered before committed, then by path and document
+  index. A repo-server that gives another namespace adds a warning. An
+  `HELM_NAMESPACE`, `HELM_KUBECONTEXT`, `POD_NAMESPACE`, or `KUBECONFIG`
+  from a ConfigMap, a Secret, another `valueFrom`, `envFrom`, or a `$(VAR)`
+  reference also adds a warning that names the repo-server and the
+  namespace that drydock uses, unless a literal `HELM_NAMESPACE` decides
+  the namespace. drydock keeps only the kind of such a source, never its
+  value. Of each pod volume it keeps only the name and whether the volume
+  holds a `token` file and a `namespace` file. Of a ServiceAccount it keeps
+  only the name, namespace, labels, and `automountServiceAccountToken`. Without a
+  repo-server that counts, drydock uses `default`. The namespace is part of
+  the render settings signature, so a change renders every Application
+  again. Earlier drydock releases used the release name as written and an
+  empty `.Release.Namespace`.
+- The checks of `helm template` (Helm v4.3.1) that come before the
+  templates render, in Helm's order, with Helm's error text: the release
+  name must have at most 53 characters and match the Helm name pattern
+  (`release name check failed: release name "...": invalid release name,
+  ...`). A long Application name without `helm.releaseName` fails too. A
+  chart must be an application chart (`library charts are not
+  installable`), and its `apiVersion` must be `v1` or `v2` (`invalid chart
+  apiVersion`). The chart `kubeVersion` constraint must match the kube
+  version (`chart requires kubeVersion: ... which is incompatible with
+  Kubernetes ...`). Argo CD checks the version of the destination cluster,
+  which drydock does not know. So drydock checks the constraint only
+  against an explicit version: a per-app `helm.kubeVersion` or
+  `kustomize.kubeVersion`, a `helmCharts` `kubeVersion`, or
+  `--kube-version`. Without one, it skips the check, and it does not fail
+  a chart that the cluster would accept. Argo CD also fails a `helm.version`
+  other than empty, `v3`, or `v4` (`helm version 'v2' is not supported`).
+  Earlier drydock releases rendered these sources.
+- A per-app `helm.kubeVersion` or `kustomize.kubeVersion` wins over
+  `--kube-version`. Argo CD uses the per-app value and falls back to the
+  cluster version (`ApplicationSource.GetKubeVersionOrDefault`,
+  `pkg/apis/application/v1alpha1/types.go:385-398`), and `--kube-version`
+  stands for the cluster version. A `--kube-version` that does not parse
+  fails every run, also when every Application sets its own `kubeVersion`.
+  Earlier drydock releases let `--kube-version` win.
 - Helm `parameters` and `fileParameters` applied the way Argo CD's
   `helm template` call applies them: every `--set`, then every `--set-string`
   (`forceString: true`), then every `--set-file`, keeping only the last entry
@@ -1176,9 +1320,75 @@ Supported:
   Kustomize `helmCharts` render through drydock's Go-library Helm path, so
   chart inflation does not require an external Kustomize binary or CLI
   `--enable-helm`.
-- Kustomize Helm `valuesFile` and `additionalValuesFiles` entries outside the
-  kustomization directory when the resolved file remains inside the repository
-  root.
+- Kustomize `helmCharts` release names and namespaces as kustomize v5.8.3
+  passes them to `helm template`. Without `releaseName`, kustomize passes
+  `--generate-name`, and `helm template` renders the release
+  `release-name`. Without a namespace in the entry, the kustomization, or a
+  parent kustomization, kustomize passes no `--namespace`, and Helm picks
+  the namespace from the repo-server environment, as for a Helm source
+  above, because kustomize runs Helm with that environment
+  (`HelmChartInflationGenerator.go:182`). kustomize configures every
+  `helmCharts` entry of a kustomization before it renders any, so these
+  checks of every entry come first, in this order: a missing chart `name`,
+  a `releaseName` or chart `name` that starts with `-`, a local
+  `additionalValuesFiles` entry that does not exist (`could not load
+  additionalValuesFile`), and a `valuesMerge` other than `merge`,
+  `override`, or `replace`. The Helm release name checks above apply too.
+  Earlier drydock releases used the chart name and an empty namespace, and
+  checked each entry only when it rendered it.
+- Kustomize `helmCharts` `kubeVersion` and `apiVersions` as kustomize reads
+  them (`HelmChartInflationGenerator.go:58-70` at kustomize/api v0.21.3).
+  The `apiVersions` of an entry replace the `--helm-api-versions` values
+  from `kustomize.buildOptions` and from `spec.source.kustomize.apiVersions`.
+  An entry without `apiVersions` keeps those values. Earlier drydock
+  releases added the two lists together.
+- A Kustomize `helmCharts` entry without `valuesFile` fails when its chart
+  has no `values.yaml`, as kustomize fails it, unless the entry has
+  `valuesInline` with `valuesMerge: replace`. kustomize reads that file
+  itself before it runs Helm. Earlier drydock releases rendered the chart.
+- Kustomize `helmCharts` `valuesFile` and `additionalValuesFiles` are file
+  names, not globs, as in kustomize. A path such as `values-*.yaml` reads
+  only a file with that exact name and fails when there is none. With
+  `valuesInline` and `valuesMerge: replace`, kustomize never reads
+  `valuesFile`, so a missing one does not fail. The scan for Argo CD
+  settings reads the same files. Earlier drydock releases expanded the
+  glob.
+- Recorded divergence from strict Argo CD v3.6.1: kustomize v5.8.3 copies
+  the `--helm-api-versions` list into each `helmCharts` entry without its
+  backing array, so the `apiVersions` of one entry overwrite the first flag
+  values that the other entries of the same build see. drydock does not
+  copy this defect: an entry without `apiVersions` always sees the flag
+  values. The difference shows only when one build has an entry with
+  `apiVersions`, an entry without them, and flag values. Argo CD passes
+  flag values whenever `kustomize.buildOptions` holds `--enable-helm`.
+- Kustomize Helm `valuesFile` and `additionalValuesFiles` entries load as
+  the kustomize file loader loads them (`fileloader.go:320-332` and
+  `loadrestrictions.go:15-30` at kustomize/api v0.21.3). Under the default
+  `LoadRestrictionsRootOnly`, a file outside the kustomization directory
+  fails with `security; file '...' is not in or below '...'`. The
+  `values.yaml` of the chart, which kustomize loads when the entry sets no
+  `valuesFile`, counts too, so a `helmGlobals.chartHome` outside the
+  kustomization directory fails, unless the entry has `valuesInline` with
+  `valuesMerge: replace`. A directory fails with `'...' must resolve to a
+  file` before the root is checked. With
+  `kustomize.buildOptions` `--load-restrictor LoadRestrictionsNone`, a file
+  outside it loads when it stays inside the repository root. drydock names
+  the paths from the repository root, where kustomize names absolute paths.
+  Earlier drydock releases loaded files outside the kustomization directory
+  under `LoadRestrictionsRootOnly` too.
+- Recorded divergence: kustomize resolves the symlinks of a `helmCharts`
+  values file path before it checks the root (`fsondisk.go:51-81`), so a
+  symlink that resolves inside the kustomization directory loads. drydock
+  fails any symlink component in such a path. The Helm value file loader,
+  the prepared Kustomize workspace, and the render cache input digests all
+  reject symlinks there, and changing them together is a larger change
+  than this parity fix.
+- kustomize accumulates the resources of a kustomization, with the builds
+  of its bases, before it runs its generators (`kusttarget.go:202-235`).
+  So a missing local resource is reported before an error of the
+  `helmCharts` of the same kustomization. drydock reports it with the start
+  of the kustomize text, `accumulating resources: accumulation
+  err='accumulating resources from '<resource>'`.
 - Kustomize Helm `valuesFile` and `additionalValuesFiles` paths are read as
   written, as kustomize reads them. A build environment variable such as
   `$ARGOCD_APP_REVISION_SHORT` in such a path stays literal, because Argo CD

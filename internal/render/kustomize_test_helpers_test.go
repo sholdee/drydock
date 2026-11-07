@@ -73,6 +73,9 @@ apiVersion: v2
 name: `+name+`
 version: `+version+`
 `)
+	// kustomize loads the values.yaml of a chart unless valuesFile names
+	// another file, so a test chart has one.
+	writeFile(t, filepath.Join(chartDir, "values.yaml"), "{}\n")
 	writeFile(t, filepath.Join(chartDir, "templates", "manifest.yaml"), template)
 }
 func writeArchivedTestChart(t *testing.T, outDir, name, version, template string) {
@@ -86,6 +89,10 @@ func writeArchivedTestChart(t *testing.T, outDir, name, version, template string
 		Templates: []*helmchartcommon.File{{
 			Name: "templates/manifest.yaml",
 			Data: []byte(template),
+		}},
+		Raw: []*helmchartcommon.File{{
+			Name: chartv2util.ValuesfileName,
+			Data: []byte("{}\n"),
 		}},
 	}
 	if _, err := chartv2util.Save(chart, outDir); err != nil {

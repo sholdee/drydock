@@ -1,0 +1,9 @@
+# The name ends in Chart.yaml, so the repo-server would pick Helm if
+# helm.enable allowed it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-gates-helm-discovered
+  namespace: parity-source-type-gates
+data:
+  note: rendered as a plain directory

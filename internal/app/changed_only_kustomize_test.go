@@ -302,7 +302,7 @@ func TestWithSelectionOnlyPathsOnlyWalksLocallyRenderedSources(t *testing.T) {
 	}
 	repoMaps := []sourcepkg.RepoMap{{URL: "https://github.com/example/mapped", Path: t.TempDir()}}
 
-	got := withSelectionOnlyPaths(context.Background(), root, repoMaps, selfRepoRefs{}, inputs).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, repoMaps, selfRepoRefs{}, sourceTypeGates{}, inputs).inputs
 
 	owns := map[string]bool{}
 	for _, input := range got {
@@ -344,7 +344,7 @@ func TestWithSelectionOnlyPathsKeysWalksBySourceKustomizeOptions(t *testing.T) {
 		{input("plain", plain), input("component", withComponent)},
 		{input("component", withComponent), input("plain", plain)},
 	} {
-		for _, got := range withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, inputs).inputs {
+		for _, got := range withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, inputs).inputs {
 			wantOwns := got.Application.Name == "component"
 			if owns := slices.Contains(got.Paths, component); owns != wantOwns {
 				t.Errorf("%s owns %s = %v, want %v (walk order %s first)", got.Application.Name, component, owns, wantOwns, inputs[0].Application.Name)

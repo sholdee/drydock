@@ -468,8 +468,8 @@ func TestCommittedExpectedFileMatchesFixtures(t *testing.T) {
 			checkSeparateRepositoryCase(t, repoRoot, tc, string(app))
 			continue
 		}
-		if tc.SourceType() == sourceSpec {
-			checkSpecCase(t, tc, string(app))
+		if tc.namesNoFile() {
+			checkNoFileCase(t, tc, caseDir, string(app))
 			continue
 		}
 		for _, want := range []string{
@@ -489,21 +489,40 @@ func TestCommittedExpectedFileMatchesFixtures(t *testing.T) {
 			}
 			continue
 		}
-		failing, err := os.ReadFile(filepath.Join(fixtureRepo, "workloads", "directory-decode", caseDir, tc.File))
-		if err != nil {
-			t.Fatalf("failing file for %s: %v", tc.Name, err)
-		}
-		if tc.ArgoCDNamesObject != "" && !strings.Contains(string(failing), "name: "+tc.ArgoCDNamesObject+"\n") {
-			t.Fatalf("failing file for %s does not hold the object %q", tc.Name, tc.ArgoCDNamesObject)
-		}
+		checkFailingFile(t, filepath.Join(fixtureRepo, "workloads", "directory-decode", caseDir, tc.File), tc)
 	}
 }
 
-// checkSpecCase checks a spec case: its Application has the case name and
-// namespace. It names no failing file.
-func checkSpecCase(t *testing.T, tc expectedCase, app string) {
+// checkFailingFile checks the failing file of a case at path: it holds the
+// object that the Argo CD message names, or it is missing for a case with
+// fileMissing.
+func checkFailingFile(t *testing.T, path string, tc expectedCase) {
 	t.Helper()
-	for _, want := range []string{"name: " + tc.Name + "\n", "namespace: " + testNamespace + "\n"} {
+	if tc.FileMissing {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("failing file for %s must be missing, Lstat() error = %v", tc.Name, err)
+		}
+		return
+	}
+	failing, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failing file for %s: %v", tc.Name, err)
+	}
+	if tc.ArgoCDNamesObject != "" && !strings.Contains(string(failing), "name: "+tc.ArgoCDNamesObject+"\n") {
+		t.Fatalf("failing file for %s does not hold the object %q", tc.Name, tc.ArgoCDNamesObject)
+	}
+}
+
+// checkNoFileCase checks a spec or render case: its Application has the
+// case name and namespace, and a render case renders its case directory. It
+// names no failing file.
+func checkNoFileCase(t *testing.T, tc expectedCase, caseDir, app string) {
+	t.Helper()
+	wants := []string{"name: " + tc.Name + "\n", "namespace: " + testNamespace + "\n"}
+	if tc.SourceType() == sourceRender {
+		wants = append(wants, "path: workloads/directory-decode/"+caseDir+"\n")
+	}
+	for _, want := range wants {
 		if !strings.Contains(app, want) {
 			t.Fatalf("Application for %s does not contain %q", tc.Name, want)
 		}
@@ -585,5 +604,42 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
+// TestCompareMatchesRenderCase covers a render case: no file is named, and
+// Argo CD must set a ComparisonError, not an InvalidSpecError.
+func TestCompareMatchesRenderCase(t *testing.T) {
+	fixture := newTestFixture(t, `cases:
+  - name: parity-decode-helm-library
+    source: render
+    argocdMessage: library charts are not installable
+    drydockMessage: "library charts are not installable"
+`)
+	const name = "parity-decode-helm-library"
+	fixture.writeApplication(t, testNamespace, name, comparisonError("failed to execute helm template command: Error: library charts are not installable"))
+	fixture.writeDrydock(t, name, 2, "error render.failed: helm template workloads/x: library charts are not installable\n")
+	result, err := compare(fixture.options())
+	if err != nil {
+		t.Fatalf("compare() error = %v", err)
+	}
+	if len(result.Failures) != 0 {
+		t.Fatalf("compare() failures = %v, want none", result.Failures)
+	}
+
+	fixture.writeApplication(t, testNamespace, name,
+		appCondition{Type: invalidSpecErrorType, Message: "library charts are not installable"})
+	result, err = compare(fixture.options())
+	if err != nil {
+		t.Fatalf("compare() error = %v", err)
+	}
+	if len(result.Failures) != 1 || !strings.Contains(result.Failures[0], "no ComparisonError condition") {
+		t.Fatalf("compare() failures = %v, want the missing ComparisonError", result.Failures)
+	}
+
+	path := filepath.Join(t.TempDir(), "expected.yaml")
+	writeFile(t, path, "cases:\n  - name: parity-decode-render-x\n    source: render\n    file: x.yaml\n    argocdMessage: a\n    drydockMessage: b\n")
+	if _, err := readExpected(path); err == nil || !strings.Contains(err.Error(), "has source render and must not name a file") {
+		t.Fatalf("readExpected() error = %v, want the render file rule", err)
 	}
 }

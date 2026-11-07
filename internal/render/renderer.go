@@ -43,19 +43,32 @@ type RenderOptions struct {
 	// v3.6.1). A config management plugin such as argocd-vault-plugin
 	// reads that output through a pipe instead, so the line break stays.
 	// The AVP compatibility plugin paths set it.
-	KeepOutputLineBreak    bool
-	EnableKSOPSCompat      bool
-	EnablePlugins          bool
-	Plugin                 *PluginConfig
-	KubeVersion            string
-	APIVersions            []string
-	BuildOptions           []string
-	Kustomize              *argoappv1.ApplicationSourceKustomize
-	Jsonnet                argoappv1.ApplicationSourceJsonnet
-	ArgoEnv                argoappv1.Env
-	RefRoots               map[string]string
-	RefSources             map[string]ResolvedSource
-	ReleaseName            string
+	KeepOutputLineBreak bool
+	EnableKSOPSCompat   bool
+	EnablePlugins       bool
+	Plugin              *PluginConfig
+	KubeVersion         string
+	APIVersions         []string
+	BuildOptions        []string
+	Kustomize           *argoappv1.ApplicationSourceKustomize
+	Jsonnet             argoappv1.ApplicationSourceJsonnet
+	ArgoEnv             argoappv1.Env
+	RefRoots            map[string]string
+	RefSources          map[string]ResolvedSource
+	ReleaseName         string
+	// HelmSpecError and KustomizeSpecError hold an error in the helm or
+	// kustomize block of the source, such as a kubeVersion that does not
+	// parse. Only the renderer of that tool returns it, so a source that
+	// renders as a plain directory, because argocd-cm turns the tool off,
+	// does not fail on it.
+	HelmSpecError      error
+	KustomizeSpecError error
+	// HelmDefaultNamespace is the namespace that helm uses in the Argo CD
+	// repo-server when no --namespace is given. Empty means "default".
+	HelmDefaultNamespace string
+	// HelmVersion is spec.source.helm.version. Argo CD v3.6.1 accepts "",
+	// "v3", and "v4", and fails the source for any other value.
+	HelmVersion            string
 	ValuesObject           map[string]any
 	ValuesMergeMode        string
 	ValueFiles             []string
@@ -105,6 +118,10 @@ type RenderOptions struct {
 	// disableExtensionFilter: the built-in extension filter is skipped and
 	// every file passing include/exclude is read.
 	DirectoryDisableExtensionFilter bool
+
+	// DirectoryJsonnetDisabled reports that argocd-cm jsonnet.enable turns
+	// Jsonnet off. A directory source then skips its .jsonnet files.
+	DirectoryJsonnetDisabled bool
 
 	// DirectoryMaxCombinedManifestsSize is the repo-server limit on the
 	// combined size of the files of one directory source, in bytes. Zero

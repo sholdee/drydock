@@ -168,24 +168,34 @@ type CommandParameterSetting struct {
 }
 
 type ArgoSettings struct {
-	KustomizeBuildOptions        []Value[string]                   `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
-	HelmRepositories             map[string]RepositorySettings     `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
-	Clusters                     map[string]ClusterSettings        `json:"clusters,omitempty" yaml:"clusters,omitempty"`
-	HelmValuesFileSchemes        []Value[string]                   `json:"helmValuesFileSchemes,omitempty" yaml:"helmValuesFileSchemes,omitempty"`
-	HelmValuesFileSchemesSet     bool                              `json:"helmValuesFileSchemesSet,omitempty" yaml:"helmValuesFileSchemesSet,omitempty"`
-	HelmValuesFileSchemesSource  Provenance                        `json:"helmValuesFileSchemesSource,omitempty" yaml:"helmValuesFileSchemesSource,omitempty"`
-	TrackingMethod               Value[string]                     `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
-	InstanceLabelKey             Value[string]                     `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
-	InstallationID               Value[string]                     `json:"installationID,omitempty" yaml:"installationID,omitempty"`
-	ResourceExclusions           []ResourceFilterRule              `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
-	ResourceInclusions           []ResourceFilterRule              `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
-	ResourceSelectors            []ResourceFilterRule              `json:"resourceSelectors,omitempty" yaml:"resourceSelectors,omitempty"`
-	CompareOptions               ResourceCompareOptions            `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
-	ResourceCustomizations       map[string]ResourceCustomization  `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
-	IgnoreResourceUpdatesEnabled Value[bool]                       `json:"ignoreResourceUpdatesEnabled,omitempty" yaml:"ignoreResourceUpdatesEnabled,omitempty"`
-	InClusterEnabled             Value[bool]                       `json:"inClusterEnabled,omitempty" yaml:"inClusterEnabled,omitempty"`
-	ConfigManagementPlugins      map[string]ConfigManagementPlugin `json:"-" yaml:"-"`
-	CommandParameters            []CommandParameterSetting         `json:"commandParameters,omitempty" yaml:"commandParameters,omitempty"`
+	KustomizeBuildOptions        []Value[string]                  `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
+	HelmRepositories             map[string]RepositorySettings    `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
+	Clusters                     map[string]ClusterSettings       `json:"clusters,omitempty" yaml:"clusters,omitempty"`
+	HelmValuesFileSchemes        []Value[string]                  `json:"helmValuesFileSchemes,omitempty" yaml:"helmValuesFileSchemes,omitempty"`
+	HelmValuesFileSchemesSet     bool                             `json:"helmValuesFileSchemesSet,omitempty" yaml:"helmValuesFileSchemesSet,omitempty"`
+	HelmValuesFileSchemesSource  Provenance                       `json:"helmValuesFileSchemesSource,omitempty" yaml:"helmValuesFileSchemesSource,omitempty"`
+	TrackingMethod               Value[string]                    `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
+	InstanceLabelKey             Value[string]                    `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
+	InstallationID               Value[string]                    `json:"installationID,omitempty" yaml:"installationID,omitempty"`
+	ResourceExclusions           []ResourceFilterRule             `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
+	ResourceInclusions           []ResourceFilterRule             `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
+	ResourceSelectors            []ResourceFilterRule             `json:"resourceSelectors,omitempty" yaml:"resourceSelectors,omitempty"`
+	CompareOptions               ResourceCompareOptions           `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
+	ResourceCustomizations       map[string]ResourceCustomization `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
+	IgnoreResourceUpdatesEnabled Value[bool]                      `json:"ignoreResourceUpdatesEnabled,omitempty" yaml:"ignoreResourceUpdatesEnabled,omitempty"`
+	InClusterEnabled             Value[bool]                      `json:"inClusterEnabled,omitempty" yaml:"inClusterEnabled,omitempty"`
+	// SourceTypeEnable holds the argocd-cm keys helm.enable,
+	// kustomize.enable, and jsonnet.enable that are present, as written.
+	// See SourceTypeEnabled.
+	SourceTypeEnable map[string]Value[string] `json:"sourceTypeEnable,omitempty" yaml:"sourceTypeEnable,omitempty"`
+	// RepoServerHelmNamespace is the namespace that helm uses in the
+	// repo-server of the Argo CD install that drydock finds, rendered or
+	// committed, when no --namespace is given (see RepoServerHelmNamespace).
+	// nil without such an install; HelmNamespace then gives
+	// DefaultHelmNamespace.
+	RepoServerHelmNamespace *Value[string]                    `json:"repoServerHelmNamespace,omitempty" yaml:"repoServerHelmNamespace,omitempty"`
+	ConfigManagementPlugins map[string]ConfigManagementPlugin `json:"-" yaml:"-"`
+	CommandParameters       []CommandParameterSetting         `json:"commandParameters,omitempty" yaml:"commandParameters,omitempty"`
 	// MaxCombinedDirectoryManifestsSize is the argocd-cmd-params-cm key
 	// reposerver.max.combined.directory.manifests.size, a Kubernetes
 	// quantity. Empty means the repo-server default, 10M.

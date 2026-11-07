@@ -57,7 +57,7 @@ func TestRenderInputCoverageHelmFileParameterSymlinks(t *testing.T) {
 func TestWithSelectionOnlyPathsOwnsHelmFileParameterSymlinks(t *testing.T) {
 	root := t.TempDir()
 	application := writeHelmFileParameterSymlinkApp(t, root, true)
-	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}}).inputs
 	for _, changed := range []string{"links/target.txt", "links/file-link.txt", "links/chain.txt", "links/dir-link", "links/real/inner.txt"} {
 		if selected, _ := SelectChangedApplicationInputs(got, []string{changed}); len(selected) != 1 {
 			t.Errorf("change to %s selected %d Applications, want the Helm source (paths %v)", changed, len(selected), got[0].Paths)
@@ -97,7 +97,7 @@ func TestWithSelectionOnlyPathsOwnsOverrideFileInputs(t *testing.T) {
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 		},
 	}
-	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: helmApp}, {Application: kustomizeApp}}).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: helmApp}, {Application: kustomizeApp}}).inputs
 	for changed, want := range map[string]string{
 		"values/extra.yaml":                      "demo",
 		"links/real/inner.txt":                   "demo",
@@ -129,7 +129,7 @@ func TestWithSelectionOnlyPathsOwnsSmokeOverrideFileParameters(t *testing.T) {
 			Destination: argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "parity-helm-file-parameter-symlinks-override"},
 		},
 	}
-	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}}).inputs
 	for _, changed := range []string{"file-parameter-links/targets/message.txt", "file-parameter-links/targets/inner.txt", "file-parameter-links/chain.txt"} {
 		if selected, _ := SelectChangedApplicationInputs(got, []string{changed}); len(selected) != 1 {
 			t.Errorf("change to %s selected %d Applications, want 1 (paths %v)", changed, len(selected), got[0].Paths)
@@ -193,7 +193,7 @@ func TestWithSelectionOnlyPathsReadsTheInstanceNameOverride(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "shared", "bare.txt"), "bare\n")
 	writeTestFile(t, filepath.Join(root, "charts", "demo", ".argocd-source-tenant_demo.yaml"), "helm:\n  fileParameters:\n    - name: chain\n      path: ../../shared/instance.txt\n")
 	writeTestFile(t, filepath.Join(root, "charts", "demo", ".argocd-source-demo.yaml"), "helm:\n  fileParameters:\n    - name: chain\n      path: ../../shared/bare.txt\n")
-	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}}).inputs
 	if selected, _ := SelectChangedApplicationInputs(got, []string{"shared/instance.txt"}); len(selected) != 1 {
 		t.Errorf("change to shared/instance.txt selected %d Applications, want 1 (paths %v)", len(selected), got[0].Paths)
 	}
@@ -210,7 +210,7 @@ func TestWithSelectionOnlyPathsOwnsTheFileHelmReads(t *testing.T) {
 	application := writeHelmFileParameterSymlinkApp(t, root, false)
 	writeTestFile(t, filepath.Join(root, "shared", "ab.txt"), "without-backslash\n")
 	application.Spec.Source.Helm.FileParameters = []argoappv1.HelmFileParameter{{Name: "chain", Path: `../../shared/a\b.txt`}}
-	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}}).inputs
 	if selected, _ := SelectChangedApplicationInputs(got, []string{"shared/ab.txt"}); len(selected) != 1 {
 		t.Errorf("change to shared/ab.txt selected %d Applications, want 1 (paths %v)", len(selected), got[0].Paths)
 	}

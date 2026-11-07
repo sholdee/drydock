@@ -76,7 +76,7 @@ func TestDiscoverLocalSourceTypeMatchesUpstream(t *testing.T) {
 			if upstream != string(testCase.want) {
 				t.Fatalf("discovery.AppType() = %q, want %q; the test case is wrong", upstream, testCase.want)
 			}
-			got, err := discoverLocalSourceType(root)
+			got, err := discoverLocalSourceType(root, sourceTypeGates{})
 			if err != nil {
 				t.Fatalf("discoverLocalSourceType() error = %v", err)
 			}
@@ -105,7 +105,7 @@ func TestSelectLocalRendererPicksHelmForHelmChartFile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	renderer, err := selectLocalRenderer(render.ResolvedSource{RepoRoot: root, Path: "apps/traefik"})
+	renderer, err := selectLocalRenderer(render.ResolvedSource{RepoRoot: root, Path: "apps/traefik"}, sourceTypeGates{})
 	if err != nil {
 		t.Fatalf("selectLocalRenderer() error = %v", err)
 	}

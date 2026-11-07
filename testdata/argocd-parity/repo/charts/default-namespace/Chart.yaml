@@ -1,0 +1,5 @@
+apiVersion: v2
+name: default-namespace
+description: Local Helm chart for the Argo CD parity default release namespace.
+type: application
+version: 0.1.0

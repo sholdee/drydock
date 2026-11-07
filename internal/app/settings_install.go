@@ -296,7 +296,8 @@ func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, l
 	if !local {
 		return ""
 	}
-	sourceType, err := discoverLocalSourceType(filepath.Join(root, filepath.FromSlash(sourcePath)))
+	// The settings are not known yet here, so every tool counts as on.
+	sourceType, err := discoverLocalSourceType(filepath.Join(root, filepath.FromSlash(sourcePath)), sourceTypeGates{})
 	if err != nil {
 		return ""
 	}
@@ -509,11 +510,18 @@ func helmParameterSetsArgoCDSettings(name string) bool {
 func settingsConfigMapManifests(manifests []render.Manifest) []render.Manifest {
 	var out []render.Manifest
 	for _, manifest := range manifests {
-		if manifest.Object != nil && isSettingsConfigMapObject(manifest.Object) {
+		if manifest.Object != nil && (isSettingsConfigMapObject(manifest.Object) || isRepoServerSettingsObject(manifest.Object)) {
 			out = append(out, manifest)
 		}
 	}
 	return out
+}
+
+// isRepoServerSettingsObject reports the repo-server Deployment and
+// ServiceAccount, which decide the namespace that helm uses
+// (config.RepoServerHelmNamespace).
+func isRepoServerSettingsObject(obj *unstructured.Unstructured) bool {
+	return discovery.IsRepoServerObject(obj, "apps", "Deployment") || discovery.IsRepoServerObject(obj, "", "ServiceAccount")
 }
 
 func isSettingsConfigMapObject(obj *unstructured.Unstructured) bool {
@@ -555,12 +563,14 @@ func settingsCandidateNamespace(candidate discovery.SettingsCandidate, destinati
 	return namespace
 }
 
-// settingsConfigMapsInNamespace drops the settings ConfigMaps of result that
-// do not land in namespace. Other settings candidates stay.
+// settingsConfigMapsInNamespace drops the settings ConfigMaps and the
+// repo-server objects of result that do not land in namespace. Other
+// settings candidates stay.
 func settingsConfigMapsInNamespace(result discovery.Result, destinationNamespace, namespace string) discovery.Result {
 	kept := result.SettingsCandidates[:0:0]
 	for _, candidate := range result.SettingsCandidates {
-		if !discovery.IsSettingsConfigMapKind(candidate.Kind) || settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
+		namespaced := discovery.IsSettingsConfigMapKind(candidate.Kind) || discovery.IsRepoServerKind(candidate.Kind)
+		if !namespaced || settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
 			kept = append(kept, candidate)
 		}
 	}
@@ -657,10 +667,41 @@ func supersededBySettingsRender(candidate discovery.SettingsCandidate, inputs se
 	case candidate.Kind == "argocd-values":
 		_, ok := inputs.valuesFiles[candidatePath]
 		return ok
-	case discovery.IsSettingsConfigMapKind(candidate.Kind):
+	case discovery.IsSettingsConfigMapKind(candidate.Kind), discovery.IsRepoServerKind(candidate.Kind):
 		_, ok := inputs.files[candidatePath]
 		return ok
 	default:
 		return false
 	}
+}
+
+// withoutRepoServerCandidates drops the repo-server Deployment and
+// ServiceAccount candidates of result.
+func withoutRepoServerCandidates(result discovery.Result) discovery.Result {
+	kept := result.SettingsCandidates[:0:0]
+	for _, candidate := range result.SettingsCandidates {
+		if !discovery.IsRepoServerKind(candidate.Kind) {
+			kept = append(kept, candidate)
+		}
+	}
+	result.SettingsCandidates = kept
+	return result
+}
+
+// placeRepoServerCandidates gives a rendered repo-server object without a
+// namespace the destination namespace, where Argo CD puts it, and drops the
+// repo-server objects that an Application installs on another cluster: that
+// repo-server runs another Argo CD, which renders other Applications.
+func placeRepoServerCandidates(result discovery.Result, destinationNamespace string, inCluster bool) discovery.Result {
+	if !inCluster {
+		return withoutRepoServerCandidates(result)
+	}
+	for i := range result.SettingsCandidates {
+		candidate := &result.SettingsCandidates[i]
+		if discovery.IsRepoServerKind(candidate.Kind) && candidate.Object != nil && candidate.Object.GetNamespace() == "" && destinationNamespace != "" {
+			candidate.Object.SetNamespace(destinationNamespace)
+			candidate.Namespace = destinationNamespace
+		}
+	}
+	return result
 }

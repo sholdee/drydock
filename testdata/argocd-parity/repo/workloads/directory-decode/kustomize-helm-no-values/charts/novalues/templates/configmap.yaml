@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-decode-kustomize-helm-no-values
+  namespace: parity-directory-decode-workloads
+data:
+  fixture: directory-decode

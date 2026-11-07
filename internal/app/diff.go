@@ -99,6 +99,9 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (result
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
 		return DiffResult{}, err
 	}
+	if err := request.validateKubeVersion(); err != nil {
+		return DiffResult{}, err
+	}
 	if err := validateDiffRenderCacheRoot(request); err != nil {
 		return DiffResult{}, err
 	}
@@ -153,6 +156,9 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (resu
 		return DiffResult{}, err
 	}
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
+		return DiffResult{}, err
+	}
+	if err := request.validateKubeVersion(); err != nil {
 		return DiffResult{}, err
 	}
 	if err := validateDiffRenderCacheRoot(request.DiffRequest); err != nil {
@@ -253,6 +259,9 @@ func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (resu
 		return ImageDiffResult{}, err
 	}
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
+		return ImageDiffResult{}, err
+	}
+	if err := request.validateKubeVersion(); err != nil {
 		return ImageDiffResult{}, err
 	}
 	if err := validateDiffRenderCacheRoot(request); err != nil {

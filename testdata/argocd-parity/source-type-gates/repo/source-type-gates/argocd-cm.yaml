@@ -1,0 +1,13 @@
+# The smoke sets the same keys on the live argocd-cm before it applies
+# applications.yaml (SOURCE_TYPE_GATES_SETTINGS in
+# scripts/argocd-parity-smoke.sh). Argo CD keeps a tool on only for the
+# exact value "true", so "True" turns Kustomize off.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  helm.enable: "false"
+  kustomize.enable: "True"
+  jsonnet.enable: "no"

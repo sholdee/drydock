@@ -35,6 +35,9 @@ func newBuildSession(orchestrator Orchestrator, request BuildRequest) (*buildSes
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
 		return nil, err
 	}
+	if err := request.validateKubeVersion(); err != nil {
+		return nil, err
+	}
 	return &buildSession{
 		orchestrator:  orchestrator,
 		request:       request,

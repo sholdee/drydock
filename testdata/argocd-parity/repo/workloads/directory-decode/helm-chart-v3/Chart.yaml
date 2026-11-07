@@ -1,0 +1,6 @@
+# helm v4.3.1 loads a chart of apiVersion v3, and helm template then
+# fails on it.
+apiVersion: v3
+name: helm-chart-v3
+description: Local Helm chart for an Argo CD parity render failure.
+version: 0.1.0

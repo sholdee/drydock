@@ -3,7 +3,9 @@ package discovery
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -92,6 +94,9 @@ type SettingsCandidate struct {
 	// replaced by it. Only rendered candidates set them.
 	RenderValuesFiles []string
 	RenderFiles       []string
+	// Origin is the key of the Application whose render produced the
+	// candidate. It is empty for a committed file.
+	Origin string
 }
 
 // IsSettingsConfigMapKind reports whether kind is the candidate kind of an
@@ -290,9 +295,42 @@ func settingsCandidateKind(obj *unstructured.Unstructured) (string, bool) {
 		return "cluster-secret", true
 	case isArgoHelmValuesSettings(obj):
 		return "argocd-values", true
+	case IsRepoServerObject(obj, "apps", "Deployment"):
+		return RepoServerDeploymentKind, true
+	case IsRepoServerObject(obj, "", "ServiceAccount"):
+		return RepoServerServiceAccountKind, true
 	default:
 		return "", false
 	}
+}
+
+// The candidate kinds of the Argo CD repo-server Deployment and its
+// ServiceAccount. They decide the namespace that helm uses when Argo CD or
+// kustomize passes no --namespace (see config.RepoServerHelmNamespace).
+const (
+	RepoServerDeploymentKind     = "argocd-repo-server"
+	RepoServerServiceAccountKind = "argocd-repo-server-serviceaccount"
+)
+
+// IsRepoServerKind reports whether kind is a repo-server candidate kind.
+func IsRepoServerKind(kind string) bool {
+	return kind == RepoServerDeploymentKind || kind == RepoServerServiceAccountKind
+}
+
+// IsRepoServerObject reports whether obj is the Argo CD repo-server object
+// of the given group and kind: the upstream install names it
+// argocd-repo-server, and the argo-cd Helm chart labels it with the
+// repo-server component of argocd.
+func IsRepoServerObject(obj *unstructured.Unstructured, group, kind string) bool {
+	gvk := obj.GroupVersionKind()
+	if gvk.Group != group || gvk.Version != "v1" || gvk.Kind != kind {
+		return false
+	}
+	if obj.GetName() == "argocd-repo-server" {
+		return true
+	}
+	labels := obj.GetLabels()
+	return labels["app.kubernetes.io/component"] == "repo-server" && labels["app.kubernetes.io/part-of"] == "argocd"
 }
 
 func settingsCandidate(rel string, documentIndex int, kind string, obj *unstructured.Unstructured, includeObject bool) SettingsCandidate {
@@ -307,7 +345,9 @@ func settingsCandidate(rel string, documentIndex int, kind string, obj *unstruct
 	candidate.APIVersion = obj.GetAPIVersion()
 	candidate.Namespace = obj.GetNamespace()
 	candidate.Name = obj.GetName()
-	if includeObject {
+	// A repo-server object is kept also from a committed file: drydock has
+	// no loader that reads it back by path, and the sanitized copy is small.
+	if includeObject || IsRepoServerKind(kind) {
 		candidate.Object = settingsCandidateObject(kind, obj)
 	}
 	return candidate
@@ -319,6 +359,10 @@ func settingsCandidateObject(kind string, obj *unstructured.Unstructured) *unstr
 		return sanitizedSecretObject(obj, []string{"name", "type", "url", "enableOCI", "project"})
 	case "cluster-secret":
 		return sanitizedSecretObject(obj, []string{"name", "server", "namespaces", "clusterResources", "project"})
+	case RepoServerDeploymentKind:
+		return sanitizedRepoServerDeployment(obj)
+	case RepoServerServiceAccountKind:
+		return sanitizedRepoServerServiceAccount(obj)
 	default:
 		return obj.DeepCopy()
 	}
@@ -534,4 +578,194 @@ func unstructuredToTyped(in map[string]any, out any) error {
 		return err
 	}
 	return json.Unmarshal(data, out)
+}
+
+// repoServerNamespaceEnv are the container environment variables that decide
+// the namespace helm uses: HELM_NAMESPACE (helm EnvSettings), POD_NAMESPACE
+// (client-go in-cluster config), and KUBECONFIG.
+var repoServerNamespaceEnv = map[string]struct{}{
+	"HELM_NAMESPACE":   {},
+	"HELM_KUBECONTEXT": {},
+	"POD_NAMESPACE":    {},
+	"KUBECONFIG":       {},
+}
+
+// sanitizedRepoServerDeployment keeps only the fields of a repo-server
+// Deployment that decide the namespace helm uses, so no other environment
+// value of the install is kept: the metadata, the pod
+// automountServiceAccountToken and serviceAccountName, and per container
+// its name, the volume mount paths, and the env entries in
+// repoServerNamespaceEnv.
+func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured.Unstructured {
+	out := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": obj.GetAPIVersion(),
+		"kind":       obj.GetKind(),
+	}}
+	out.SetName(obj.GetName())
+	out.SetNamespace(obj.GetNamespace())
+	out.SetLabels(obj.GetLabels())
+	podSpec, _, _ := unstructured.NestedMap(obj.Object, "spec", "template", "spec")
+	keptSpec := map[string]any{}
+	for _, key := range []string{"automountServiceAccountToken", "serviceAccountName", "serviceAccount"} {
+		if value, ok := podSpec[key]; ok {
+			keptSpec[key] = value
+		}
+	}
+	containers, _, _ := unstructured.NestedSlice(podSpec, "containers")
+	keptContainers := make([]any, 0, len(containers))
+	for _, item := range containers {
+		container, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		kept := map[string]any{"name": container["name"]}
+		var env []any
+		envItems, _ := container["env"].([]any)
+		for _, envItem := range envItems {
+			entry, ok := envItem.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := entry["name"].(string)
+			if _, ok := repoServerNamespaceEnv[name]; ok {
+				env = append(env, sanitizedRepoServerEnv(name, entry))
+			}
+		}
+		if len(env) > 0 {
+			kept["env"] = env
+		}
+		if envFrom, ok := container["envFrom"].([]any); ok && len(envFrom) > 0 {
+			kept[config.RepoServerEnvFromKey] = true
+		}
+		var mounts []any
+		mountItems, _ := container["volumeMounts"].([]any)
+		for _, mountItem := range mountItems {
+			if mount, ok := mountItem.(map[string]any); ok {
+				mounts = append(mounts, map[string]any{"name": mount["name"], "mountPath": mount["mountPath"]})
+			}
+		}
+		if len(mounts) > 0 {
+			kept["volumeMounts"] = mounts
+		}
+		keptContainers = append(keptContainers, kept)
+	}
+	keptSpec["containers"] = keptContainers
+	if volumes := sanitizedRepoServerVolumes(podSpec); len(volumes) > 0 {
+		keptSpec["volumes"] = volumes
+	}
+	_ = unstructured.SetNestedMap(out.Object, map[string]any{"spec": keptSpec}, "spec", "template")
+	return out
+}
+
+// sanitizedRepoServerVolumes keeps, for each volume of the pod, only its
+// name and whether it holds a file named token and a file named namespace
+// (config.RepoServerTokenFileKey and config.RepoServerNamespaceFileKey).
+// client-go needs the token for the in-cluster config and reads the
+// namespace file next to it. A Secret volume without items holds every key
+// of the Secret; a service account token Secret holds both files, so it
+// counts for both. With items, and for the secret, configMap, and
+// downwardAPI sources of a projected volume, a file counts only when an
+// item has its path, and a serviceAccountToken source gives the token at
+// its path. drydock keeps no value and no object name.
+func sanitizedRepoServerVolumes(podSpec map[string]any) []any {
+	items, _ := podSpec["volumes"].([]any)
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		volume, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		files := map[string]bool{}
+		if secret, ok := volume["secret"].(map[string]any); ok {
+			paths, listed := itemPaths(secret)
+			if !listed {
+				files["token"], files["namespace"] = true, true
+			}
+			maps.Copy(files, paths)
+		}
+		sources, _, _ := unstructured.NestedSlice(volume, "projected", "sources")
+		for _, sourceItem := range sources {
+			source, _ := sourceItem.(map[string]any)
+			if token, ok := source["serviceAccountToken"].(map[string]any); ok {
+				if tokenPath, _ := token["path"].(string); tokenPath != "" {
+					files[tokenPath] = true
+				}
+			}
+			for _, kind := range []string{"secret", "configMap", "downwardAPI"} {
+				if projection, ok := source[kind].(map[string]any); ok {
+					paths, _ := itemPaths(projection)
+					maps.Copy(files, paths)
+				}
+			}
+		}
+		out = append(out, map[string]any{
+			"name":                            volume["name"],
+			config.RepoServerTokenFileKey:     files["token"],
+			config.RepoServerNamespaceFileKey: files["namespace"],
+		})
+	}
+	return out
+}
+
+// itemPaths returns the file paths that the items of a volume source
+// project, and whether the source lists items.
+func itemPaths(source map[string]any) (map[string]bool, bool) {
+	items, ok := source["items"].([]any)
+	if !ok {
+		return nil, false
+	}
+	paths := map[string]bool{}
+	for _, item := range items {
+		if entry, ok := item.(map[string]any); ok {
+			if itemPath, _ := entry["path"].(string); itemPath != "" {
+				paths[path.Clean(itemPath)] = true
+			}
+		}
+	}
+	return paths, true
+}
+
+// sanitizedRepoServerServiceAccount keeps only the fields of a repo-server
+// ServiceAccount that decide whether its token is mounted.
+func sanitizedRepoServerServiceAccount(obj *unstructured.Unstructured) *unstructured.Unstructured {
+	out := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": obj.GetAPIVersion(),
+		"kind":       obj.GetKind(),
+	}}
+	out.SetName(obj.GetName())
+	out.SetNamespace(obj.GetNamespace())
+	out.SetLabels(obj.GetLabels())
+	if automount, ok := obj.Object["automountServiceAccountToken"].(bool); ok {
+		out.Object["automountServiceAccountToken"] = automount
+	}
+	return out
+}
+
+// sanitizedRepoServerEnv keeps an env entry that decides the namespace only
+// when drydock knows its value: a literal value without a $(VAR) reference,
+// or the pod namespace through the downward API. For any other source it
+// keeps only the kind of the source (config.RepoServerUnknownSourceKey),
+// never the value or the name of the object that holds it.
+func sanitizedRepoServerEnv(name string, entry map[string]any) map[string]any {
+	if value, ok := entry["value"].(string); ok {
+		if strings.Contains(value, "$(") {
+			return map[string]any{"name": name, config.RepoServerUnknownSourceKey: "a $(VAR) reference"}
+		}
+		return map[string]any{"name": name, "value": value}
+	}
+	valueFrom, ok := entry["valueFrom"].(map[string]any)
+	if !ok {
+		return map[string]any{"name": name}
+	}
+	if fieldPath, _, _ := unstructured.NestedString(valueFrom, "fieldRef", "fieldPath"); fieldPath == "metadata.namespace" {
+		return map[string]any{"name": name, "valueFrom": map[string]any{"fieldRef": map[string]any{"fieldPath": "metadata.namespace"}}}
+	}
+	source := "valueFrom"
+	for _, kind := range []string{"configMapKeyRef", "secretKeyRef", "fieldRef", "resourceFieldRef", "fileKeyRef"} {
+		if _, ok := valueFrom[kind]; ok {
+			source = "valueFrom " + kind
+			break
+		}
+	}
+	return map[string]any{"name": name, config.RepoServerUnknownSourceKey: source}
 }

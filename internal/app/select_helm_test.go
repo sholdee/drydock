@@ -93,7 +93,7 @@ func TestWithSelectionOnlyPathsOwnsLocalHelmInputs(t *testing.T) {
 	}
 	repoMaps := []sourcepkg.RepoMap{{URL: "https://github.com/example/mapped", Path: t.TempDir()}}
 
-	got := withSelectionOnlyPaths(context.Background(), root, repoMaps, selfRepoRefs{}, inputs).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, repoMaps, selfRepoRefs{}, sourceTypeGates{}, inputs).inputs
 
 	for _, input := range got {
 		wantOwns := input.Application.Name == "local"
@@ -336,7 +336,7 @@ func TestWithSelectionOnlyPathsOwnsLocalRefInputs(t *testing.T) {
 				Application: argoappv1.Application{Name: "web", Spec: argoappv1.ApplicationSpec{Sources: tc.sources}},
 				Paths:       []string{"apps/web.yaml"},
 			}
-			got := withSelectionOnlyPaths(context.Background(), root, repoMaps, selfRepo, []ApplicationSelectionInput{input}).inputs
+			got := withSelectionOnlyPaths(context.Background(), root, repoMaps, selfRepo, sourceTypeGates{}, []ApplicationSelectionInput{input}).inputs
 			if added := got[0].Paths[len(input.Paths):]; !slices.Equal(added, tc.want) {
 				t.Fatalf("selection-only paths = %v, want %v", added, tc.want)
 			}

@@ -191,6 +191,7 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 		argoNamespace = defaultArgoCDControllerNamespace
 	}
 	destinationNamespace := application.Spec.Destination.Namespace
+	result = placeRepoServerCandidates(result, destinationNamespace, inCluster)
 	if !hasSettingsConfigMapCandidate(result) || !inCluster {
 		return result, diags, nil
 	}
@@ -227,6 +228,9 @@ func scanRenderedApplicationObjects(parent argoappv1.Application, parentInputs [
 		}
 		markDiscoveryTier(&next, discovery.SourceTierRenderedFleet, renderedInputPaths(parentInputs, renderedManifest))
 		markRenderedOrigin(&next, applicationKey(parent), "")
+		for i := range next.SettingsCandidates {
+			next.SettingsCandidates[i].Origin = applicationKey(parent)
+		}
 		var mergeDiags []diagnostic.Diagnostic
 		out, mergeDiags = mergeDiscoveryResultsWithDiagnostics(out, next)
 		allDiags = append(allDiags, mergeDiags...)

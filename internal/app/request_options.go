@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/sholdee/drydock/internal/appset"
@@ -97,7 +98,8 @@ type TrackingOptions struct {
 }
 
 // CapabilityOptions overrides Kubernetes capabilities for rendering so output
-// matches a target cluster. KubeVersion (when set) overrides per-app kubeVersion;
+// matches a target cluster. KubeVersion stands for the cluster version, so a
+// per-app kubeVersion wins over it, as in Argo CD;
 // APIVersions are unioned (deduped, sorted) with per-app apiVersions.
 type CapabilityOptions struct {
 	KubeVersion string
@@ -121,4 +123,14 @@ type ExecutionOptions struct {
 // --no-crd-scope escape hatch for safety-revert and perf A/B testing.
 type CRDScopeOptions struct {
 	Disabled bool
+}
+
+// validateKubeVersion checks --kube-version once per run. A per-app kubeVersion wins
+// over it, so the render alone would check it only for Applications
+// without one.
+func (capabilities CapabilityOptions) validateKubeVersion() error {
+	if _, err := parseKubeVersion(capabilities.KubeVersion); err != nil {
+		return fmt.Errorf("--kube-version: %w", err)
+	}
+	return nil
 }
