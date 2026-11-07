@@ -121,6 +121,59 @@ Supported:
   installs Argo CD (see "Settings from the rendered Argo CD install"). An
   Application whose source renders the same path is not rendered again for
   its settings, because the `--discover-kustomize` render is that install.
+- The source checks of the Argo CD v3.6.1 controller
+  (`ValidatePermissions`, `util/argo/argo.go:644-737`). A single source needs
+  `repoURL` and `path` or `chart`. A multi-source entry needs `repoURL` and
+  one of `path`, `chart`, and `ref`. A `chart` needs `targetRevision`. An
+  `oci://` source follows the same rules. If a check fails, Argo CD sets an
+  `InvalidSpecError` condition and skips the comparison, so the Application
+  renders nothing. drydock fails the render with the same text. Earlier
+  drydock releases rendered nothing for such an Application and passed it.
+- `spec.sourceHydrator`. Argo CD compares such an Application against its
+  sync source only: `syncSource.path` at `syncSource.targetBranch`, in
+  `syncSource.repoURL` or else in the dry source repository
+  (`ApplicationSpec.GetSources`). It ignores `spec.source` and
+  `spec.sources`. drydock renders the same sync source through the normal
+  source acquisition. A branch that names the local checkout renders from
+  it, and any other branch comes from the Git cache or a fetch. drydock
+  cannot run the hydrator offline. So a change to the dry source shows only
+  after the hydrator commits it to the sync branch. Each such Application
+  gets the `source.hydrator-sync-source` warning, which `--strict` does not
+  fail on, because the render is the one that Argo CD compares. The hydrator
+  checks of the controller apply: `drySource.repoURL`,
+  `syncSource.targetBranch`, and `hydrateTo.targetBranch` when `hydrateTo` is
+  set. The AppProject must permit the dry source repository, and the sync
+  source repository when it is another one. Earlier drydock releases
+  ignored the hydrator and rendered `spec.source`, or nothing.
+- An empty `spec.project` is the `default` project, as in Argo CD
+  (`ApplicationSpec.GetProject`). drydock sets `ARGOCD_APP_PROJECT_NAME` to
+  `default`, validates against the `default` AppProject, and prints
+  `default` in `get apps` and in the Go API. The Argo CD controller writes
+  `default` back into the Application. Earlier drydock releases used the
+  empty string in `ARGOCD_APP_PROJECT_NAME` and in the output.
+- `argocd-cmd-params-cm` `application.namespaces` and
+  `applicationsetcontroller.namespaces`. The Argo CD v3.6.1 controllers
+  reconcile an Application or an ApplicationSet only in the Argo CD
+  namespace or in a namespace that the list matches
+  (`isAppNamespaceAllowed`, `controller/appcontroller.go:2852-2854`, and
+  `ignoreNotAllowedNamespaces`,
+  `applicationset/controllers/applicationset_controller.go:676-680`). Each
+  entry is a glob, or a regular expression when slashes wrap it
+  (`glob.MatchStringInList` with `glob.REGEXP`). Argo CD sets no status on
+  an object outside these namespaces, and its API server refuses it. drydock
+  skips such an object with the `discovery.namespace-not-enabled` warning.
+  It also skips the Applications that a skipped ApplicationSet would
+  generate, and the Applications and ApplicationSets that a skipped
+  Application would render. `--strict` does not fail on the warning. drydock
+  applies the lists only when it reads an `argocd-cmd-params-cm`, committed
+  or rendered. Without one, it cannot tell how the cluster sets them, and it
+  keeps every object, as earlier releases did. The Argo CD namespace is the
+  `metadata.namespace` of that ConfigMap. When the ConfigMap names none,
+  drydock assumes `argocd`. An object without a namespace is in the Argo CD
+  namespace. drydock does not read the controller Deployments, so it does
+  not see a list that the Argo CD Helm chart sets only through
+  `controller.extraArgs`, `applicationSet.extraArgs`, or extra environment
+  variables.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
 - The Argo CD v3.6.1 OCI ApplicationSet generator (`generators[].oci`),
@@ -354,11 +407,11 @@ Important boundaries:
   where Argo CD's `IsOCI` is an exact lowercase prefix check — a widening
   that only adds classification and never re-routes a URL Argo CD treats as
   OCI. A single-source `oci://` Application with neither `path:` nor
-  `chart:` is an invalid spec upstream (`InvalidSpecError`) but renders the
-  artifact root in drydock. The schemeless Helm-OCI chart flow resolves
-  exact chart versions only, where the repo-server also resolves semver
-  constraints against the registry tag list. The last two are recorded
-  follow-ups.
+  `chart:` is an invalid spec upstream (`InvalidSpecError`), and drydock
+  fails it the same way. Earlier drydock releases rendered the artifact
+  root. The schemeless Helm-OCI chart flow resolves exact chart versions
+  only, where the repo-server also resolves semver constraints against the
+  registry tag list. That is a recorded follow-up.
 - `$ref` value-file sources are Git-only, matching upstream: an OCI `$ref`
   source fails with a clear error.
 - Private OCI registries are supported for OCI artifact sources through
@@ -461,6 +514,20 @@ Supported:
   (`<namespace>_<name>` for Applications outside the controller namespace;
   drydock assumes the Argo CD controller namespace is `argocd`) and
   `ARGOCD_APP_NAMESPACE` is `spec.destination.namespace`.
+- Source type detection as in the Argo CD v3.6.1 repo-server
+  (`discovery.Discover`, `util/app/discovery/discovery.go:50-70`) for a
+  source without an explicit type. Argo CD reads the file names directly in
+  the source directory in name order. Any name that ends in `Chart.yaml`
+  marks a Helm chart, for example `traefik-HelmChart.yaml`. A kustomization
+  file name marks Kustomize. The last match wins. So `Chart.yaml` before
+  `kustomization.yaml` gives Kustomize, and `kustomization.yaml` before
+  `traefik-HelmChart.yaml` gives Helm. A directory never matches, and a
+  symlink counts by its own name. Without a match, the source is a
+  directory. Helm then fails on a directory that has no `Chart.yaml`, as in
+  Argo CD. drydock does not read the `argocd-cm` keys that turn a source
+  type off (`helm.enabled`, `kustomize.enabled`, `jsonnet.enabled`). Earlier
+  drydock releases checked for a kustomization file first and then for
+  `Chart.yaml` only.
 - Helm `parameters` and `fileParameters` applied the way Argo CD's
   `helm template` call applies them: every `--set`, then every `--set-string`
   (`forceString: true`), then every `--set-file`, keeping only the last entry
@@ -1364,8 +1431,9 @@ Supported:
 
   drydock merges the `.argocd-source.yaml` and `.argocd-source-<app>.yaml`
   overrides of a local source first, as Argo CD does. Then it picks the
-  source type as Argo CD does: the explicit type, else Kustomize for a
-  kustomization file, else Helm for a chart. So a source with an explicit
+  source type as Argo CD does: the explicit type, else the type that the
+  file names in the source directory give (see the source type detection
+  above). So a source with an explicit
   `directory` or `plugin` type is not a Helm install. A remote value file
   has no local file. drydock finds these files before it renders, with the
   resolution helpers of the renderer. It does not record the files during
@@ -1698,7 +1766,10 @@ Supported:
   settings are parsed as metadata and do not mutate render behavior, except
   `reposerver.max.combined.directory.manifests.size` (see the directory
   size limit above) and `reposerver.allow.oob.symlinks` (see the
-  out-of-bounds symlink check above). drydock also applies
+  out-of-bounds symlink check above). `application.namespaces` and
+  `applicationsetcontroller.namespaces` decide which Applications and
+  ApplicationSets drydock discovers (see "Applications And
+  ApplicationSets"). drydock also applies
   `controller.ignore.normalizer.jq.timeout` to diffs: it limits how long one
   jq ignore-rule deletion may run. drydock parses it as the Argo CD v3.6.1
   controller parses `ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT` with

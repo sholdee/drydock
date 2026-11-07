@@ -66,6 +66,25 @@ Template render errors are scoped to the failing ApplicationSet as warning
 diagnostics, and that ApplicationSet contributes zero generated Applications,
 matching the Argo CD controller's `ErrorOccurred` condition behavior.
 
+drydock checks the sources of each Application as the Argo CD controller
+does. A single source needs `path` or `chart`, a multi-source entry needs
+`path`, `chart`, or `ref`, and a `chart` needs `targetRevision`. If a check
+fails, Argo CD sets an `InvalidSpecError` condition and renders nothing, and
+drydock fails the Application with the same text. An empty `spec.project`
+is the `default` project.
+
+For an Application with `spec.sourceHydrator`, drydock renders the sync
+source (`syncSource.path` at `syncSource.targetBranch`), because that is
+what Argo CD compares. drydock cannot run the hydrator offline, so it warns
+`source.hydrator-sync-source`: a change to the dry source shows only after
+the hydrator commits it.
+
+When drydock reads an `argocd-cmd-params-cm`, it applies
+`application.namespaces` and `applicationsetcontroller.namespaces`. Argo CD
+never reconciles an Application or an ApplicationSet outside those
+namespaces and the Argo CD namespace, so drydock skips it with the
+`discovery.namespace-not-enabled` warning.
+
 See [ApplicationSet support](/docs/applicationsets/) and
 [repository topologies](/concepts/topologies/).
 
@@ -89,6 +108,12 @@ not the top of a Git repository, drydock cannot tell the commit and keeps
 the spec `targetRevision`. A source that renders the local tree reports the
 local commit, which differs from the commit that Argo CD sees after a push
 or a merge.
+
+For a source without an explicit type, drydock picks the type as the Argo
+CD repo-server does. The last file name in the source directory, in name
+order, that ends in `Chart.yaml` or is a kustomization file decides it. So
+a Kustomize directory that also holds `traefik-HelmChart.yaml` renders as a
+Helm chart.
 
 Rendering intentionally does not call live Argo CD, Kubernetes, `kubectl`,
 `argocd`, Helm CLI, or Kustomize CLI. That keeps local and CI analysis fast,
