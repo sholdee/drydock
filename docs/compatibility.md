@@ -1869,14 +1869,16 @@ Supported:
   `..`, such as `mid` in `../../mid/../components/*`, is owned too: the
   glob finds no match when that element is missing or a file, so a change
   that adds or deletes it selects the source.
-- Recorded divergence from Argo CD v3.6.1: Argo CD fails a Kustomize
-  source whose `kustomize.version` is not registered in `argocd-cm` with
-  `kustomize.version.<version>` or `kustomize.path.<version>` (`kustomize
-  version <version> is not registered`, `util/settings/settings.go:
-  300-321`). drydock does not check the registration. It renders with its
-  own kustomize and reports a warning for the version. drydock can run
-  without the `argocd-cm` of the cluster, and a registered version also
-  selects `kustomize.buildOptions.<version>`, which drydock does not read.
+- A Kustomize source whose `kustomize.version` names no
+  `kustomize.version.<version>` or `kustomize.path.<version>` key in a
+  found `argocd-cm` fails with `error getting kustomize binary path:
+  kustomize version <version> is not registered`, as in Argo CD v3.6.1
+  (`GetKustomizeBinaryPath`, `util/settings/settings.go:300-321`). Without
+  an `argocd-cm`, drydock accepts every version. drydock renders a
+  registered version with its embedded kustomize v5.8.3 and warns that it
+  does not run the registered binary. A registered version does not select
+  `kustomize.buildOptions.<version>`, in Argo CD either (see the
+  `kustomize.buildOptions.<name>` entry under settings).
 - Remote Kustomize refs in `resources`, `bases`, `components`,
   `patches.path`, `patchesJson6902.path`, non-inline
   `patchesStrategicMerge`, `generators`, `transformers`, `validators`,
