@@ -110,7 +110,12 @@ Supported:
   metadata of its parent that Argo CD sets. Under label tracking, it has the
   instance label with the parent name and no `argocd.argoproj.io/tracking-id`
   annotation. `-l` selects on these labels. Earlier drydock releases always
-  used annotation tracking for this render.
+  used annotation tracking for this render. The fleet frontier skips a
+  local source whose directory the repository scan already read, because
+  its render adds no object. It still renders such a directory when it
+  holds a `Chart.yaml`, or a file that the source type detection reads as a
+  Helm chart, such as `traefik-HelmChart.yaml`, because chart templates can
+  declare objects that the scan cannot see.
 - Explicit `--discover-kustomize PATH` discovery from rendered local
   Kustomize entrypoints. Explicitly rendered Kustomize objects take precedence
   over committed duplicates because the path is the operator-selected Argo CD
@@ -121,6 +126,102 @@ Supported:
   installs Argo CD (see "Settings from the rendered Argo CD install"). An
   Application whose source renders the same path is not rendered again for
   its settings, because the `--discover-kustomize` render is that install.
+- The source checks of the Argo CD v3.6.1 controller
+  (`ValidatePermissions`, `util/argo/argo.go:644-737`). A single source needs
+  `repoURL` and `path` or `chart`. A multi-source entry needs `repoURL` and
+  one of `path`, `chart`, and `ref`. A `chart` needs `targetRevision`. An
+  `oci://` source follows the same rules. If a check fails, Argo CD sets an
+  `InvalidSpecError` condition and skips the comparison, so the Application
+  renders nothing. drydock fails the render with the same text. Earlier
+  drydock releases rendered nothing for such an Application and passed it.
+  After a failed check, Argo CD also skips the AppProject checks that
+  follow. In a multi-source Application, it still checks the repositories
+  of the sources before the failing one. drydock reports the same project
+  warnings in the same order.
+- `spec.sourceHydrator`. Argo CD compares such an Application against its
+  sync source only: `syncSource.path` at `syncSource.targetBranch`, in
+  `syncSource.repoURL` or else in the dry source repository
+  (`ApplicationSpec.GetSources`). It ignores `spec.source` and
+  `spec.sources`. drydock reads the sync source at `syncSource.targetBranch`.
+  It never uses the local tree only because the sync path exists there,
+  because the dry and the sync source often share a path:
+
+  - The repository under analysis renders from the tree of this side only
+    when the branch passes the self-repo revision match: `HEAD`, a `--ref`
+    or `--ref-orig` name, or the default branch that the remote `HEAD`
+    symref names. This rule is stricter than the rule for other sources of
+    that repository, which also render from the tree when their path exists
+    there. A `targetBranch` equal to the default branch renders the working
+    tree, even when another branch is checked out. Each side of a diff reads
+    its own tree, so a change to the hydrated path shows in the diff. drydock
+    finds the repository by its remote, or by a `--repo-map` to the tree
+    under analysis. A `--ref` diff rewrites such a map to each side's
+    snapshot. A self map behaves as if there were no map: a branch that the
+    match does not track comes from the Git cache or a fetch.
+  - A `--repo-map` to another Git repository renders as it is when it has
+    that branch checked out. When another branch is checked out there,
+    drydock renders a snapshot of the branch, or of `origin/<branch>`. A
+    `--repo-map` to a directory that is no Git repository fails, because
+    drydock cannot read the branch from it.
+  - Changed-only selection owns the sync path only when the render reads
+    the tree under analysis, in the first case.
+  - Any other sync source comes from the Git cache or a fetch, and
+    `--offline` fails on a cache miss.
+
+  drydock cannot run the hydrator offline. So a change to the dry source
+  shows only after the hydrator commits it to the sync branch. Each such
+  Application gets the `source.hydrator-sync-source` warning, which
+  `--strict` does not fail on, because the render is the one that Argo CD
+  compares. The hydrator checks of the controller apply:
+  `drySource.repoURL`, `syncSource.targetBranch`, and
+  `hydrateTo.targetBranch` when `hydrateTo` is set. The CRD schema of
+  `syncSource.path` applies too: the API server rejects an empty path, `.`,
+  and `/`, so Argo CD never holds such an Application, and drydock fails it
+  with the API server message. The AppProject must permit the dry source
+  repository, and the sync source repository when it is another one. The
+  repository metadata checks cover both repositories. `get apps` prints the
+  sync source. drydock does not read Argo CD settings values files through
+  a hydrator Application, because its sync branch is usually not the local
+  tree. Earlier drydock releases ignored the hydrator and rendered
+  `spec.source`, or nothing.
+- An empty `spec.project` is the `default` project, as in Argo CD
+  (`ApplicationSpec.GetProject`). drydock sets `ARGOCD_APP_PROJECT_NAME` to
+  `default`, validates against the `default` AppProject, and prints
+  `default` in `get apps` and in the Go API. The Argo CD controller writes
+  `default` back into the Application. Earlier drydock releases used the
+  empty string in `ARGOCD_APP_PROJECT_NAME` and in the output. The
+  ApplicationSet controller does not default an empty project. It looks the
+  AppProject up by the empty name, finds nothing, and does not create that
+  Application (`applicationset_controller.go:627-631`). drydock drops it
+  with the `appset.application-validation-failed` warning.
+- `argocd-cmd-params-cm` `application.namespaces` and
+  `applicationsetcontroller.namespaces`. The Argo CD v3.6.1 controllers
+  reconcile an Application or an ApplicationSet only in the Argo CD
+  namespace or in a namespace that the list matches
+  (`isAppNamespaceAllowed`, `controller/appcontroller.go:2852-2854`, and
+  `ignoreNotAllowedNamespaces`,
+  `applicationset/controllers/applicationset_controller.go:676-680`). Each
+  entry is a glob, or a regular expression when slashes wrap it
+  (`glob.MatchStringInList` with `glob.REGEXP`). Argo CD sets no status on
+  an object outside these namespaces, and its API server refuses it. drydock
+  skips such an object with the `discovery.namespace-not-enabled` warning.
+  It also skips the Applications that a skipped ApplicationSet would
+  generate, and the Applications and ApplicationSets that a skipped
+  Application would render. It follows only these links, never the file or
+  the document that an object came from. `--strict` does not fail on the
+  warning. drydock applies the lists only when it reads an
+  `argocd-cmd-params-cm`, committed or rendered, that names its
+  `metadata.namespace`. That namespace is the Argo CD namespace. Without
+  such a ConfigMap, drydock cannot tell how the cluster sets the lists or
+  where the controllers run, and it keeps every object, as earlier releases
+  did. A committed ConfigMap often names no namespace because a
+  kustomization sets it. An object without a namespace is in the Argo CD
+  namespace. Project validation resolves the Argo CD namespace with the
+  same rule: the `argocd-cmd-params-cm` namespace, else the AppProject
+  namespace, else `argocd`. drydock does not read the controller Deployments, so it does
+  not see a list that the Argo CD Helm chart sets only through
+  `controller.extraArgs`, `applicationSet.extraArgs`, or extra environment
+  variables.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
 - The Argo CD v3.6.1 OCI ApplicationSet generator (`generators[].oci`),
@@ -227,7 +328,16 @@ Supported:
   `appset.application-validation-failed` warning; the ApplicationSet's other
   Applications still generate, and `--strict` promotes the warning. The
   render parity smoke checks both cases against Argo CD, and it compares the
-  whole drydock Application list with the Argo CD list.
+  whole drydock Application list with the Argo CD list. The ApplicationSet
+  controller then looks up the AppProject of each generated Application. An
+  empty `spec.project` names no AppProject, so drydock omits that
+  Application with the same warning, as Argo CD does. drydock keeps a
+  generated Application whose named AppProject is missing from the
+  repository, because that AppProject can exist only in the cluster. It
+  also skips the destination-cluster check of the ApplicationSet
+  controller for generated Applications, because the clusters can exist
+  only in the cluster. AppProject validation reports both later, as for any
+  Application.
 - Argo CD v3.6.1 RollingSync handling for `spec.strategy.type: RollingSync`,
   gated on `applicationsetcontroller.enable.progressive.syncs` in
   `argocd-cmd-params-cm` (off by default; only `true` in any letter case
@@ -354,11 +464,11 @@ Important boundaries:
   where Argo CD's `IsOCI` is an exact lowercase prefix check — a widening
   that only adds classification and never re-routes a URL Argo CD treats as
   OCI. A single-source `oci://` Application with neither `path:` nor
-  `chart:` is an invalid spec upstream (`InvalidSpecError`) but renders the
-  artifact root in drydock. The schemeless Helm-OCI chart flow resolves
-  exact chart versions only, where the repo-server also resolves semver
-  constraints against the registry tag list. The last two are recorded
-  follow-ups.
+  `chart:` is an invalid spec upstream (`InvalidSpecError`), and drydock
+  fails it the same way. Earlier drydock releases rendered the artifact
+  root. The schemeless Helm-OCI chart flow resolves exact chart versions
+  only, where the repo-server also resolves semver constraints against the
+  registry tag list. That is a recorded follow-up.
 - `$ref` value-file sources are Git-only, matching upstream: an OCI `$ref`
   source fails with a clear error.
 - Private OCI registries are supported for OCI artifact sources through
@@ -460,7 +570,25 @@ Supported:
   the repo-server's values: `ARGOCD_APP_NAME` is the Application instance name
   (`<namespace>_<name>` for Applications outside the controller namespace;
   drydock assumes the Argo CD controller namespace is `argocd`) and
-  `ARGOCD_APP_NAMESPACE` is `spec.destination.namespace`.
+  `ARGOCD_APP_NAMESPACE` is `spec.destination.namespace`. Instance names
+  and resource tracking are the known exception to the shared
+  controller-namespace rule that the namespace gate and AppProject
+  validation use: they do not read the `argocd-cmd-params-cm` namespace
+  yet.
+- Source type detection as in the Argo CD v3.6.1 repo-server
+  (`discovery.Discover`, `util/app/discovery/discovery.go:50-70`) for a
+  source without an explicit type. Argo CD reads the file names directly in
+  the source directory in name order. Any name that ends in `Chart.yaml`
+  marks a Helm chart, for example `traefik-HelmChart.yaml`. A kustomization
+  file name marks Kustomize. The last match wins. So `Chart.yaml` before
+  `kustomization.yaml` gives Kustomize, and `kustomization.yaml` before
+  `traefik-HelmChart.yaml` gives Helm. A directory never matches, and a
+  symlink counts by its own name. Without a match, the source is a
+  directory. Helm then fails on a directory that has no `Chart.yaml`, as in
+  Argo CD. drydock does not read the `argocd-cm` keys that turn a source
+  type off (`helm.enabled`, `kustomize.enabled`, `jsonnet.enabled`). Earlier
+  drydock releases checked for a kustomization file first and then for
+  `Chart.yaml` only.
 - Helm `parameters` and `fileParameters` applied the way Argo CD's
   `helm template` call applies them: every `--set`, then every `--set-string`
   (`forceString: true`), then every `--set-file`, keeping only the last entry
@@ -1364,8 +1492,9 @@ Supported:
 
   drydock merges the `.argocd-source.yaml` and `.argocd-source-<app>.yaml`
   overrides of a local source first, as Argo CD does. Then it picks the
-  source type as Argo CD does: the explicit type, else Kustomize for a
-  kustomization file, else Helm for a chart. So a source with an explicit
+  source type as Argo CD does: the explicit type, else the type that the
+  file names in the source directory give (see the source type detection
+  above). So a source with an explicit
   `directory` or `plugin` type is not a Helm install. A remote value file
   has no local file. drydock finds these files before it renders, with the
   resolution helpers of the renderer. It does not record the files during
@@ -1698,7 +1827,10 @@ Supported:
   settings are parsed as metadata and do not mutate render behavior, except
   `reposerver.max.combined.directory.manifests.size` (see the directory
   size limit above) and `reposerver.allow.oob.symlinks` (see the
-  out-of-bounds symlink check above). drydock also applies
+  out-of-bounds symlink check above). `application.namespaces` and
+  `applicationsetcontroller.namespaces` decide which Applications and
+  ApplicationSets drydock discovers (see "Applications And
+  ApplicationSets"). drydock also applies
   `controller.ignore.normalizer.jq.timeout` to diffs: it limits how long one
   jq ignore-rule deletion may run. drydock parses it as the Argo CD v3.6.1
   controller parses `ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT` with

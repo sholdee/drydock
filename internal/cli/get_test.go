@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 )
 
 func TestGetAppsDefaultOutputIsTable(t *testing.T) {
@@ -546,4 +548,35 @@ metadata:
 spec:
   image: `+image+`
 `)
+}
+
+// TestGetAppsProjectsDefaultEmptyProject pins the project that `get apps`
+// prints for an Application with an empty spec.project. The Argo CD
+// controller writes "default" back into such an Application
+// (NormalizeApplicationSpec, util/argo/argo.go:1081-1083 at v3.6.1).
+func TestGetAppsProjectsDefaultEmptyProject(t *testing.T) {
+	projections := applicationProjections([]argoappv1.Application{{Name: "demo", Namespace: "argocd"}})
+	if len(projections) != 1 {
+		t.Fatalf("applicationProjections() returned %d items, want 1", len(projections))
+	}
+	if got := projections[0]["project"]; got != argoappv1.DefaultAppProjectName {
+		t.Fatalf("project = %#v, want %q", got, argoappv1.DefaultAppProjectName)
+	}
+}
+
+// TestGetAppsSourcesShowHydratorSyncSource pins the sources that `get apps`
+// prints for an Application with spec.sourceHydrator: the sync source that
+// Argo CD compares (ApplicationSpec.GetSources), not spec.source.
+func TestGetAppsSourcesShowHydratorSyncSource(t *testing.T) {
+	application := argoappv1.Application{Name: "demo", Namespace: "argocd", Spec: argoappv1.ApplicationSpec{
+		Source: &argoappv1.ApplicationSource{RepoURL: "https://example.test/repo.git", Path: "ignored"},
+		SourceHydrator: &argoappv1.SourceHydrator{
+			DrySource:  argoappv1.DrySource{RepoURL: "https://example.test/repo.git", Path: "dry", TargetRevision: "main"},
+			SyncSource: argoappv1.SyncSource{TargetBranch: "env/prod", Path: "hydrated"},
+		},
+	}}
+	sources := applicationSources(application)
+	if len(sources) != 1 || sources[0].Path != "hydrated" || sources[0].TargetRevision != "env/prod" || sources[0].RepoURL != "https://example.test/repo.git" {
+		t.Fatalf("applicationSources() = %#v, want the sync source", sources)
+	}
 }

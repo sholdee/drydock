@@ -826,8 +826,9 @@ func TestValidateApplicationsAllowsProjectScopedRepositorySecretsAsSources(t *te
 
 func TestValidateApplicationsDisplaysBareOCIRepositoryURLsInDiagnostics(t *testing.T) {
 	apps := []argoappv1.Application{application("oci-chart", "platform", argoappv1.ApplicationSource{
-		RepoURL: "ghcr.io/example/charts",
-		Chart:   "demo",
+		RepoURL:        "ghcr.io/example/charts",
+		Chart:          "demo",
+		TargetRevision: "1.0.0",
 	}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"})}
 	projects := []argoappv1.AppProject{{
 		ObjectMeta: objectMeta("platform"),

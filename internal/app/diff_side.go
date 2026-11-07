@@ -26,10 +26,7 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 
 	leftBuildRequest := request.buildRequest(request.LeftPath, forbiddenRoots)
 	rightBuildRequest := request.buildRequest(request.RightPath, forbiddenRoots)
-	leftBuildRequest.rootRevision = request.leftPathRevision
-	rightBuildRequest.rootRevision = request.rightPathRevision
-	leftBuildRequest.rootRepo = request.Repo
-	rightBuildRequest.rootRepo = request.Repo
+	leftBuildRequest, rightBuildRequest = request.withSideRoots(leftBuildRequest, rightBuildRequest)
 	parallelism, err := normalizeParallelism(request.Parallelism)
 	if err != nil {
 		return BuildResult{}, BuildResult{}, nil, err
@@ -597,4 +594,15 @@ func unownedByNeitherSide(leftUnowned, rightUnowned []string) []string {
 		}
 	}
 	return unowned
+}
+
+// withSideRoots records on each side's request the tree it renders: the
+// snapshot revision of a side that renders a Git ref, and the repository
+// the snapshot came from.
+func (request DiffRequest) withSideRoots(left, right BuildRequest) (BuildRequest, BuildRequest) {
+	left.rootRevision = request.leftPathRevision
+	right.rootRevision = request.rightPathRevision
+	left.rootRepo = request.Repo
+	right.rootRepo = request.Repo
+	return left, right
 }

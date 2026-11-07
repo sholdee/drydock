@@ -101,7 +101,24 @@ func clonePluginExecutions(input []PluginExecution) []PluginExecution {
 	return out
 }
 
+// renderApplicationCached renders application through the run-scoped cache.
+// It first runs the Argo CD spec checks (validateApplicationSpecSources),
+// and it adds the source hydrator advisory to every result of an
+// Application with spec.sourceHydrator, cached or not.
 func renderApplicationCached(ctx renderContext, application argoappv1.Application) (RenderResult, error) {
+	if !ctx.syntheticApplication {
+		if err := validateApplicationSpecSources(application.Spec); err != nil {
+			return RenderResult{}, err
+		}
+	}
+	result, err := renderApplicationCachedResult(ctx, application)
+	if diag, ok := sourceHydratorDiagnostic(application); ok {
+		result.Diagnostics = append([]diagnostic.Diagnostic{diag}, result.Diagnostics...)
+	}
+	return result, err
+}
+
+func renderApplicationCachedResult(ctx renderContext, application argoappv1.Application) (RenderResult, error) {
 	key, err := applicationRenderCacheKey(ctx, application)
 	if err != nil {
 		return RenderResult{}, err
@@ -156,10 +173,7 @@ func namespaceDefaultedApplicationRenderCacheKey(ctx renderContext, application 
 }
 
 func applicationUsesPluginSource(application argoappv1.Application) bool {
-	sources := application.Spec.Sources
-	if len(sources) == 0 && application.Spec.Source != nil {
-		sources = argoappv1.ApplicationSources{*application.Spec.Source}
-	}
+	sources := applicationRenderSources(application.Spec)
 	for _, source := range sources {
 		if source.Plugin != nil {
 			return true
@@ -178,6 +192,11 @@ type renderContext struct {
 	applicationInputPaths      []string
 	applicationInputsKnown     bool
 	applicationInputsDuplicate bool
+	// syntheticApplication marks an Application that drydock makes itself
+	// rather than one Argo CD would read, such as a plugin policy bootstrap
+	// entrypoint. It skips the Argo CD spec checks
+	// (validateApplicationSpecSources).
+	syntheticApplication bool
 }
 
 func applicationRenderCacheKey(ctx renderContext, application argoappv1.Application) (string, error) {
@@ -238,10 +257,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 }
 
 func applicationUsesMatchedExternalPolicy(application argoappv1.Application, policy pluginpolicy.Policy) bool {
-	sources := application.Spec.Sources
-	if len(sources) == 0 && application.Spec.Source != nil {
-		sources = argoappv1.ApplicationSources{*application.Spec.Source}
-	}
+	sources := applicationRenderSources(application.Spec)
 	for _, source := range sources {
 		if source.Plugin == nil {
 			continue

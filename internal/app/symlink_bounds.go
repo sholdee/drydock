@@ -151,7 +151,7 @@ func (p localProvider) checkSourceTreesOutOfBoundsSymlinks(ctx context.Context, 
 // that resolving a $ref would give is left to the render, which reports it.
 func (p localProvider) checkSpecHelmRefRootsOutOfBoundsSymlinks(ctx context.Context, application argoappv1.Application, sourcePlan SourcePlan) error {
 	helm := sourcePlan.Source.Helm
-	if p.allowOutOfBoundsSymlinks || helm == nil || len(application.Spec.Sources) == 0 {
+	if p.allowOutOfBoundsSymlinks || helm == nil || !application.Spec.HasMultipleSources() {
 		return nil
 	}
 	candidates := append([]string(nil), helm.ValueFiles...)
@@ -192,7 +192,7 @@ func (p localProvider) checkSpecHelmRefRootsOutOfBoundsSymlinks(ctx context.Cont
 // problem.
 func specHelmRefError(application argoappv1.Application, sourcePlan SourcePlan) error {
 	helm := sourcePlan.Source.Helm
-	if helm == nil || len(application.Spec.Sources) == 0 {
+	if helm == nil || !application.Spec.HasMultipleSources() {
 		return nil
 	}
 	candidates := append([]string(nil), helm.ValueFiles...)

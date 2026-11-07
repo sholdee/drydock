@@ -3,6 +3,8 @@ package gitref
 import (
 	"path/filepath"
 	"testing"
+
+	git "github.com/go-git/go-git/v5"
 )
 
 func TestHeadRevision(t *testing.T) {
@@ -35,5 +37,22 @@ func TestPinnedRevisionReturnsBeforeOpeningForNonHexRevisions(t *testing.T) {
 	single, multi, ok, err := PinnedRevision(missing, upper, "")
 	if err != nil || !ok || single != "abcdef0123456789abcdef0123456789abcdef01" || multi != upper {
 		t.Fatalf("PinnedRevision(full SHA, no repository) = %q, %q, %t", single, multi, ok)
+	}
+}
+
+func TestCurrentBranch(t *testing.T) {
+	root, repo, wt := newSnapshotRepo(t)
+	hash := commitSnapshotFile(t, repo, wt, "file.txt", "content\n")
+	if got := CurrentBranch(root); got != "master" {
+		t.Fatalf("CurrentBranch() = %q, want master", got)
+	}
+	if got := CurrentBranch(t.TempDir()); got != "" {
+		t.Fatalf("CurrentBranch(no repository) = %q, want empty", got)
+	}
+	if err := wt.Checkout(&git.CheckoutOptions{Hash: hash}); err != nil {
+		t.Fatal(err)
+	}
+	if got := CurrentBranch(root); got != "" {
+		t.Fatalf("CurrentBranch(detached) = %q, want empty", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -54,19 +55,53 @@ func selectLocalRenderer(source render.ResolvedSource) (render.Renderer, error) 
 		return nil, fmt.Errorf("unsupported explicit source type %q", source.ExplicitType)
 	}
 
-	for _, name := range render.KustomizationFileNames {
-		if exists, err := localPathExists(filepath.Join(root, name)); err != nil {
-			return nil, err
-		} else if exists {
-			return render.KustomizeRenderer{}, nil
+	sourceType, err := discoverLocalSourceType(root)
+	if err != nil {
+		return nil, err
+	}
+	switch sourceType {
+	case argoappv1.ApplicationSourceTypeHelm:
+		return render.HelmRenderer{}, nil
+	case argoappv1.ApplicationSourceTypeKustomize:
+		return render.KustomizeRenderer{}, nil
+	case argoappv1.ApplicationSourceTypeDirectory, argoappv1.ApplicationSourceTypePlugin:
+		return render.DirectoryRenderer{}, nil
+	default:
+		return render.DirectoryRenderer{}, nil
+	}
+}
+
+// discoverLocalSourceType picks the source type of a source directory
+// without an explicit type, as the Argo CD v3.6.1 repo-server does
+// (discovery.Discover, util/app/discovery/discovery.go:50-70). The
+// repo-server walks the directory in lexical order and records a type for
+// each file in it: Helm for any name that ends in "Chart.yaml", such as
+// "traefik-HelmChart.yaml", and Kustomize for a kustomization file name.
+// A later file overwrites an earlier one, so the last match in name order
+// wins. Directories never match, also when their name does, and a symlink
+// counts as a file because the walk does not follow it. Only the files
+// directly in the directory decide its type; the walk records the files of
+// each subdirectory under that subdirectory. An empty result means a
+// directory source.
+func discoverLocalSourceType(root string) (argoappv1.ApplicationSourceType, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", err
+	}
+	var sourceType argoappv1.ApplicationSourceType
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, "Chart.yaml") {
+			sourceType = argoappv1.ApplicationSourceTypeHelm
+		}
+		if slices.Contains(render.KustomizationFileNames, name) {
+			sourceType = argoappv1.ApplicationSourceTypeKustomize
 		}
 	}
-	if exists, err := localPathExists(filepath.Join(root, "Chart.yaml")); err != nil {
-		return nil, err
-	} else if exists {
-		return render.HelmRenderer{}, nil
-	}
-	return render.DirectoryRenderer{}, nil
+	return sourceType, nil
 }
 
 func cleanLocalSourcePath(path string) (string, error) {

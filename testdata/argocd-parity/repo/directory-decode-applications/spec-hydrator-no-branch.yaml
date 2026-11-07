@@ -1,0 +1,19 @@
+# A source hydrator needs syncSource.targetBranch (InvalidSpecError).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-decode-spec-hydrator-no-branch
+  namespace: parity-directory-decode
+spec:
+  project: parity-directory-decode
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-directory-decode-workloads
+  sourceHydrator:
+    drySource:
+      repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: workloads/source-hydrator/dry
+    syncSource:
+      targetBranch: ""
+      path: workloads/source-hydrator/hydrated

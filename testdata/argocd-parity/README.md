@@ -99,6 +99,76 @@ diagnostic, so this half of the rule is enforced by live Argo CD.
 without ignore rules, so the instance name in the tracking annotation is
 compared too.
 
+## Namespace gate fixture
+
+`settings/argocd-cmd-params-cm.yaml` names its namespace, `argocd`, which
+drydock needs to apply the lists. It sets `application.namespaces` to
+`parity-tenant,parity-directory-decode,project-policy-tenant`. The smoke
+sets the same value on the live ConfigMap in
+`configure_application_namespaces`. Keep the two equal, because drydock
+applies the list only from the ConfigMap that it reads.
+
+`namespace-gate/` holds two objects that Argo CD never reconciles:
+
+- `application.yaml` is `parity-namespace-disabled` in the
+  `parity-namespace-disabled` namespace, which the list does not match.
+- `applicationset.yaml` is `parity-appset-namespace-disabled` in
+  `parity-tenant`. `applicationsetcontroller.namespaces` is not set, so the
+  ApplicationSet controller watches only the `argocd` namespace, and the
+  Application `parity-appset-namespace-disabled-app` never exists.
+
+`assert_namespace_gate` makes sure that the Application has no
+`reconciledAt`, that the Argo CD API server answers `permission denied` for
+it, and that the ApplicationSet has no status. On the drydock side,
+`get apps` must warn `discovery.namespace-not-enabled` for both objects.
+The Application inventory comparison leaves the `parity-namespace-disabled`
+namespace out of the Argo CD list, and it fails if drydock lists either
+object or the Application that the ApplicationSet would generate.
+
+## Application spec fixtures
+
+Three Applications in the main comparison pin how Argo CD reads the spec:
+
+| Application | What it pins |
+| --- | --- |
+| `parity-empty-project` | `spec.project: ""` is the `default` project. The chart `charts/project-name` renders `$ARGOCD_APP_PROJECT_NAME`, which must be `default`. The Argo CD controller writes `default` into the spec, and the inventory comparison requires `default` from drydock too. |
+| `parity-helm-chart-file-name` | `workloads/helm-chart-file-name` holds `Chart.yaml`, `kustomization.yaml`, and `traefik-HelmChart.yaml`. The last name in name order that ends in `Chart.yaml` or is a kustomization file decides the type, so both sides render the Helm ConfigMap `parity-helm-chart-file-name-helm`, not the Kustomize one. |
+| `parity-source-hydrator` | `spec.sourceHydrator` with a decoy `spec.source`. Argo CD compares only the sync source, `workloads/source-hydrator/hydrated` at the branch `parity-hydrated`. The hydrator is not enabled in the smoke cluster, so `prepare_fixture_git_image` commits that branch in `FIXTURE_GIT_WORK` as if the hydrator had written it. On the branch, the ConfigMap at the sync path is `parity-source-hydrator-hydrated-branch`. On `main`, the same path holds `parity-source-hydrator-hydrated`, and the dry and decoy paths hold their own. The drydock capture maps the fixture URL to `FIXTURE_GIT_WORK`, which has `main` checked out, so drydock must read the branch from Git. The smoke requires the branch ConfigMap in both captures, and the drydock capture must warn `source.hydrator-sync-source`. |
+
+`applicationsets/validation-empty-project.yaml`
+(`parity-validation-empty-project`) generates `parity-empty-project-kept`
+with the project `default` and `parity-empty-project-dropped` with an empty
+project. The ApplicationSet controller looks the AppProject up by the empty
+name, finds nothing, and creates only the first Application. drydock drops
+the second with `appset.application-validation-failed`, and the inventory
+comparison requires the same list on both sides.
+
+`../crd-rejected/apps/parity-crd-sync-path-dot.yaml` sets
+`syncSource.path: "."`. The CRD schema rejects it, so Argo CD never holds it.
+`assert_crd_rejected_application` applies it with `--dry-run=server` and
+requires the schema message. drydock must fail it with the same message. It
+lives outside `repo/`, so the inventory comparison never sees it.
+
+Five cases in `directory-decode-applications/` use `source: spec` in
+`../directory-decode-expected.yaml`. Argo CD rejects their spec with an
+`InvalidSpecError` condition before it renders anything, so they name no
+file:
+
+| Application | Why Argo CD rejects it |
+| --- | --- |
+| `parity-decode-spec-source-no-path` | a single source without `path` or `chart` |
+| `parity-decode-spec-sources-no-ref` | a multi-source entry without `path`, `chart`, or `ref` |
+| `parity-decode-spec-chart-no-revision` | a `chart` without `targetRevision` |
+| `parity-decode-spec-oci-no-path` | an `oci://` source without `path` or `chart` |
+| `parity-decode-spec-hydrator-no-branch` | a `spec.sourceHydrator` with an empty `syncSource.targetBranch` |
+
+The smoke waits for the `InvalidSpecError` condition, and
+`scripts/argocd-directory-decode-smoke` requires that condition type for
+these cases. drydock must fail each one with the same text.
+`TestParitySpecCasesMatchUpstream` in `internal/app` runs the committed
+Applications offline through drydock and through the upstream
+`ValidatePermissions`.
+
 ## Config management plugin fixture
 
 `applications/plugin-env.yaml` (`parity-plugin-env`) renders through a config

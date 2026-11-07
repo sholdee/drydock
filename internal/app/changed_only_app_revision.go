@@ -101,10 +101,7 @@ func withAppRevisionSelection(leftRequest, rightRequest BuildRequest, left, righ
 // with each commit. Plugin sources never persist, so this widening does not
 // reach the render cache key (sourceReadsAppRevision).
 func applicationReadsAppRevision(root, controllerNamespace string, application argoappv1.Application, pluginRuns func(argoappv1.ApplicationSource) bool) bool {
-	sources := application.Spec.Sources
-	if len(sources) == 0 && application.Spec.Source != nil {
-		sources = argoappv1.ApplicationSources{*application.Spec.Source}
-	}
+	sources := applicationRenderSources(application.Spec)
 	reads := func(source argoappv1.ApplicationSource) bool {
 		return sourceReadsAppRevision(source) || (source.Plugin != nil && pluginRuns != nil && pluginRuns(source))
 	}

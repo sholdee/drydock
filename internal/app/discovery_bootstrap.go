@@ -81,11 +81,12 @@ func renderPolicyBootstrapEntrypoint(ctx context.Context, root string, request B
 	}
 	application := policyBootstrapEntrypointApplication(entrypoint, sourcePath)
 	rendered, err := renderApplicationCached(renderContext{
-		context:           ctx,
-		provider:          provider,
-		cache:             renderCache,
-		settingsSignature: settingsSig,
-		request:           request,
+		context:              ctx,
+		provider:             provider,
+		cache:                renderCache,
+		settingsSignature:    settingsSig,
+		request:              request,
+		syntheticApplication: true,
 	}, application)
 	if err != nil {
 		return discovery.Result{}, rendered.Diagnostics, fmt.Errorf("plugin policy bootstrap entrypoint %q: %w", entrypoint.Name, err)

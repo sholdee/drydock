@@ -187,6 +187,32 @@ OCI_CHART_IGNORED_APPLICATION="parity-oci-helm-chart-ignored"
 # (util/kustomize/kustomize.go:346-372) and drops the second. drydock renders
 # the same and warns kustomize.ignore-missing-components-dropped.
 COMPONENTS_DROPPED_APPLICATION="parity-kustomize-generators"
+# Sets spec.sourceHydrator. Argo CD compares only the sync source
+# (ApplicationSpec.GetSources): syncSource.path at syncSource.targetBranch.
+# The hydrator is not enabled in the smoke cluster, so
+# prepare_fixture_git_image commits the hydrated content on
+# SOURCE_HYDRATOR_BRANCH, where it differs from main at the same path. The
+# drydock capture maps the fixture URL to FIXTURE_GIT_WORK, which has main
+# checked out, so drydock must read the branch from Git. It also warns
+# source.hydrator-sync-source.
+SOURCE_HYDRATOR_APPLICATION="parity-source-hydrator"
+SOURCE_HYDRATOR_BRANCH="parity-hydrated"
+SOURCE_HYDRATOR_BRANCH_CONFIGMAP="parity-source-hydrator-hydrated-branch"
+# Objects in namespaces that Argo CD does not reconcile
+# (repo/namespace-gate). The Application lives in NAMESPACE_DISABLED, which
+# application.namespaces does not list. The ApplicationSet lives in
+# TENANT_NAMESPACE, which applicationsetcontroller.namespaces does not list,
+# so its Application never exists. drydock skips both with
+# discovery.namespace-not-enabled.
+NAMESPACE_DISABLED="parity-namespace-disabled"
+NAMESPACE_DISABLED_APPLICATION="parity-namespace-disabled"
+NAMESPACE_DISABLED_APPLICATIONSET="parity-appset-namespace-disabled"
+# An Application that the CRD schema rejects: its
+# spec.sourceHydrator.syncSource.path is ".". It lives outside repo/, so the
+# main inventory never sees it (assert_crd_rejected_application).
+CRD_REJECTED_DIR="${REPO_ROOT}/testdata/argocd-parity/crd-rejected"
+CRD_REJECTED_APPLICATION="parity-crd-sync-path-dot"
+CRD_REJECTED_MESSAGE="Invalid value: \".\": spec.sourceHydrator.syncSource.path in body should match"
 OCI_HOSTS_MARKER="drydock-argocd-parity-smoke"
 HOSTS_ENTRY_ADDED="false"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
@@ -295,6 +321,9 @@ APPLICATIONS=(
   parity-empty-name-alpha
   parity-empty-name-beta
   parity-duplicate-name-unique
+  # parity-empty-project-dropped renders an empty spec.project, which the
+  # ApplicationSet controller cannot find, so only this one exists.
+  parity-empty-project-kept
   # Cluster generator over cluster Secrets with reserved annotations.
   parity-cluster-alpha
   parity-cluster-beta
@@ -327,6 +356,15 @@ APPLICATIONS=(
   parity-app-revision-helm-repo
   parity-app-revision-annotated-tag
   parity-app-revision-annotated-tag-single
+  # spec.project "". Argo CD reads it as the default project in
+  # ARGOCD_APP_PROJECT_NAME and in the inventory comparison.
+  parity-empty-project
+  # kustomization.yaml and traefik-HelmChart.yaml in one directory: the
+  # last file whose name ends in Chart.yaml or is a kustomization file
+  # decides the type, so Argo CD renders it with Helm.
+  parity-helm-chart-file-name
+  # spec.sourceHydrator: Argo CD renders only the sync source.
+  parity-source-hydrator
 )
 
 # Applications whose Git sources read the ARGOCD_APP_REVISION variables. The
@@ -804,6 +842,14 @@ prepare_fixture_git_image() {
   git -C "${FIXTURE_GIT_WORK}" add .
   git -C "${FIXTURE_GIT_WORK}" commit -m "seed argocd parity fixture" >/dev/null
   git -C "${FIXTURE_GIT_WORK}" tag -a "${APP_REVISION_ANNOTATED_TAG}" -m "annotated tag for the ARGOCD_APP_REVISION parity case"
+  # The source hydrator sync branch. Its ConfigMap at the sync path has
+  # another name than on main, so a side that renders main fails the
+  # comparison.
+  git -C "${FIXTURE_GIT_WORK}" checkout -q -b "${SOURCE_HYDRATOR_BRANCH}"
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: %s\n' "${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" \
+    > "${FIXTURE_GIT_WORK}/workloads/source-hydrator/hydrated/configmap.yaml"
+  git -C "${FIXTURE_GIT_WORK}" commit -q -am "hydrated manifests for the source hydrator parity case"
+  git -C "${FIXTURE_GIT_WORK}" checkout -q main
   git clone --bare --no-hardlinks "${FIXTURE_GIT_WORK}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
   prepare_oob_symlink_repo
@@ -1404,12 +1450,15 @@ apply_cluster_secrets() {
 apply_fixture_apps() {
   ensure_namespace "${TENANT_NAMESPACE}"
   ensure_namespace "${DIRECTORY_DECODE_NAMESPACE}"
+  ensure_namespace "${NAMESPACE_DISABLED}"
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/projects" >/dev/null
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applications" >/dev/null
   apply_cluster_secrets
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applicationsets" >/dev/null
   kubectl -n "${TENANT_NAMESPACE}" apply -f "${FIXTURE_REPO_PATH}/tenant-applications" >/dev/null
   kubectl -n "${DIRECTORY_DECODE_NAMESPACE}" apply -f "${FIXTURE_REPO_PATH}/directory-decode-applications" >/dev/null
+  # Each file names its own namespace.
+  kubectl apply -f "${FIXTURE_REPO_PATH}/namespace-gate" >/dev/null
 }
 
 wait_for_application() {
@@ -1523,6 +1572,25 @@ print_rolling_sync_warnings() {
 # ROLLING_SYNC_CONDITIONS, and for each one drydock must warn with the
 # expected code and the Argo CD condition message. It reads the drydock
 # warnings from the get apps stderr that capture_drydock_applications keeps.
+# assert_crd_rejected_application checks an Application that the API
+# server rejects with the CRD schema, so Argo CD never holds it. drydock
+# must fail it with the same message.
+assert_crd_rejected_application() {
+  local output exit_code=0
+  log_step "Checking an Application that the CRD schema rejects"
+  if output="$(kubectl apply --dry-run=server -f "${CRD_REJECTED_DIR}/apps/${CRD_REJECTED_APPLICATION}.yaml" 2>&1)"; then
+    fail "the API server accepted ${CRD_REJECTED_APPLICATION}; want the CRD schema to reject it"
+  fi
+  [[ "${output}" == *"${CRD_REJECTED_MESSAGE}"* ]] \
+    || fail "the API server rejected ${CRD_REJECTED_APPLICATION} without '${CRD_REJECTED_MESSAGE}': ${output}"
+  output="$(cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${CRD_REJECTED_APPLICATION}" \
+    --path "${CRD_REJECTED_DIR}" --offline 2>&1)" || exit_code="$?"
+  [[ "${exit_code}" != "0" ]] \
+    || fail "drydock rendered ${CRD_REJECTED_APPLICATION}; want the CRD schema failure"
+  [[ "${output}" == *"${CRD_REJECTED_MESSAGE}"* ]] \
+    || fail "drydock failed ${CRD_REJECTED_APPLICATION} without '${CRD_REJECTED_MESSAGE}': ${output}"
+}
+
 compare_rolling_sync_conditions() {
   local stderr_file="${OUT_DIR}/applications/drydock.stderr"
   local entry appset condition_type status reason message code
@@ -1609,6 +1677,9 @@ capture_argocd_manifests() {
     fi
     capture_argocd_manifest "${app}" "${app}" "${output_dir}"
   done
+  # Without this check, both sides rendering main would pass.
+  grep -qF "name: ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" "${output_dir}/${SOURCE_HYDRATOR_APPLICATION}.yaml" \
+    || fail "Argo CD did not render ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP} from branch ${SOURCE_HYDRATOR_BRANCH} for ${SOURCE_HYDRATOR_APPLICATION}"
   for app in "${TENANT_APPLICATIONS[@]}"; do
     capture_argocd_manifest "${TENANT_NAMESPACE}/${app}" "${app}" "${output_dir}"
   done
@@ -1638,7 +1709,7 @@ capture_drydock_manifest() {
   local plugin_app revision_app stderr_file repo_map_path
   local build_args
   repo_map_path="${FIXTURE_REPO_PATH}"
-  for revision_app in "${APP_REVISION_GIT_APPLICATIONS[@]}"; do
+  for revision_app in "${APP_REVISION_GIT_APPLICATIONS[@]}" "${SOURCE_HYDRATOR_APPLICATION}"; do
     if [[ "${stem}" == "${revision_app}" ]]; then
       [[ -n "${FIXTURE_GIT_WORK}" ]] \
         || fail "FIXTURE_GIT_WORK is unset; prepare_fixture_git_image must run before capturing ${stem}"
@@ -1680,6 +1751,15 @@ capture_drydock_manifest() {
     require_drydock_capture_warning "${app_ref}" "${stderr_file}" \
       source.oci-chart-ignored \
       "an oci:// repoURL with chart: set must warn once and render the artifact"
+  fi
+  if [[ "${stem}" == "${SOURCE_HYDRATOR_APPLICATION}" ]]; then
+    grep -qF "name: ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" "${output_dir}/${stem}.yaml" \
+      || fail "drydock did not render ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP} from branch ${SOURCE_HYDRATOR_BRANCH} for ${app_ref}"
+    # The manifest comparison proves that drydock renders the sync source.
+    # The warning tells users that drydock does not run the hydrator.
+    require_drydock_capture_warning "${app_ref}" "${stderr_file}" \
+      source.hydrator-sync-source \
+      "an Application with spec.sourceHydrator must warn that drydock renders the sync source"
   fi
   if [[ "${stem}" == "${COMPONENTS_DROPPED_APPLICATION}" ]]; then
     # The manifest comparison proves that drydock drops the later valid
@@ -1893,11 +1973,48 @@ compare_manifests() {
 # instance holds, both the committed ones and the ones the ApplicationSet
 # controller generated. It runs before the project-policy smoke applies its
 # own Applications.
+# The Application in NAMESPACE_DISABLED exists as an object, but Argo CD
+# never reconciles it, so it is not part of the inventory that drydock must
+# match. assert_namespace_gate checks it.
 capture_argocd_applications() {
   local output_dir
   output_dir="$(artifact_dir applications)"
-  kubectl get applications.argoproj.io --all-namespaces -o json > "${output_dir}/argocd.json" \
+  kubectl get applications.argoproj.io --all-namespaces \
+    --field-selector "metadata.namespace!=${NAMESPACE_DISABLED}" -o json > "${output_dir}/argocd.json" \
     || fail "could not list the Argo CD Applications for the Application inventory comparison"
+}
+
+# assert_namespace_gate checks the objects in namespaces that Argo CD does
+# not reconcile. Argo CD: the Application has no reconciledAt, and the API
+# server refuses it to the admin user. It fails the namespace check and
+# answers "permission denied", so it does not reveal whether the object
+# exists (getAppEnforceRBAC and getApplicationEnforceRBACClient,
+# server/application/application.go:177-286 at v3.6.1). The ApplicationSet
+# has no status. assert_application_inventory
+# already proved that its Application does not exist. drydock: get apps
+# warns discovery.namespace-not-enabled for both, and compare_applications
+# proves that it lists neither the Application nor anything the
+# ApplicationSet would generate. It runs after the other Applications were
+# reconciled, so the controllers had the time to act on these objects.
+assert_namespace_gate() {
+  local reconciled_at appset_status get_output stderr_file
+  log_step "Checking objects in namespaces that Argo CD does not reconcile"
+  reconciled_at="$(kubectl -n "${NAMESPACE_DISABLED}" get application "${NAMESPACE_DISABLED_APPLICATION}" -o jsonpath='{.status.reconciledAt}')"
+  [[ -z "${reconciled_at}" ]] \
+    || fail "Argo CD reconciled ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION} at ${reconciled_at}; application.namespaces must not enable ${NAMESPACE_DISABLED}"
+  if get_output="$(argocd app get "${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION}" 2>&1)"; then
+    fail "the Argo CD API server returned ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION}; want it refused"
+  fi
+  [[ "${get_output}" == *"permission denied"* ]] \
+    || fail "argocd app get ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION} failed without permission denied: ${get_output}"
+  appset_status="$(kubectl -n "${TENANT_NAMESPACE}" get applicationset "${NAMESPACE_DISABLED_APPLICATIONSET}" -o jsonpath='{.status}')"
+  [[ -z "${appset_status}" ]] \
+    || fail "the ApplicationSet controller reconciled ${TENANT_NAMESPACE}/${NAMESPACE_DISABLED_APPLICATIONSET}: ${appset_status}"
+  stderr_file="${OUT_DIR}/applications/drydock.stderr"
+  grep -qF "discovery.namespace-not-enabled: Application ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION} is skipped" "${stderr_file}" \
+    || fail "drydock get apps did not warn that it skipped ${NAMESPACE_DISABLED}/${NAMESPACE_DISABLED_APPLICATION}; see ${stderr_file}"
+  grep -qF "discovery.namespace-not-enabled: ApplicationSet ${TENANT_NAMESPACE}/${NAMESPACE_DISABLED_APPLICATIONSET} is skipped" "${stderr_file}" \
+    || fail "drydock get apps did not warn that it skipped ${TENANT_NAMESPACE}/${NAMESPACE_DISABLED_APPLICATIONSET}; see ${stderr_file}"
 }
 
 # capture_drydock_applications lists every Application drydock discovers and
@@ -1958,6 +2075,8 @@ ensure_namespace() {
   kubectl get namespace "${namespace}" >/dev/null 2>&1 || kubectl create namespace "${namespace}" >/dev/null
 }
 
+# The value must equal application.namespaces in
+# repo/settings/argocd-cmd-params-cm.yaml, which drydock reads.
 configure_application_namespaces() {
   kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
     -p "{\"data\":{\"application.namespaces\":\"${TENANT_NAMESPACE},${DIRECTORY_DECODE_NAMESPACE},project-policy-tenant\"}}" >/dev/null
@@ -2222,7 +2341,8 @@ load_directory_decode_applications() {
 }
 
 # wait_for_directory_decode_application waits for the controller to record
-# a ComparisonError on a decode failure Application. A new Application's
+# a ComparisonError on a decode failure Application, or an InvalidSpecError
+# on a spec case. The comparison checks which type each case needs. A new Application's
 # first comparison resolves its revision without the revision cache, so the
 # controller records the error at once rather than after the repo error
 # grace period (CompareAppState, controller/state.go at v3.6.1).
@@ -2230,14 +2350,15 @@ wait_for_directory_decode_application() {
   local app="$1"
   local failure_dir
   for _ in {1..180}; do
-    if application_has_condition_type "${DIRECTORY_DECODE_NAMESPACE}" "${app}" ComparisonError; then
+    if application_has_condition_type "${DIRECTORY_DECODE_NAMESPACE}" "${app}" ComparisonError \
+      || application_has_condition_type "${DIRECTORY_DECODE_NAMESPACE}" "${app}" InvalidSpecError; then
       return 0
     fi
     sleep 2
   done
   failure_dir="$(artifact_dir directory-decode)"
   kubectl -n "${DIRECTORY_DECODE_NAMESPACE}" get application "${app}" -o yaml > "${failure_dir}/${app}.yaml" 2>&1 || true
-  fail "directory decode Application ${DIRECTORY_DECODE_NAMESPACE}/${app} did not report a ComparisonError; see ${failure_dir}/${app}.yaml"
+  fail "directory decode Application ${DIRECTORY_DECODE_NAMESPACE}/${app} did not report a ComparisonError or an InvalidSpecError; see ${failure_dir}/${app}.yaml"
 }
 
 capture_directory_decode_argocd_applications() {
@@ -2591,6 +2712,8 @@ main() {
   assert_app_revision_captures
   compare_manifests
   compare_applications
+  assert_namespace_gate
+  assert_crd_rejected_application
   compare_rolling_sync_conditions
   compare_avp_oracle_manifests
   compare_tracking_manifests

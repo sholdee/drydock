@@ -49,9 +49,12 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 		}
 		proj = effectiveProject(proj, settings)
 
-		diags = append(diags, validateSources(app, proj)...)
-		diags = append(diags, validateDestination(app, proj, settings)...)
-		diags = append(diags, validateSourceNamespace(app, proj)...)
+		sources, checkDestination := policyCheckedSources(app.Spec)
+		diags = append(diags, validateSources(app, proj, sources)...)
+		if checkDestination {
+			diags = append(diags, validateDestination(app, proj, settings)...)
+		}
+		diags = append(diags, validateSourceNamespace(app, proj, settings)...)
 		diags = append(diags, rbacMetadataDiagnostics(proj)...)
 		if hasLocalProjects {
 			diags = append(diags, repositoryMetadataDiagnostics(app, settings)...)
@@ -142,15 +145,32 @@ func implicitDefaultProject() argoappv1.AppProject {
 	}
 }
 
-func validateSources(app argoappv1.Application, proj argoappv1.AppProject) []diagnostic.Diagnostic {
+// validateSources checks that proj permits the repository of each source
+// in sources (policyCheckedSources).
+func validateSources(app argoappv1.Application, proj argoappv1.AppProject, sources argoappv1.ApplicationSources) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
-	for _, source := range app.Spec.GetSources() {
+	for _, source := range sources {
 		if proj.IsSourcePermitted(source) {
 			continue
 		}
 		diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s source repository %q is not permitted by AppProject %q", applicationName(app), displayRepoURL(source.RepoURL), proj.Name)))
 	}
 	return diags
+}
+
+// projectCheckedSources returns the sources whose repositories the AppProject
+// must permit (ValidatePermissions, util/argo/argo.go:701-737 at v3.6.1).
+// With spec.sourceHydrator set, that is the dry source, and the sync source
+// when it names a repository other than the dry source's.
+func projectCheckedSources(spec argoappv1.ApplicationSpec) argoappv1.ApplicationSources {
+	if spec.SourceHydrator == nil {
+		return spec.GetSources()
+	}
+	sources := argoappv1.ApplicationSources{spec.SourceHydrator.GetDrySource()}
+	if syncSource := spec.SourceHydrator.GetSyncSource(); syncSource.RepoURL != spec.SourceHydrator.DrySource.RepoURL {
+		sources = append(sources, syncSource)
+	}
+	return sources
 }
 
 func validateDestination(app argoappv1.Application, proj argoappv1.AppProject, settings config.ArgoSettings) []diagnostic.Diagnostic {
@@ -386,18 +406,20 @@ func NormalizeClusterServer(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
-func validateSourceNamespace(app argoappv1.Application, proj argoappv1.AppProject) []diagnostic.Diagnostic {
-	if proj.IsAppNamespacePermitted(&app, controllerNamespace(proj)) {
+func validateSourceNamespace(app argoappv1.Application, proj argoappv1.AppProject, settings config.ArgoSettings) []diagnostic.Diagnostic {
+	if proj.IsAppNamespacePermitted(&app, controllerNamespace(proj, settings)) {
 		return nil
 	}
 	return []diagnostic.Diagnostic{projectWarning(app, fmt.Sprintf("Application %s source namespace %q is not permitted by AppProject %q", applicationName(app), app.Namespace, proj.Name))}
 }
 
-func controllerNamespace(proj argoappv1.AppProject) string {
-	if proj.Namespace != "" {
-		return proj.Namespace
-	}
-	return "argocd"
+// controllerNamespace is the namespace of the Argo CD controllers, which
+// always reconcile Applications there. It uses the shared rule
+// (config.ArgoSettings.ControllerNamespace): the namespace of the
+// argocd-cmd-params-cm ConfigMap when it names one, else the namespace of
+// the AppProject, which also lives there, else argocd.
+func controllerNamespace(proj argoappv1.AppProject, settings config.ArgoSettings) string {
+	return settings.ControllerNamespace(proj.Namespace)
 }
 
 func rbacMetadataDiagnostics(proj argoappv1.AppProject) []diagnostic.Diagnostic {
@@ -414,7 +436,7 @@ func rbacMetadataDiagnostics(proj argoappv1.AppProject) []diagnostic.Diagnostic 
 func repositoryMetadataDiagnostics(app argoappv1.Application, settings config.ArgoSettings) []diagnostic.Diagnostic {
 	diags := make([]diagnostic.Diagnostic, 0)
 	projectName := applicationProject(app)
-	for _, source := range app.Spec.GetSources() {
+	for _, source := range projectCheckedSources(app.Spec) {
 		repoURL := strings.TrimSpace(source.RepoURL)
 		if repoURL == "" {
 			continue

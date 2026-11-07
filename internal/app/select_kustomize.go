@@ -116,8 +116,13 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		// chart-repository source.
 		out[i].Paths = append(out[i].Paths, helmRefSelectionPaths(tree, input.Application)...)
 		for _, specSource := range applicationSources(input.Application) {
-			if !pathSourceRendersFromRoot(tree, specSource) {
+			if !sourceRendersFromRoot(tree, input.Application, specSource) {
 				continue
+			}
+			if input.Application.Spec.SourceHydrator != nil {
+				// applicationSourcePaths leaves the sync path out, because
+				// the render reads it from the local tree only here.
+				out[i].Paths = append(out[i].Paths, normalizeSelectPath(specSource.Path))
 			}
 			// The render reads the source after its override files.
 			source := selectionSourceWithOverrides(root, input.Application, specSource)
@@ -190,10 +195,7 @@ func kustomizeSelectionMemoKey(source argoappv1.ApplicationSource) string {
 }
 
 func applicationSources(app argoappv1.Application) argoappv1.ApplicationSources {
-	if len(app.Spec.Sources) == 0 && app.Spec.Source != nil {
-		return argoappv1.ApplicationSources{*app.Spec.Source}
-	}
-	return app.Spec.Sources
+	return applicationRenderSources(app.Spec)
 }
 
 // selectionTree is the tree one withSelectionOnlyPaths call owns inputs in,
@@ -231,9 +233,11 @@ func (t *selectionTree) repoMapped(repoURL string) (toRoot, mapped bool) {
 	return toRoot, true
 }
 
-// pathSourceRendersFromRoot mirrors localProvider.resolveSourceRootIdentity:
-// a path source renders from the local tree when it is not repo-mapped
-// elsewhere, not OCI, and its path exists under root — whatever its repoURL.
+// pathSourceRendersFromRoot mirrors localProvider.resolveSourceRootIdentity
+// for a source that is not a source hydrator sync source (see
+// hydratorSyncRendersFromRoot): a path source renders from the local tree
+// when it is not repo-mapped elsewhere, not OCI, and its path exists under
+// root — whatever its repoURL.
 // Sources fetched from another repository never contribute local ownership,
 // an oci:// source is never local whether or not it sets chart (Argo CD
 // ignores chart there and the path selects within the artifact), and a
@@ -251,6 +255,36 @@ func pathSourceRendersFromRoot(tree *selectionTree, source argoappv1.Application
 	}
 	exists, err := sourcePathExists(tree.root, source.Path)
 	return err == nil && exists
+}
+
+// sourceRendersFromRoot reports whether the render reads source from the
+// local tree: hydratorSyncRendersFromRoot for the sync source of an
+// Application with spec.sourceHydrator, pathSourceRendersFromRoot for any
+// other source.
+func sourceRendersFromRoot(tree *selectionTree, application argoappv1.Application, source argoappv1.ApplicationSource) bool {
+	if application.Spec.SourceHydrator != nil {
+		return hydratorSyncRendersFromRoot(tree, source)
+	}
+	return pathSourceRendersFromRoot(tree, source)
+}
+
+// hydratorSyncRendersFromRoot mirrors localProvider.resolveHydratorSyncSource:
+// a sync source renders from the local tree only when it is the repository
+// under analysis, by its remote or by a --repo-map to root, at a branch that
+// the self-repo rule tracks (selfRepoMatcher.matches and tracksRevision). A path that exists locally is not enough,
+// because the dry and the sync source often share a path.
+func hydratorSyncRendersFromRoot(tree *selectionTree, source argoappv1.ApplicationSource) bool {
+	branch := strings.TrimSpace(source.TargetRevision)
+	if source.Path == "" || branch == "" {
+		return false
+	}
+	if toRoot, mapped := tree.repoMapped(source.RepoURL); mapped {
+		// A map to this tree names the repository under analysis
+		// (localProvider.hydratorSelfMapped); a map elsewhere never renders
+		// from this tree.
+		return toRoot && tree.selfRepo.tracksRevision(branch)
+	}
+	return tree.selfRepo.matches(source.RepoURL, branch)
 }
 
 // refSourceRendersFromRoot mirrors localProvider.resolveSourceRootIdentity

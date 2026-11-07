@@ -186,13 +186,11 @@ func loadDrydockApplications(path string) (map[string]string, error) {
 }
 
 // projectArgoCDApplication mirrors applicationProjections and sourceSummary
-// in internal/cli/get.go: spec.sources wins over spec.source, and path,
-// chart, and ref appear only when set.
+// in internal/cli/get.go: the sources are ApplicationSpec.GetSources (the
+// sync source alone with spec.sourceHydrator, else spec.sources over
+// spec.source), and path, chart, and ref appear only when set.
 func projectArgoCDApplication(application argoappv1.Application) applicationProjection {
-	sources := application.Spec.Sources
-	if len(sources) == 0 && application.Spec.Source != nil {
-		sources = argoappv1.ApplicationSources{*application.Spec.Source}
-	}
+	sources := application.Spec.GetSources()
 	summaries := make([]map[string]string, 0, len(sources))
 	for _, source := range sources {
 		summary := map[string]string{
@@ -213,7 +211,7 @@ func projectArgoCDApplication(application argoappv1.Application) applicationProj
 	return applicationProjection{
 		Namespace: application.Namespace,
 		Name:      application.Name,
-		Project:   application.Spec.Project,
+		Project:   application.Spec.GetProject(),
 		Destination: destinationProjection{
 			Name:      application.Spec.Destination.Name,
 			Server:    application.Spec.Destination.Server,

@@ -470,10 +470,12 @@ func TestBuildOCIChartPathShapeRendersArtifactAtPath(t *testing.T) {
 	}
 }
 
-// Empty-path normalization pin: an OCI Application with NO path line renders
-// the artifact manifests exactly like `path: .` — argo renders the extraction
-// root when an OCI source omits path (apppathutil.Path(ociPath, ""),
-// repository.go:425 at v3.5.4) — whether or not chart is set.
+// Empty-path normalization pin: an OCI Application with NO path line but
+// with chart set renders the artifact manifests exactly like `path: .` —
+// argo renders the extraction root when an OCI source omits path
+// (apppathutil.Path(ociPath, ""), repository.go:425 at v3.5.4). Without
+// chart, the controller rejects the source before the repo-server sees it
+// (TestBuildRejectsOCIArtifactWithoutPathOrChart).
 func TestBuildRendersOCIArtifactWithoutPath(t *testing.T) {
 	reg := ocitest.StartRegistry(t)
 	ocitest.PushHelmChartArtifact(t, reg, "charts/demo", "1.2.3", ocitest.HelmChartSpec{Name: "demo", Version: "1.2.3"})
@@ -482,7 +484,6 @@ func TestBuildRendersOCIArtifactWithoutPath(t *testing.T) {
 		extra       string
 		wantWarning bool
 	}{
-		{name: "no chart"},
 		{name: "chart set", extra: "    chart: demo\n", wantWarning: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -503,6 +504,28 @@ func TestBuildRendersOCIArtifactWithoutPath(t *testing.T) {
 				assertNoOCIChartIgnoredWarning(t, result.Diagnostics)
 			}
 		})
+	}
+}
+
+// An OCI source without path and without chart fails the Application. The
+// Argo CD v3.6.1 controller requires path or chart on a single source,
+// oci:// included (validateSourcePermissions, util/argo/argo.go:644-672),
+// sets an InvalidSpecError condition, and never asks the repo-server for
+// the artifact.
+func TestBuildRejectsOCIArtifactWithoutPathOrChart(t *testing.T) {
+	root := t.TempDir()
+	writeOCIApplication(t, root, "demo", "oci://charts.example.test/org/demo", "", "1.2.3", "")
+	artifactAcquirer := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32), files: map[string]string{"cm.yaml": plainConfigMapYAML("demo")}}
+
+	result, err := Orchestrator{OCIArtifactAcquirer: artifactAcquirer}.Build(context.Background(), ociBuildRequest(t, root))
+	if err == nil {
+		t.Fatal("Build() error = nil, want the invalid spec failure")
+	}
+	if len(result.Statuses) != 1 || !strings.Contains(result.Statuses[0].Message, "spec.source.repoURL and either spec.source.path or spec.source.chart are required") {
+		t.Fatalf("Statuses = %#v, want the Argo CD invalid spec message", result.Statuses)
+	}
+	if resolves, extracts := artifactAcquirer.counts(); resolves != 0 || extracts != 0 {
+		t.Fatalf("artifact acquirer calls = (%d resolves, %d extracts), want none", resolves, extracts)
 	}
 }
 

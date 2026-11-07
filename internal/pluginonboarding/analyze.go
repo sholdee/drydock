@@ -215,14 +215,12 @@ func recordApplicationUses(root string, input ApplicationInput, settings config.
 	}
 }
 
+// applicationSources returns the sources that drydock renders, as Argo CD
+// compares them (ApplicationSpec.GetSources). For an Application with
+// spec.sourceHydrator, that is the sync source, which never names a
+// plugin: the hydrator renders the dry source, and drydock does not run it.
 func applicationSources(app argoappv1.Application) []argoappv1.ApplicationSource {
-	if len(app.Spec.Sources) > 0 {
-		return append([]argoappv1.ApplicationSource(nil), app.Spec.Sources...)
-	}
-	if app.Spec.Source != nil {
-		return []argoappv1.ApplicationSource{*app.Spec.Source}
-	}
-	return nil
+	return append([]argoappv1.ApplicationSource(nil), app.Spec.GetSources()...)
 }
 
 func recordPluginParameters(params argoappv1.ApplicationSourcePluginParameters, entry *PluginReport) {

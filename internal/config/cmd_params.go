@@ -42,6 +42,20 @@ const enableProgressiveSyncsKey = "applicationsetcontroller.enable.progressive.s
 // and manifests/install.yaml:36973-36976).
 const ignoreNormalizerJQTimeoutKey = "controller.ignore.normalizer.jq.timeout"
 
+// applicationNamespacesKey sets the application controller flag
+// --application-namespaces through the environment variable
+// ARGOCD_APPLICATION_NAMESPACES (Argo CD v3.6.1
+// cmd/argocd-application-controller/commands/argocd_application_controller.go:286
+// and manifests/install.yaml:36938-36942).
+const applicationNamespacesKey = "application.namespaces"
+
+// applicationSetNamespacesKey sets the ApplicationSet controller flag
+// --applicationset-namespaces through the environment variable
+// ARGOCD_APPLICATIONSET_CONTROLLER_NAMESPACES (Argo CD v3.6.1
+// cmd/argocd-applicationset-controller/commands/applicationset_controller.go:316
+// and manifests/install.yaml:35102-35106).
+const applicationSetNamespacesKey = "applicationsetcontroller.namespaces"
+
 type commandParameterValueMode int
 
 const (
@@ -80,6 +94,7 @@ func LoadCommandParametersConfigMap(path string) (ArgoSettings, []diagnostic.Dia
 		}
 		found = true
 		candidate, nextDiags := commandParametersSettings(path, "data", doc.Data)
+		candidate.CommandParametersNamespace = strings.TrimSpace(doc.Metadata.Namespace)
 		candidates = append(candidates, candidate)
 		diags = append(diags, nextDiags...)
 	}
@@ -112,6 +127,7 @@ func LoadCommandParametersConfigMapDocument(path string, documentIndex int) (Arg
 		}}, nil
 	}
 	nextSettings, diags := commandParametersSettings(path, "data", doc.Data)
+	nextSettings.CommandParametersNamespace = strings.TrimSpace(doc.Metadata.Namespace)
 	return nextSettings, diags, nil
 }
 
@@ -130,13 +146,15 @@ func LoadCommandParametersConfigMapObject(path string, obj *unstructured.Unstruc
 		}}, nil
 	}
 	nextSettings, diags := commandParametersSettings(path, "data", doc.Data)
+	nextSettings.CommandParametersNamespace = strings.TrimSpace(doc.Metadata.Namespace)
 	return nextSettings, diags, nil
 }
 
 type commandParametersConfigMapDocument struct {
 	Kind     string `yaml:"kind"`
 	Metadata struct {
-		Name string `yaml:"name"`
+		Name      string `yaml:"name"`
+		Namespace string `yaml:"namespace"`
 	} `yaml:"metadata"`
 	Data map[string]string `yaml:"data"`
 }
@@ -147,6 +165,7 @@ func isCommandParametersConfigMap(doc commandParametersConfigMapDocument) bool {
 
 func commandParametersSettings(path, basePointer string, values map[string]string) (ArgoSettings, []diagnostic.Diagnostic) {
 	settings := DefaultSettings()
+	settings.CommandParametersFound = true
 	if len(values) == 0 {
 		return settings, nil
 	}
@@ -181,38 +200,7 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 		if classification.warnRuntime {
 			runtimeOnlyKeys = append(runtimeOnlyKeys, key)
 		}
-		if key == maxCombinedDirectoryManifestsSizeKey {
-			// The value is kept as written: the repo-server parses it with
-			// resource.ParseQuantity, which rejects spaces around it.
-			settings.MaxCombinedDirectoryManifestsSize = Value[string]{
-				Value:      values[key],
-				Provenance: setting.Provenance,
-			}
-		}
-		if key == allowOutOfBoundsSymlinksKey {
-			// Kept as written: the repo-server reads it with
-			// env.ParseBoolFromEnv, which compares the raw value.
-			settings.AllowOutOfBoundsSymlinks = Value[string]{
-				Value:      values[key],
-				Provenance: setting.Provenance,
-			}
-		}
-		if key == enableProgressiveSyncsKey {
-			// Kept as written, for the same reason: the ApplicationSet
-			// controller reads it with env.ParseBoolFromEnv.
-			settings.EnableProgressiveSyncs = Value[string]{
-				Value:      values[key],
-				Provenance: setting.Provenance,
-			}
-		}
-		if key == ignoreNormalizerJQTimeoutKey {
-			// Kept as written: the controller reads it with
-			// env.ParseDurationFromEnv, which parses the raw value.
-			settings.IgnoreNormalizerJQTimeout = Value[string]{
-				Value:      values[key],
-				Provenance: setting.Provenance,
-			}
-		}
+		applyCommandParameterValue(&settings, key, Value[string]{Value: values[key], Provenance: setting.Provenance})
 		settings.CommandParameters = append(settings.CommandParameters, setting)
 	}
 
@@ -220,6 +208,34 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 		return settings, nil
 	}
 	return settings, []diagnostic.Diagnostic{commandParametersMetadataOnlyDiagnostic(path, basePointer, runtimeOnlyKeys)}
+}
+
+// applyCommandParameterValue stores the value of a command parameter that
+// drydock applies. Each value is kept as written, because the Argo CD
+// component parses the raw environment variable:
+//   - reposerver.max.combined.directory.manifests.size with
+//     resource.ParseQuantity, which rejects spaces around it;
+//   - reposerver.allow.oob.symlinks and
+//     applicationsetcontroller.enable.progressive.syncs with
+//     env.ParseBoolFromEnv, which compares the raw value;
+//   - controller.ignore.normalizer.jq.timeout with env.ParseDurationFromEnv;
+//   - application.namespaces and applicationsetcontroller.namespaces with
+//     env.StringsFromEnv (ParseNamespaceList).
+func applyCommandParameterValue(settings *ArgoSettings, key string, value Value[string]) {
+	switch key {
+	case maxCombinedDirectoryManifestsSizeKey:
+		settings.MaxCombinedDirectoryManifestsSize = value
+	case allowOutOfBoundsSymlinksKey:
+		settings.AllowOutOfBoundsSymlinks = value
+	case enableProgressiveSyncsKey:
+		settings.EnableProgressiveSyncs = value
+	case ignoreNormalizerJQTimeoutKey:
+		settings.IgnoreNormalizerJQTimeout = value
+	case applicationNamespacesKey:
+		settings.ApplicationNamespaces = value
+	case applicationSetNamespacesKey:
+		settings.ApplicationSetNamespaces = value
+	}
 }
 
 func commandParametersMetadataOnlyDiagnostic(path, pointer string, keys []string) diagnostic.Diagnostic {
@@ -250,7 +266,7 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			valueMode:      commandParameterSanitizedValue,
 			warnRuntime:    true,
 		}
-	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey, enableProgressiveSyncsKey:
+	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey, enableProgressiveSyncsKey, applicationNamespacesKey, applicationSetNamespacesKey:
 		return commandParameterClassification{
 			classification: CommandParameterRendered,
 			valueMode:      commandParameterSanitizedValue,
@@ -373,4 +389,22 @@ func commandParameterValueLooksSensitive(value string) bool {
 		}
 	}
 	return false
+}
+
+// ParseNamespaceList splits an application.namespaces or
+// applicationsetcontroller.namespaces value the way the Argo CD v3.6.1
+// controllers read their environment variable (env.StringsFromEnv,
+// util/env/env.go:169-178): an empty value is an empty list, and any other
+// value is split at each comma, with spaces trimmed from each entry. Each
+// entry is a glob, or a regular expression when it is wrapped in slashes
+// (glob.MatchStringInList with glob.REGEXP).
+func ParseNamespaceList(value string) []string {
+	if value == "" {
+		return nil
+	}
+	entries := strings.Split(value, ",")
+	for i, entry := range entries {
+		entries[i] = strings.TrimSpace(entry)
+	}
+	return entries
 }

@@ -1,7 +1,12 @@
 # drydock reads Argo CD settings from the repository. The smoke sets the same
-# key on the live argocd-cmd-params-cm when it installs Argo CD
-# (install_argocd in scripts/argocd-parity-smoke.sh). Keep the two equal.
+# keys on the live argocd-cmd-params-cm: progressive syncs in install_argocd
+# and application.namespaces in configure_application_namespaces
+# (scripts/argocd-parity-smoke.sh). Keep them equal.
 # With progressive syncs on, Argo CD v3.6.1 checks RollingSync steps.
+# application.namespaces enables Applications in the tenant, directory
+# decode, and project-policy tenant namespaces. It does not list
+# parity-namespace-disabled, and applicationsetcontroller.namespaces is not
+# set, so Argo CD reconciles neither object in namespace-gate/.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,3 +14,4 @@ metadata:
   namespace: argocd
 data:
   applicationsetcontroller.enable.progressive.syncs: "true"
+  application.namespaces: parity-tenant,parity-directory-decode,project-policy-tenant

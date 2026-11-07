@@ -63,7 +63,8 @@ func (m RepositoryMatch) matchesURL(repoURL string) bool {
 }
 
 // Reaches reports whether validation applies the entry to app: as the
-// repository metadata of one of its sources, or, when app is in the entry's
+// repository metadata of one of its sources (projectCheckedSources, so the
+// dry source of a source hydrator counts), or, when app is in the entry's
 // project, through the sourceRepos entry it adds there, which Argo CD matches
 // as a normalized glob. A deny pattern (!url) there reaches every source: it
 // denies the sources it names and, through Argo CD's negation, permits the
@@ -71,7 +72,7 @@ func (m RepositoryMatch) matchesURL(repoURL string) bool {
 // reaches every Application: with no AppProject declared, each validates
 // against the implicit default project, whatever project it names.
 func (m RepositoryMatch) Reaches(app argoappv1.Application) bool {
-	sources := app.Spec.GetSources()
+	sources := projectCheckedSources(app.Spec)
 	for _, source := range sources {
 		if repoURL := strings.TrimSpace(source.RepoURL); repoURL != "" && m.matchesURL(repoURL) {
 			return true

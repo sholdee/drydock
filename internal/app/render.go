@@ -154,6 +154,7 @@ func resolvedSourceForPlan(sourcePlan SourcePlan) render.ResolvedSource {
 		RepoURL:        sourcePlan.Source.RepoURL,
 		TargetRevision: sourcePlan.Source.TargetRevision,
 		ExplicitType:   sourcePlan.ExplicitType,
+		HydratorSync:   sourcePlan.HydratorSync,
 	}
 }
 
@@ -395,7 +396,7 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	opts := render.RenderOptions{
 		AppName:      application.Name,
 		AppNamespace: application.Namespace,
-		Project:      application.Spec.Project,
+		Project:      application.Spec.GetProject(),
 		Namespace:    application.Spec.Destination.Namespace,
 		ArgoEnv:      argoRenderEnv(application, source, trackingOpts.ControllerNamespace),
 	}
@@ -517,7 +518,7 @@ func argoRenderEnvAt(application argoappv1.Application, source argoappv1.Applica
 	return argoappv1.Env{
 		{Name: "ARGOCD_APP_NAME", Value: application.InstanceName(controllerNamespace)},
 		{Name: "ARGOCD_APP_NAMESPACE", Value: application.Spec.Destination.Namespace},
-		{Name: "ARGOCD_APP_PROJECT_NAME", Value: application.Spec.Project},
+		{Name: "ARGOCD_APP_PROJECT_NAME", Value: application.Spec.GetProject()},
 		{Name: "ARGOCD_APP_REVISION", Value: revision},
 		{Name: "ARGOCD_APP_REVISION_SHORT", Value: shortenRevision(revision, 7)},
 		{Name: "ARGOCD_APP_REVISION_SHORT_8", Value: shortenRevision(revision, 8)},
@@ -740,7 +741,7 @@ func helmValueFileRefKey(valueFile string) (string, bool) {
 // drydock sorts them. An Application with one source has no error: the
 // path is a local path.
 func unknownHelmRefError(plan PlanResult, refKey string) error {
-	if len(plan.Application.Spec.Sources) == 0 {
+	if !plan.Application.Spec.HasMultipleSources() {
 		return nil
 	}
 	if len(plan.Refs) == 0 {

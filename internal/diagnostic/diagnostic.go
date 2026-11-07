@@ -171,6 +171,8 @@ func discoveryCode(message string) string {
 		return "discovery.depth-exceeded"
 	case strings.Contains(message, "could not be rendered"):
 		return "discovery.render-failed"
+	case strings.Contains(message, "is not enabled for Argo CD"):
+		return "discovery.namespace-not-enabled"
 	}
 	return "discovery.unspecified"
 }

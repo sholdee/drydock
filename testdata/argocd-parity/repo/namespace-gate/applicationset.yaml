@@ -1,0 +1,28 @@
+# This ApplicationSet lives in parity-tenant. application.namespaces lists
+# that namespace, but applicationsetcontroller.namespaces is not set, so
+# the ApplicationSet controller never reconciles it and never creates
+# parity-appset-namespace-disabled-app. drydock must not generate it and
+# must warn with discovery.namespace-not-enabled.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-appset-namespace-disabled
+  namespace: parity-tenant
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - name: parity-appset-namespace-disabled-app
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: parity-tenant
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/source-hydrator/dry
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: parity-tenant-workloads

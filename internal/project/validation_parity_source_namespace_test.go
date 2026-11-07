@@ -145,3 +145,40 @@ func TestValidateApplicationsSourceNamespaceSlashEntriesDeny(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateApplicationsSourceNamespaceUsesSharedControllerNamespace pins
+// the controller namespace that the source namespace check uses. It comes
+// from config.ArgoSettings.ControllerNamespace, the rule the namespace gate
+// in internal/app uses too: the argocd-cmd-params-cm namespace first, then
+// the AppProject namespace, then argocd.
+func TestValidateApplicationsSourceNamespaceUsesSharedControllerNamespace(t *testing.T) {
+	app := argoappv1.Application{
+		Name: "demo", Namespace: "gitops",
+		Spec: argoappv1.ApplicationSpec{
+			Project:     "platform",
+			Source:      &argoappv1.ApplicationSource{RepoURL: "https://github.com/example/gitops", Path: "apps/demo"},
+			Destination: argoappv1.ApplicationDestination{Server: "https://kubernetes.default.svc", Namespace: "demo"},
+		},
+	}
+	proj := argoappv1.AppProject{ObjectMeta: objectMeta("platform"), Spec: argoappv1.AppProjectSpec{
+		SourceRepos:  []string{"*"},
+		Destinations: []argoappv1.ApplicationDestination{{Server: "*", Namespace: "*"}},
+	}}
+	denied := func(settings config.ArgoSettings) bool {
+		for _, diag := range ValidateApplications([]argoappv1.Application{app}, []argoappv1.AppProject{proj}, settings) {
+			if diag.Code == diagnostic.CodeProjectSourceNamespaceDenied || strings.Contains(diag.Message, "source namespace") {
+				return true
+			}
+		}
+		return false
+	}
+	settings := config.DefaultSettings()
+	if !denied(settings) {
+		t.Fatal("an Application in gitops must be denied while the controller namespace defaults to argocd")
+	}
+	settings.CommandParametersFound = true
+	settings.CommandParametersNamespace = "gitops"
+	if denied(settings) {
+		t.Fatal("an Application in the argocd-cmd-params-cm namespace must be permitted")
+	}
+}

@@ -82,6 +82,8 @@ spec:
   template:
     metadata:
       name: '{{name}}'
+    spec:
+      project: default
 `)
 
 	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", data, Options{Provider: ProviderOptions{FixturePaths: []string{"fixture.yaml"}}})
@@ -111,6 +113,8 @@ spec:
   template:
     metadata:
       name: '{{name}}'
+    spec:
+      project: default
 `)
 
 	for _, tt := range []struct {
@@ -161,6 +165,8 @@ spec:
   template:
     metadata:
       name: '{{name}}'
+    spec:
+      project: default
 `)
 
 	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", data, Options{Provider: ProviderOptions{Data: ProviderData{
@@ -198,6 +204,8 @@ spec:
   template:
     metadata:
       name: '{{name}}'
+    spec:
+      project: default
 `)
 
 	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", data, Options{Provider: ProviderOptions{Data: ProviderData{
@@ -301,6 +309,8 @@ spec:
   template:
     metadata:
       name: '{{name}}'
+    spec:
+      project: default
 `)
 
 	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", data, Options{Provider: ProviderOptions{Data: ProviderData{

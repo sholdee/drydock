@@ -2151,3 +2151,26 @@ func TestRenderOptionsNormalizesTrackingOptionsForArgoEnv(t *testing.T) {
 		t.Fatalf("ARGOCD_APP_NAME with custom controller namespace = %q, want %q", got, "argocd_demo")
 	}
 }
+
+// TestArgoRenderEnvDefaultsEmptyProject pins ARGOCD_APP_PROJECT_NAME for an
+// Application with an empty spec.project. The controller looks the project
+// up through spec.GetProject() and sends proj.Name (controller/state.go:426
+// at v3.6.1), so the repo-server sees "default", never "".
+func TestArgoRenderEnvDefaultsEmptyProject(t *testing.T) {
+	application := argoappv1.Application{
+		Name: "demo", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{Destination: argoappv1.ApplicationDestination{Namespace: "workloads"}},
+	}
+	source := argoappv1.ApplicationSource{Path: "apps/demo"}
+	env := argoRenderEnv(application, source, "argocd")
+	if got := env.Envsubst("$ARGOCD_APP_PROJECT_NAME"); got != argoappv1.DefaultAppProjectName {
+		t.Fatalf("ARGOCD_APP_PROJECT_NAME = %q, want %q", got, argoappv1.DefaultAppProjectName)
+	}
+	opts, err := renderOptions(application, source, CapabilityOptions{}, TrackingOptions{})
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.Project != argoappv1.DefaultAppProjectName {
+		t.Fatalf("RenderOptions.Project = %q, want %q", opts.Project, argoappv1.DefaultAppProjectName)
+	}
+}

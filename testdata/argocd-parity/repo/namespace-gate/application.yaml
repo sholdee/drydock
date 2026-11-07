@@ -1,0 +1,18 @@
+# This Application lives in parity-namespace-disabled, which
+# application.namespaces in argocd-cmd-params-cm does not list. The Argo CD
+# application controller never reconciles it, and the API server refuses
+# it. drydock must skip it with a discovery.namespace-not-enabled warning.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-namespace-disabled
+  namespace: parity-namespace-disabled
+spec:
+  project: parity-tenant
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/source-hydrator/dry
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-tenant-workloads

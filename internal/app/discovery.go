@@ -193,7 +193,22 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 		renderSig = nextRenderSig
 	}
 
-	return discovered, dedupeDiagnostics(allDiags), allEvents, renderCache, renderSig, nil
+	discovered, gateDiags, err := applyFinalNamespaceGate(root, discovered)
+	return discovered, dedupeDiagnostics(append(allDiags, gateDiags...)), allEvents, renderCache, renderSig, err
+}
+
+// applyFinalNamespaceGate prunes what Argo CD never reconciles, with the
+// settings at the end of discovery. Fleet discovery can find
+// argocd-cmd-params-cm late, after it expanded an ApplicationSet or rendered
+// an Application that Argo CD never reconciles, so the gate runs once more
+// on the whole result.
+func applyFinalNamespaceGate(root string, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, error) {
+	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	if err != nil {
+		return discovered, nil, err
+	}
+	pruned, diags := pruneNotEnabledNamespaces(discovered, namespaceGateFromSettings(settings))
+	return pruned, diags, nil
 }
 
 // expandFirstApplicationSets sets the

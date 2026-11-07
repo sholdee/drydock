@@ -1,0 +1,9 @@
+# A k3s HelmChart manifest. Its file name ends in Chart.yaml and sorts after
+# kustomization.yaml, so Argo CD renders this directory with Helm. Helm
+# reads only templates/, so this file is not rendered.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: traefik
+spec:
+  chart: traefik

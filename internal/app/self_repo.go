@@ -138,19 +138,30 @@ func (m selfRepoMatcher) matches(repoURL, revision string) bool {
 	if len(m.urlKeys) == 0 {
 		return false
 	}
-	rev := strings.TrimSpace(revision)
-	if sourcepkg.IsCommitSHA(rev) {
-		return false // pinned SHAs always acquire
-	}
-	if !sourcepkg.IsDefaultRevision(rev) {
-		if _, ok := m.revisions[rev]; !ok {
-			return false // tags/unrelated branches acquire
-		}
+	if !m.tracksRevision(revision) {
+		return false // pinned SHAs, tags, and unrelated branches acquire
 	}
 	if strings.TrimSpace(repoURL) == "" {
 		return false
 	}
 	_, ok := m.urlKeys[sourcepkg.CanonicalGitURLKey(repoURL)]
+	return ok
+}
+
+// tracksRevision is the revision half of matches: "", HEAD, a diffed ref
+// name, or a symref-derived default-branch name tracks the local tree, and
+// a pinned commit SHA never does. A --repo-map of a repository to the tree
+// under analysis already names the repository, so it needs only this half
+// (localProvider.hydratorSyncIsLocalTree).
+func (m selfRepoMatcher) tracksRevision(revision string) bool {
+	rev := strings.TrimSpace(revision)
+	if sourcepkg.IsCommitSHA(rev) {
+		return false
+	}
+	if sourcepkg.IsDefaultRevision(rev) {
+		return true
+	}
+	_, ok := m.revisions[rev]
 	return ok
 }
 

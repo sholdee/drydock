@@ -96,7 +96,8 @@ func applicationSettingsInstall(ctx context.Context, request BuildRequest, provi
 // settingsInstallMemoKey covers every input of computeSettingsInstall that
 // comes from the Application: the name, namespace, and project, which the
 // build environment and the .argocd-source-<app>.yaml file name read, the
-// destination, which the build environment reads, and the sources.
+// destination, which the build environment reads, and the sources, with the
+// source hydrator, whose sync source replaces them.
 func settingsInstallMemoKey(application argoappv1.Application) (string, bool) {
 	data, err := json.Marshal(struct {
 		Name        string                           `json:"name"`
@@ -105,7 +106,8 @@ func settingsInstallMemoKey(application argoappv1.Application) (string, bool) {
 		Destination argoappv1.ApplicationDestination `json:"destination"`
 		Source      *argoappv1.ApplicationSource     `json:"source,omitempty"`
 		Sources     argoappv1.ApplicationSources     `json:"sources,omitempty"`
-	}{application.Name, application.Namespace, application.Spec.Project, application.Spec.Destination, application.Spec.Source, application.Spec.Sources})
+		Hydrator    *argoappv1.SourceHydrator        `json:"sourceHydrator,omitempty"`
+	}{application.Name, application.Namespace, application.Spec.Project, application.Spec.Destination, application.Spec.Source, application.Spec.Sources, application.Spec.SourceHydrator})
 	if err != nil {
 		return "", false
 	}
@@ -113,6 +115,12 @@ func settingsInstallMemoKey(application argoappv1.Application) (string, bool) {
 }
 
 func computeSettingsInstall(ctx context.Context, memo *sync.Map, provider localProvider, application argoappv1.Application) settingsInstall {
+	// The sync source of a source hydrator renders from another branch in
+	// most cases, so its values files are not files of this tree. drydock
+	// still reads the settings ConfigMaps that its render holds.
+	if application.Spec.SourceHydrator != nil {
+		return settingsInstall{}
+	}
 	plan, err := Plan(application)
 	if err != nil {
 		return settingsInstall{}
@@ -274,9 +282,9 @@ func settingsInstallRenderEnv(provider localProvider, application argoappv1.Appl
 }
 
 // settingsInstallSourceType returns the source type as Argo CD picks it: the
-// explicit type of the source when it sets one, else Kustomize for a
-// directory with a kustomization file, else Helm for a chart. A chart from a
-// chart repository is Helm. An empty result means a directory or a plugin.
+// explicit type of the source when it sets one, else the type that
+// discoverLocalSourceType finds in the directory. A chart from a chart
+// repository is Helm. An empty result means a directory or a plugin.
 func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, local bool) argoappv1.ApplicationSourceType {
 	if sourcePlan.ExplicitType != "" {
 		return sourcePlan.ExplicitType
@@ -288,15 +296,11 @@ func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, l
 	if !local {
 		return ""
 	}
-	dir := filepath.Join(root, filepath.FromSlash(sourcePath))
-	switch {
-	case hasKustomizationFile(dir):
-		return argoappv1.ApplicationSourceTypeKustomize
-	case sourceRootHasLocalChart(dir):
-		return argoappv1.ApplicationSourceTypeHelm
-	default:
+	sourceType, err := discoverLocalSourceType(filepath.Join(root, filepath.FromSlash(sourcePath)))
+	if err != nil {
 		return ""
 	}
+	return sourceType
 }
 
 func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) {
@@ -374,13 +378,10 @@ func explicitDiscoverKustomizePaths(request BuildRequest) map[string]struct{} {
 // application renders, from this repository root, a path that
 // --discover-kustomize renders too.
 func applicationRendersExplicitKustomizePath(provider localProvider, application argoappv1.Application, explicit map[string]struct{}) bool {
-	if len(explicit) == 0 {
+	if len(explicit) == 0 || application.Spec.SourceHydrator != nil {
 		return false
 	}
-	sources := application.Spec.Sources
-	if len(sources) == 0 && application.Spec.Source != nil {
-		sources = argoappv1.ApplicationSources{*application.Spec.Source}
-	}
+	sources := applicationRenderSources(application.Spec)
 	for _, source := range sources {
 		if sourcePath, ok := settingsInstallLocalSourcePath(provider, source); ok {
 			if _, found := explicit[sourcePath]; found {

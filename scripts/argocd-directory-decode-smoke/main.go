@@ -20,6 +20,11 @@
 // object. Tracking metadata that cannot be set fails in the repo-server with
 // a message that names the object instead of the file, so such a case sets
 // argocdNamesObject to that object's name.
+//
+// A case with source spec has no failing file. Its Application spec is one
+// that the Argo CD controller rejects before it renders anything, so Argo CD
+// must report an InvalidSpecError condition that contains argocdMessage,
+// and drydock must fail with stderr that contains drydockMessage.
 package main
 
 import (
@@ -41,6 +46,11 @@ import (
 // v3.6.1).
 const comparisonErrorType = "ComparisonError"
 
+// invalidSpecErrorType is the Application condition type the Argo CD
+// controller sets when the spec fails its checks (ValidatePermissions,
+// util/argo/argo.go at v3.6.1). The controller then skips the comparison.
+const invalidSpecErrorType = "InvalidSpecError"
+
 // missingKindPrefix starts the error the Argo CD controller reports when a
 // generated manifest has no kind. v1alpha1.UnmarshalToUnstructured
 // (pkg/apis/application/v1alpha1/types.go:4154-4164 at v3.6.1) returns the
@@ -57,6 +67,7 @@ const (
 	sourceHelmFileParameters = "helm-file-parameters"
 	sourceKustomize          = "kustomize"
 	sourcePlugin             = "plugin"
+	sourceSpec               = "spec"
 )
 
 // pluginOutputName is the name drydock gives the output of a config
@@ -80,7 +91,7 @@ type expectedFile struct {
 type expectedCase struct {
 	Name string `yaml:"name"`
 	// Source is the source type of the Application: directory (the
-	// default), helm, kustomize, or plugin.
+	// default), helm, helm-file-parameters, kustomize, plugin, or spec.
 	Source         string `yaml:"source"`
 	File           string `yaml:"file"`
 	ArgoCDMessage  string `yaml:"argocdMessage"`
@@ -237,6 +248,15 @@ func (tc expectedCase) SourceType() string {
 	return tc.Source
 }
 
+// ConditionType is the Application condition type that Argo CD must set:
+// InvalidSpecError for a spec case, ComparisonError for the others.
+func (tc expectedCase) ConditionType() string {
+	if tc.SourceType() == sourceSpec {
+		return invalidSpecErrorType
+	}
+	return comparisonErrorType
+}
+
 // DrydockName is the name that drydock's message must contain: the file, or
 // generate-output for a plugin case.
 func (tc expectedCase) DrydockName() string {
@@ -246,8 +266,20 @@ func (tc expectedCase) DrydockName() string {
 	return tc.File
 }
 
-// validateSource requires a failing file and a known source type.
+// validateSource requires a failing file and a known source type. A spec
+// case has no file, and both of its messages must be set.
 func (tc expectedCase) validateSource() error {
+	if tc.SourceType() == sourceSpec {
+		switch {
+		case tc.File != "":
+			return fmt.Errorf("expected case %s has source spec and must not name a file", tc.Name)
+		case tc.ArgoCDQuotesObject || tc.ArgoCDNamesObject != "":
+			return fmt.Errorf("expected case %s has source spec and must not set argocdQuotesObject or argocdNamesObject", tc.Name)
+		case strings.TrimSpace(tc.ArgoCDMessage) == "" || strings.TrimSpace(tc.DrydockMessage) == "":
+			return fmt.Errorf("expected case %s has source spec and must set argocdMessage and drydockMessage", tc.Name)
+		}
+		return nil
+	}
 	if strings.TrimSpace(tc.File) == "" {
 		return fmt.Errorf("expected case %s must name the failing file", tc.Name)
 	}
@@ -255,7 +287,7 @@ func (tc expectedCase) validateSource() error {
 	case sourceDirectory, sourceHelm, sourceHelmFileParameters, sourceKustomize, sourcePlugin:
 		return nil
 	}
-	return fmt.Errorf("expected case %s has source %q, want directory, helm, helm-file-parameters, kustomize, or plugin", tc.Name, tc.Source)
+	return fmt.Errorf("expected case %s has source %q, want directory, helm, helm-file-parameters, kustomize, plugin, or spec", tc.Name, tc.Source)
 }
 
 // validateDrydockMessage requires that drydock's message names the file, or
@@ -286,28 +318,38 @@ func validateExpected(cases []expectedCase) error {
 		if err := tc.validateSource(); err != nil {
 			return err
 		}
-		// Each side's message must name the file, so a failure caused by
-		// some other file cannot pass the case. The Argo CD message for a
-		// manifest without a kind names no file, so it must quote part of
-		// the object instead. The Argo CD message for tracking metadata that
-		// cannot be set names the object instead.
-		switch {
-		case tc.ArgoCDQuotesObject && tc.ArgoCDNamesObject != "":
-			return fmt.Errorf("expected case %s must not set both argocdQuotesObject and argocdNamesObject", tc.Name)
-		case tc.ArgoCDNamesObject != "":
-			if !strings.Contains(tc.ArgoCDMessage, tc.ArgoCDNamesObject) {
-				return fmt.Errorf("expected case %s argocdMessage must contain the object name %q", tc.Name, tc.ArgoCDNamesObject)
-			}
-		case tc.ArgoCDQuotesObject:
-			if !strings.HasPrefix(tc.ArgoCDMessage, missingKindPrefix) || len(tc.ArgoCDMessage) == len(missingKindPrefix) {
-				return fmt.Errorf("expected case %s argocdMessage must start with %q and quote part of the object", tc.Name, missingKindPrefix)
-			}
-		case !strings.Contains(tc.ArgoCDMessage, tc.File):
-			return fmt.Errorf("expected case %s argocdMessage must contain the file name %q", tc.Name, tc.File)
+		if tc.SourceType() == sourceSpec {
+			continue
+		}
+		if err := tc.validateArgoCDMessage(); err != nil {
+			return err
 		}
 		if err := tc.validateDrydockMessage(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateArgoCDMessage requires that the Argo CD message names the file,
+// so a failure caused by some other file cannot pass the case. The Argo CD
+// message for a manifest without a kind names no file, so it must quote
+// part of the object instead. The Argo CD message for tracking metadata
+// that cannot be set names the object instead.
+func (tc expectedCase) validateArgoCDMessage() error {
+	switch {
+	case tc.ArgoCDQuotesObject && tc.ArgoCDNamesObject != "":
+		return fmt.Errorf("expected case %s must not set both argocdQuotesObject and argocdNamesObject", tc.Name)
+	case tc.ArgoCDNamesObject != "":
+		if !strings.Contains(tc.ArgoCDMessage, tc.ArgoCDNamesObject) {
+			return fmt.Errorf("expected case %s argocdMessage must contain the object name %q", tc.Name, tc.ArgoCDNamesObject)
+		}
+	case tc.ArgoCDQuotesObject:
+		if !strings.HasPrefix(tc.ArgoCDMessage, missingKindPrefix) || len(tc.ArgoCDMessage) == len(missingKindPrefix) {
+			return fmt.Errorf("expected case %s argocdMessage must start with %q and quote part of the object", tc.Name, missingKindPrefix)
+		}
+	case !strings.Contains(tc.ArgoCDMessage, tc.File):
+		return fmt.Errorf("expected case %s argocdMessage must contain the file name %q", tc.Name, tc.File)
 	}
 	return nil
 }
@@ -320,9 +362,10 @@ func evaluateArgoCD(tc expectedCase, namespace, dir string) []string {
 	if app.Metadata.Name != tc.Name || app.Metadata.Namespace != namespace {
 		return []string{fmt.Sprintf("Argo CD capture is Application %s/%s", app.Metadata.Namespace, app.Metadata.Name)}
 	}
+	conditionType := tc.ConditionType()
 	var messages []string
 	for _, condition := range app.Status.Conditions {
-		if condition.Type != comparisonErrorType {
+		if condition.Type != conditionType {
 			continue
 		}
 		if strings.Contains(condition.Message, tc.ArgoCDMessage) {
@@ -331,9 +374,9 @@ func evaluateArgoCD(tc expectedCase, namespace, dir string) []string {
 		messages = append(messages, condition.Message)
 	}
 	if len(messages) == 0 {
-		return []string{fmt.Sprintf("Argo CD has no %s condition, want one containing %q", comparisonErrorType, tc.ArgoCDMessage)}
+		return []string{fmt.Sprintf("Argo CD has no %s condition, want one containing %q", conditionType, tc.ArgoCDMessage)}
 	}
-	return []string{fmt.Sprintf("Argo CD %s condition %q does not contain %q", comparisonErrorType, strings.Join(messages, " | "), tc.ArgoCDMessage)}
+	return []string{fmt.Sprintf("Argo CD %s condition %q does not contain %q", conditionType, strings.Join(messages, " | "), tc.ArgoCDMessage)}
 }
 
 func readApplicationStatusFile(path string) (appStatusFile, error) {

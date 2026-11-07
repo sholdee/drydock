@@ -48,6 +48,11 @@ type ApplicationFile struct {
 	// Application (SourceTierExplicitRendered, SourceTierPolicyBootstrap).
 	ParentKey   string
 	RenderedDir string
+	// ApplicationSetKey is the namespace/name key (namespace + "\x00" +
+	// name) of the ApplicationSet that generated the Application. It is
+	// empty for an Application that a manifest declares. Like ParentKey, it
+	// never keys a cache or fingerprint.
+	ApplicationSetKey string
 }
 
 type ApplicationSetFile struct {

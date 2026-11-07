@@ -210,7 +210,7 @@ func applicationProjections(applications []argoappv1.Application) []map[string]a
 		out = append(out, map[string]any{
 			"namespace": application.Namespace,
 			"name":      application.Name,
-			"project":   application.Spec.Project,
+			"project":   application.Spec.GetProject(),
 			"destination": map[string]string{
 				"name":      application.Spec.Destination.Name,
 				"server":    application.Spec.Destination.Server,
@@ -274,14 +274,11 @@ func sourceSummary(application argoappv1.Application) []map[string]string {
 	return out
 }
 
+// applicationSources returns the sources that Argo CD compares
+// (ApplicationSpec.GetSources): the sync source alone for an Application
+// with spec.sourceHydrator, else spec.sources, else spec.source.
 func applicationSources(application argoappv1.Application) []argoappv1.ApplicationSource {
-	if len(application.Spec.Sources) > 0 {
-		return append([]argoappv1.ApplicationSource(nil), application.Spec.Sources...)
-	}
-	if application.Spec.Source != nil {
-		return []argoappv1.ApplicationSource{*application.Spec.Source}
-	}
-	return nil
+	return append([]argoappv1.ApplicationSource(nil), application.Spec.GetSources()...)
 }
 
 func destinationTableValue(value any) string {

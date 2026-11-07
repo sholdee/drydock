@@ -1,6 +1,7 @@
 package gitref
 
 import (
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/sholdee/drydock/internal/source"
 )
 
@@ -34,4 +35,19 @@ func PinnedRevision(repoPath, revision, repoURL string) (single, multi string, o
 		return source.PinnedRevision(nil, revision, repoURL)
 	}
 	return source.PinnedRevision(repo, revision, repoURL)
+}
+
+// CurrentBranch returns the short name of the branch that HEAD names in the
+// Git repository whose top-level directory is repoPath, such as "main". It
+// returns "" when repoPath is no repository top or when HEAD is detached.
+func CurrentBranch(repoPath string) string {
+	repo, _, err := openLocalRepository(repoPath)
+	if err != nil {
+		return ""
+	}
+	head, err := repo.Storer.Reference(plumbing.HEAD)
+	if err != nil || head.Type() != plumbing.SymbolicReference || !head.Target().IsBranch() {
+		return ""
+	}
+	return head.Target().Short()
 }

@@ -80,11 +80,15 @@ func applicationSelectionPaths(input ApplicationSelectionInput) []string {
 	return paths
 }
 
+// applicationSourcePaths returns the local source paths of app. It leaves
+// out the sync source of a source hydrator: whether the render reads it
+// from the local tree depends on the tree (hydratorSyncRendersFromRoot), so
+// withSelectionOnlyPaths adds it only when it does.
 func applicationSourcePaths(app argoappv1.Application) []string {
-	sources := app.Spec.Sources
-	if len(sources) == 0 && app.Spec.Source != nil {
-		sources = argoappv1.ApplicationSources{*app.Spec.Source}
+	if app.Spec.SourceHydrator != nil {
+		return nil
 	}
+	sources := applicationRenderSources(app.Spec)
 
 	paths := make([]string, 0, len(sources))
 	for _, source := range sources {

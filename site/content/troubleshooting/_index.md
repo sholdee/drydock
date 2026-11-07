@@ -224,6 +224,78 @@ drydock build apps --path . --oci-cache-dir /var/cache/drydock-oci --offline
 Its earlier chart-cache entries are orphaned; `drydock cache prune --source
 chart` removes them.
 
+## Symptom: An Application Fails With `invalid spec`
+
+The Argo CD controller checks the sources of each Application before it
+renders anything. If a check fails, Argo CD sets an `InvalidSpecError`
+condition and renders nothing. drydock fails the Application with the same
+text:
+
+```text
+error render.failed: Application argocd/app failed to render: invalid spec: spec.source.repoURL and either spec.source.path or spec.source.chart are required
+```
+
+Fix the spec as Argo CD requires:
+
+- A single source needs `repoURL` and `path` or `chart`. An `oci://` source
+  too: set `path: .` for the artifact root.
+- A multi-source entry needs `repoURL` and one of `path`, `chart`, and
+  `ref`. drydock names the entry, for example `sources[1]:`.
+- A `chart` needs `targetRevision`.
+- A `spec.sourceHydrator` needs `drySource.repoURL` and
+  `syncSource.targetBranch`, and `hydrateTo.targetBranch` when it sets
+  `hydrateTo`. Its `syncSource.path` must not be empty, `.`, or `/`. The API
+  server rejects such a path, so Argo CD never holds the Application.
+
+Earlier drydock releases rendered nothing for such an Application and passed
+it.
+
+## Symptom: `source.hydrator-sync-source`
+
+An Application with `spec.sourceHydrator` gets this warning. Argo CD compares
+such an Application against its sync source only: `syncSource.path` at
+`syncSource.targetBranch`. It ignores `spec.source` and `spec.sources`.
+drydock renders the same sync source at the same branch. For the repository
+under analysis, it reads the tree of each side only when the branch is
+`HEAD`, a `--ref` or `--ref-orig` name, or the default branch. That rule is
+stricter than for other sources, which also read the tree when their path
+exists there. A `targetBranch` equal to the default branch renders the
+working tree, even when another branch is checked out. A `--repo-map` to the
+tree under analysis behaves as if there were no map. A `--repo-map` to another
+Git repository gives the branch from a snapshot. Otherwise drydock reads the
+branch from the Git cache or fetches it, and `--offline` fails on a cache
+miss. It cannot run the hydrator offline, so a change to the dry source
+shows in drydock only after the hydrator commits it to the sync branch.
+`--strict` does not fail on the warning.
+
+## Symptom: `discovery.namespace-not-enabled`, Or An Application Is Missing
+
+drydock read an `argocd-cmd-params-cm` whose `application.namespaces` or
+`applicationsetcontroller.namespaces` does not match the namespace of an
+Application or an ApplicationSet. Argo CD never reconciles such an object, so
+drydock skips it. It also skips what the object would create:
+
+```text
+warning discovery.namespace-not-enabled: Application team-b/app is skipped: namespace "team-b" is not enabled for Argo CD, so Argo CD never reconciles it; add the namespace to argocd-cmd-params-cm application.namespaces to enable it (Argo CD namespace argocd)
+```
+
+drydock applies the lists only when the `argocd-cmd-params-cm` that it reads
+names its `metadata.namespace`, which is the Argo CD namespace. To enable a
+namespace, add it to the list in `argocd-cmd-params-cm`. Each
+entry is a glob, or a regular expression when slashes wrap it, for example
+`/^team-[a-z]+$/`. The AppProject must also list the namespace in
+`sourceNamespaces`. `--strict` does not fail on the warning.
+
+## Symptom: A Kustomize Directory Renders As A Helm Chart
+
+A source without an explicit type gets its type from the file names in its
+directory, as in the Argo CD repo-server. The last name in name order that
+ends in `Chart.yaml` or is a kustomization file decides. A k3s
+`traefik-HelmChart.yaml` next to `kustomization.yaml` makes the directory a
+Helm chart, and Helm fails without a `Chart.yaml`. Rename the file so that
+its name does not end in `Chart.yaml`. An empty `kustomize: {}` block does
+not set the type, because Argo CD removes an empty block from the spec.
+
 ## Symptom: A Directory Source Skips Files Or Warns `directory.extension-filter-disabled`
 
 drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
