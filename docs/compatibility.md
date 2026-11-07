@@ -636,16 +636,23 @@ Supported:
      `KUBECONFIG` is unset. The repo-server has no kubeconfig of its own.
   3. Without a kubeconfig, a `HELM_KUBECONTEXT` that is not empty names a
      context that does not exist, so client-go fails and Helm uses
-     `default` (`ConfirmUsable`, `client_config.go:441-446`).
+     `default` (`ConfirmUsable`, `client_config.go:441-446`). This also
+     applies when drydock goes on without a `KUBECONFIG` that it cannot
+     read.
   4. When a service account token is mounted, `POD_NAMESPACE`, else the
      namespace file next to the token, which is the pod namespace. The
      kubelet mounts both when the pod spec `automountServiceAccountToken` is
      `true`, or unset while the ServiceAccount does not set it to `false`. A
-     volume that the container mounts at the token path holds the namespace
-     file when it is a Secret volume or a projected volume with a
-     `downwardAPI` item at the path `namespace`. Without the file, the
-     namespace is `default` (`inClusterClientConfig.Namespace`,
-     `client_config.go:646-661`).
+     volume that the container mounts at the token path counts only when it
+     holds a file named `token`, because client-go uses the in-cluster
+     config only with the token (`inClusterClientConfig.Possible`,
+     `client_config.go:666-671`). A Secret volume without `items` holds
+     both files, as a service account token Secret does. With `items`, and
+     for the `secret`, `configMap`, and `downwardAPI` sources of a projected
+     volume, a file counts only when an item has its path, and a
+     `serviceAccountToken` source gives the token at its path. Without the
+     namespace file, the namespace is `default`
+     (`inClusterClientConfig.Namespace`, `client_config.go:646-661`).
   5. Else `default`.
 
   The upstream `install.yaml` sets `automountServiceAccountToken: false`,
@@ -665,15 +672,22 @@ Supported:
     Application renders the file when one of its sources renders this
     repository (not an `oci://` artifact and not a chart from a chart
     repository) and reads the file: a Kustomize source whose kustomization
-    graph reads it, or a directory source with the file directly in its
-    path, or below it with `directory.recurse`. A Helm chart renders its
-    templates, and a plugin is not known, so neither counts. The namespace
-    is the `kustomize.namespace` of such an Application, else the
-    `namespace` of the kustomization in its directory that lists it, which
-    the kustomize namespace transformer sets over the object's own, else
-    its own namespace, else the destination namespace of such an
-    Application. A file that only Applications on other clusters render
-    does not count. When drydock cannot tell the namespace of a Deployment
+    graph reads it, also a base outside the source path, or a directory
+    source with the file directly in its path, or below it with
+    `directory.recurse`, when its `include` and `exclude` globs let the
+    file through. A Helm chart renders its templates, and a plugin is not
+    known, so neither counts. For a Kustomize source, kustomize applies the
+    `namespace` of every kustomization on the way from the source to the
+    file, over the object's own, and the outermost one wins. Argo CD sets
+    the `kustomize.namespace` of the Application on the source
+    kustomization, so it wins over all of them, but only while the source
+    renders with Kustomize, not with `kustomize.enable` off. Without a
+    kustomization namespace, the object's own namespace counts, then the
+    destination namespace of such an Application. A file that no
+    Application renders gets the `namespace` of the kustomization in its
+    own directory that lists it; drydock does not search the repository for
+    kustomizations further up. A file that only Applications on other
+    clusters render does not count. When drydock cannot tell the namespace of a Deployment
     or a ServiceAccount, it assumes the Argo CD namespace, and it warns for
     the Deployment.
 
@@ -688,8 +702,9 @@ Supported:
   reference also adds a warning that names the repo-server and the
   namespace that drydock uses, unless a literal `HELM_NAMESPACE` decides
   the namespace. drydock keeps only the kind of such a source, never its
-  value. Of a ServiceAccount it keeps only the name, namespace, labels, and
-  `automountServiceAccountToken`. Without a
+  value. Of each pod volume it keeps only the name and whether the volume
+  holds a `token` file and a `namespace` file. Of a ServiceAccount it keeps
+  only the name, namespace, labels, and `automountServiceAccountToken`. Without a
   repo-server that counts, drydock uses `default`. The namespace is part of
   the render settings signature, so a change renders every Application
   again. Earlier drydock releases used the release name as written and an
