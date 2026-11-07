@@ -301,7 +301,10 @@ a deterministic placeholder (`drydock-ksops-redacted-<12hex>`), with Secret
 `data:`/`binaryData:` and ConfigMap `binaryData:` values encoded as valid
 base64 (plain elsewhere). No decryption key, network call, or exec is
 involved. Pair with `--skip-secrets` to suppress placeholder Secrets from diff
-output.
+output. When drydock finds an `argocd-cm`, a KSOPS generator also needs
+`--enable-alpha-plugins` in `kustomize.buildOptions`, as in kustomize, and a
+KSOPS exec function needs `--enable-exec` too. Without that flag, kustomize
+skips the function, and drydock renders nothing for it with a warning.
 
 ```bash
 drydock diff apps --repo . --ref HEAD --ref-orig origin/main --enable-ksops-compat --skip-secrets

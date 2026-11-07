@@ -395,7 +395,9 @@ values, as the kustomize v5.8.3 build command reads them:
 | `--load-restrictor` | `LoadRestrictionsRootOnly`, an empty value, or `LoadRestrictionsNone`. |
 | `--reorder`, `--enable-managedby-label` | Change the order of the output and add the managed-by label, as in kustomize. |
 | `--helm-debug`, `--network`, `--mount`, `-e`, and the other function flags | Change nothing that drydock renders. |
-| `--help`, `--output`, a `--helm-command` other than `helm` | Fail, because drydock does not run what they ask for. |
+| `--output` | `/dev/stdout` changes nothing. Another path gives no manifests and a warning, as Argo CD reads none. |
+| `--helm-command` | A program named `helm` changes nothing. Another program fails `helmCharts`, because drydock does not run it. |
+| `--help` | Fails, because kustomize prints its help instead of manifests. |
 
 A flag that kustomize does not know fails with the kustomize error. With a
 found `argocd-cm`, `helmCharts` fail without `--enable-helm` or
@@ -403,7 +405,9 @@ found `argocd-cm`, `helmCharts` fail without `--enable-helm` or
 `--enable-helm`. A source whose `spec.source.kustomize.version` names no
 `kustomize.version.<name>` or `kustomize.path.<name>` key fails, as in
 Argo CD. drydock renders every version with its embedded kustomize, and
-`kustomize.path.<name>` produces a warning. Argo CD v3.6.1 never applies
+both key forms produce a warning. With a found `argocd-cm`, KSOPS
+generators need `--enable-alpha-plugins`, and a KSOPS exec function also
+needs `--enable-exec`, as in kustomize. Argo CD v3.6.1 never applies
 `kustomize.buildOptions.<name>`, and drydock warns about it.
 
 Kustomize `helmCharts` render natively through the same Helm library path used

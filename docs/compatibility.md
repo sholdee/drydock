@@ -1456,9 +1456,8 @@ Supported:
   accepted only a few flags and failed on the rest. The flags act as
   follows:
   - `--enable-helm` and `--enable-alpha-plugins` turn Helm on for
-    `helmCharts`. `--enable-alpha-plugins` does so too
-    (`HonorKustomizeFlags`). drydock still runs no plugin program, also
-    with `--enable-exec`.
+    `helmCharts` (`HonorKustomizeFlags`). drydock still runs no plugin
+    program, also with `--enable-exec`.
   - `--load-restrictor` with an empty value means
     `LoadRestrictionsRootOnly`, as in kustomize.
   - `--reorder none` keeps the resource order, and `--reorder legacy` or no
@@ -1471,9 +1470,16 @@ Supported:
   - `--helm-kube-version` and `--helm-api-versions` give the flag values of
     `helmCharts`. The last `--helm-kube-version` wins, and the
     `--helm-api-versions` values add up.
-  - `--helm-command` with the default value `helm` changes nothing. An empty
-    value fails `helmCharts` with `must specify --helm-command`, as in
-    kustomize.
+  - `--helm-command` with a program named `helm`, such as the default `helm`
+    or `/usr/local/bin/helm`, changes nothing. An empty value fails
+    `helmCharts` with `must specify --helm-command`, as in kustomize.
+  - `--output` or `-o` with `/dev/stdout`, `/dev/fd/1`, or `/proc/self/fd/1`
+    changes nothing, because kustomize writes the build to its standard
+    output. With any other path, kustomize writes the build there, and Argo
+    CD reads no manifests and does not fail. drydock then builds the source,
+    so that a build error still fails it, renders no manifests, and reports
+    the `kustomize.build-output-discarded` warning. drydock does not check
+    that the directory of the path exists in the repo-server.
   - `--helm-debug`, `--stack-trace`, `--network`, `--network-name`,
     `--mount`, `-e`/`--env`, and `--as-current-user` change nothing that
     drydock renders. kustomize reads the last five only for KRM functions,
@@ -1500,16 +1506,35 @@ Supported:
   renders natively with exactly the flags of that command. Argo CD adds no
   flags to a plugin command, so the kube and API versions of the
   Application do not reach its `helmCharts`.
-- Recorded divergences for `kustomize.buildOptions`, because drydock does not
-  run the output that they ask for, or another program:
-  `--help`, `-h`, `-o`, and `--output` fail closed, because kustomize then
-  prints its help or writes the build to a file, and Argo CD reads no
-  manifests. A `--helm-command` other than `helm` fails `helmCharts` closed,
-  because drydock renders charts with the Helm library and cannot run another
-  program. With `--reorder none`, drydock puts the output of `helmCharts`
-  before the output of `configMapGenerator` and `secretGenerator` of the same
-  kustomization, where kustomize puts it after them. In the default legacy
-  order, the two outputs are the same.
+- KSOPS generators follow the plugin flags of kustomize v5.8.3 when drydock
+  finds an `argocd-cm`. KSOPS is an external plugin, so without
+  `--enable-alpha-plugins` the source fails with `loading generator plugins:
+  failed to load generator: external plugins disabled; unable to load
+  external plugin 'ksops'`. A KSOPS document with an exec function
+  annotation, such as `config.kubernetes.io/function`, also needs
+  `--enable-exec`. With `--enable-alpha-plugins` alone, kustomize skips the
+  function, and the generator gives no resources. drydock then renders
+  nothing for it and reports the `kustomize.ksops-exec-skipped` warning. The
+  legacy plugin form without that annotation needs `--enable-alpha-plugins`
+  only. Without an `argocd-cm`, drydock emulates every KSOPS generator under
+  `--enable-ksops-compat`, as before. Earlier drydock releases ignored the
+  two flags.
+- Recorded divergences for `kustomize.buildOptions`:
+  - `--help` and `-h` fail closed, because kustomize then prints its help
+    instead of manifests.
+  - A `--helm-command` that names a program other than `helm` fails
+    `helmCharts` closed, because drydock renders charts with its Helm
+    library and cannot run that program.
+  - kustomize runs the generators of a kustomization in this order:
+    `configMapGenerator`, `secretGenerator`, then `helmCharts`
+    (`kusttarget_configplugin.go:36-40` at kustomize/api v0.21.3). drydock
+    renders `helmCharts` before krusty runs, as resources of the
+    kustomization, so their output comes before the output of the two
+    generators. The legacy sort hides the difference. It shows when the sort
+    is off: with `--reorder none`, or with `sortOptions: {order: fifo}` in the
+    kustomization. Only the order of the output differs, not the resources.
+    To match, drydock would need a hook between the generators of krusty,
+    which its API does not give.
 - Kustomize `helmCharts` release names and namespaces as kustomize v5.8.3
   passes them to `helm template`. Without `releaseName`, kustomize passes
   `--generate-name`, and `helm template` renders the release
@@ -2388,7 +2413,9 @@ Supported:
   "<key>": found duplicate kustomize version: <name>`. Without an
   `argocd-cm`, drydock cannot tell the versions, so it accepts every name.
   drydock renders a registered version with its embedded kustomize v5.8.3,
-  and `kustomize.path.<name>` keeps its warning.
+  and both key forms give a warning that drydock does not run the
+  registered binary. The render cache key holds whether drydock found an
+  `argocd-cm`, because that decides which versions are registered.
 - `kustomize.buildOptions.<name>` is not applied, as in Argo CD v3.6.1:
   Argo CD stores it with the version, but kustomize build gets only
   `kustomize.buildOptions`, whichever kustomize binary runs
