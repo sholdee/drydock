@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: images
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: images
+  template:
+    metadata:
+      labels:
+        app: images
+    spec:
+      containers:
+        - name: a
+          image: a:1
+        - name: b
+          image: b:2
+        - name: nginx
+          image: nginx:0.1
+        - name: busybox
+          image: busybox
+        - name: redis
+          image: redis:7
+        - name: memcached
+          image: memcached:1

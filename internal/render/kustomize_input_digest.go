@@ -128,24 +128,8 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 		if skipped {
 			continue
 		}
-		if err := c.addKustomizeRef(ctx, sourceRoot, "kustomize.components", component, false); err != nil {
+		if err := c.collectSourceKustomizeComponent(ctx, sourceRoot, component); err != nil {
 			return err
-		}
-		if component == "" || isRemoteKustomizeRef(component) || filepath.IsAbs(component) {
-			continue
-		}
-		componentRoot := filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(component)))
-		_, graph, err := collectKustomizeGraph(ctx, c.repoRoot, componentRoot, kustomizeInputWalk)
-		if err != nil {
-			if err := c.skip(ctx, err); err != nil {
-				return err
-			}
-			continue
-		}
-		for _, node := range graph {
-			if err := c.collectNode(ctx, node); err != nil {
-				return err
-			}
 		}
 	}
 	for _, patch := range kustomize.Patches {
@@ -154,6 +138,113 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 		}
 	}
 	return nil
+}
+
+// collectSourceKustomizeComponent adds the components that one
+// spec.source.kustomize.components pattern adds through the globs of
+// `kustomize edit add component`, with their graphs. A glob pattern also
+// owns the directory it lists (kustomizeComponentGlobDir), so a change that
+// adds or removes a match there selects the source. The directory is owned
+// as a path prefix only: the selection does not walk its tree. When that
+// directory is the repository root, the pattern owns nothing more, like a
+// Helm value file glob without a static prefix.
+func (c *kustomizeInputCollector) collectSourceKustomizeComponent(ctx context.Context, sourceRoot, pattern string) error {
+	// Own the glob folders first, from the pattern text, so a glob that
+	// then fails on a symlink still owns them. Own each element before a
+	// "..", too: the glob stops with no match when that element is
+	// missing or a file, so adding or deleting it changes the render.
+	for _, componentPattern := range sourceKustomizeComponentArgs([]string{pattern}) {
+		dirs := kustomizeComponentParentPrefixes(sourceRoot, componentPattern)
+		if globDir, ok := kustomizeComponentGlobDir(sourceRoot, componentPattern); ok {
+			dirs = append(dirs, globDir)
+		}
+		for _, dir := range dirs {
+			if err := c.addSelectionPrefix(dir); err != nil {
+				if err := c.skip(ctx, err); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	matches, _, err := sourceKustomizeComponentMatches(c.repoRoot, sourceRoot, []string{pattern})
+	if err != nil {
+		return c.skip(ctx, err)
+	}
+	for _, component := range matches {
+		if err := c.collectSourceKustomizeComponentMatch(ctx, sourceRoot, component); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectSourceKustomizeComponentMatch adds one component that a
+// spec.source.kustomize.components pattern matches, with its graph.
+func (c *kustomizeInputCollector) collectSourceKustomizeComponentMatch(ctx context.Context, sourceRoot, component string) error {
+	local := component != "" && !isRemoteKustomizeRef(component) && !filepath.IsAbs(component)
+	componentRoot := filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(component)))
+	// Check the path before anything under it is looked at, so a
+	// component in .git or behind a symlink is never walked.
+	if local {
+		if err := rejectSourceKustomizeComponentPath(c.repoRoot, component, componentRoot); err != nil {
+			return c.skip(ctx, err)
+		}
+	}
+	if err := c.addKustomizeRef(ctx, sourceRoot, "kustomize.components", component, false); err != nil {
+		return err
+	}
+	if !local {
+		return nil
+	}
+	_, graph, err := collectKustomizeGraph(ctx, c.repoRoot, componentRoot, kustomizeInputWalk)
+	if err != nil {
+		return c.skip(ctx, err)
+	}
+	for _, node := range graph {
+		if err := c.collectNode(ctx, node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// kustomizeComponentParentPrefixes returns, under dir, each prefix of a
+// component pattern that ends with a named element just before a "..",
+// such as "../../mid" in "../../mid/../components/*".
+func kustomizeComponentParentPrefixes(dir, pattern string) []string {
+	if filepath.IsAbs(pattern) {
+		return nil
+	}
+	elements := strings.Split(pattern, string(filepath.Separator))
+	var prefixes []string
+	for i := 1; i < len(elements); i++ {
+		previous := elements[i-1]
+		if elements[i] != ".." || previous == "" || previous == "." || previous == ".." {
+			continue
+		}
+		prefixes = append(prefixes, filepath.Clean(filepath.Join(dir, filepath.Join(elements[:i]...))))
+	}
+	return prefixes
+}
+
+// addSelectionPrefix owns dir for changed-only selection as a path prefix,
+// without a walk of its tree. dir must be inside the repository, below its
+// root, outside .git, and reached without a symlink.
+func (c *kustomizeInputCollector) addSelectionPrefix(dir string) error {
+	dir = filepath.Clean(dir)
+	if dir == c.repoRoot {
+		return nil
+	}
+	if err := rejectPathOutsideBoundary("kustomize components glob directory", dir, c.repoRoot); err != nil {
+		return err
+	}
+	if pathEntersGit(c.repoRoot, dir) {
+		return gitPathRefError("kustomize components glob directory", dir)
+	}
+	if err := rejectSymlinkedPath(c.repoRoot, dir); err != nil {
+		return err
+	}
+	return c.addDigestPath(dir, true)
 }
 
 // collectSkippedComponent applies the ignoreMissingComponents check to one
@@ -182,6 +273,15 @@ func (c *kustomizeInputCollector) collectSkippedComponent(ctx context.Context, s
 		return true, c.skip(ctx, err)
 	}
 	if decision.keep {
+		// The kustomization file of the kept folder decides that it is
+		// kept. The folder is not always a glob match of its own name.
+		if decision.probe != "" {
+			for _, name := range kustomizationFileNames {
+				if err := c.addAbsPath(ctx, filepath.Join(decision.probe, name), true); err != nil {
+					return false, err
+				}
+			}
+		}
 		return false, nil
 	}
 	if decision.probe == "" {

@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: labels-without-selector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: labels-without-selector
+  template:
+    metadata:
+      labels:
+        app: labels-without-selector
+    spec:
+      containers:
+        - name: web
+          image: registry.example.invalid/web:1.0

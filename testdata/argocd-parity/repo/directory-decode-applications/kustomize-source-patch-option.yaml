@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-decode-kustomize-source-patch-option
+  namespace: parity-directory-decode
+spec:
+  project: parity-directory-decode
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/directory-decode/kustomize-source-patch-option
+    kustomize:
+      namePrefix: option-
+      patches:
+        - target:
+            kind: Deployment
+          patch: |-
+            - op: add
+              path: /metadata/labels/patched
+              value: "true"
+          options:
+            allowNameChange: true
+            unknownOption: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-directory-decode-workloads

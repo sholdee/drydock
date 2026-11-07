@@ -373,6 +373,57 @@ cases:
     source: render
     argocdMessage: "invalid revision: version matching constraint not found in 5 tags"
     drydockMessage: "invalid revision: version matching constraint not found in 5 tags"
+  # Kustomize source options that fail. Argo CD v3.6.1 applies most of
+  # spec.source.kustomize with `kustomize edit` commands before `kustomize
+  # build` (util/kustomize/kustomize.go:174-401), so these are kustomize
+  # v5.8.3 edit errors. Each source directory holds a Deployment and a
+  # kustomization. drydock names the edit command before the text.
+  #
+  # A bare image name changes nothing (commands/edit/set/setimage.go:222-276).
+  - name: parity-decode-kustomize-source-image-bare
+    source: render
+    argocdMessage: "invalid format of image, use one of the following options:"
+    drydockMessage: "kustomize edit set image: invalid format of image, use one of the following options:"
+  # Argo CD passes the images without "--", so kustomize reads -x as a flag.
+  - name: parity-decode-kustomize-source-image-flag
+    source: render
+    argocdMessage: "unknown shorthand flag: 'x' in -x"
+    drydockMessage: "kustomize edit set image: unknown shorthand flag: 'x' in -x"
+  # A key already in commonLabels fails, also with the same value
+  # (commands/edit/add/addmetadata.go:158-164).
+  - name: parity-decode-kustomize-source-label-exists
+    source: render
+    argocdMessage: "label team already in kustomization file. Use --force to override."
+    drydockMessage: "kustomize edit add label: label team already in kustomization file. Use --force to override."
+  # labelIncludeTemplates needs labelWithoutSelector.
+  - name: parity-decode-kustomize-source-label-templates
+    source: render
+    argocdMessage: "--without-selector flag must be specified for --include-templates to work"
+    drydockMessage: "kustomize edit add label: --without-selector flag must be specified for --include-templates to work"
+  - name: parity-decode-kustomize-source-annotation-exists
+    source: render
+    argocdMessage: "annotation owner already in kustomization file. Use --force to override."
+    drydockMessage: "kustomize edit add annotation: annotation owner already in kustomization file. Use --force to override."
+  # No edit command runs before the patches, so Argo CD reads the empty
+  # patches field of the file itself (kustomize.go:286-312).
+  - name: parity-decode-kustomize-source-patches-null
+    source: render
+    argocdMessage: "expected 'patches' field in kustomization.yaml to be []any, but got <nil>"
+    drydockMessage: "expected 'patches' field in kustomization.yaml to be []any, but got <nil>"
+  # namePrefix rewrites the file first, which drops the empty patches
+  # field. kustomize build then reads the patch options as
+  # types.PatchArgs, which has no unknownOption field.
+  - name: parity-decode-kustomize-source-patch-option
+    source: render
+    argocdMessage: 'invalid Kustomization: json: unknown field "unknownOption"'
+    drydockMessage: 'invalid Kustomization: json: unknown field "unknownOption"'
+  # A component glob that matches nothing is loaded as a directory, and
+  # there is none (util.GlobPatternsWithLoader,
+  # commands/internal/util/util.go:36-70).
+  - name: parity-decode-kustomize-source-component-no-match
+    source: render
+    argocdMessage: "../kustomize-source-missing-* has no match: must build at directory: not a valid directory"
+    drydockMessage: "kustomize edit add component: ../kustomize-source-missing-* has no match: must build at directory: not a valid directory"
   # Spec cases have no failing file. The Argo CD controller checks the
   # sources of each Application before it renders anything
   # (ValidatePermissions, util/argo/argo.go:644-737 at v3.6.1). A failed

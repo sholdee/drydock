@@ -1584,6 +1584,123 @@ Supported:
   would be added (the first valid one), because drydock never reads absolute
   paths. An absolute ref after the first valid component is dropped, as in
   Argo CD.
+- `spec.source.kustomize` options apply as the `kustomize edit` commands
+  that Argo CD v3.6.1 runs before `kustomize build`
+  (`util/kustomize/kustomize.go:174-401`), with the rules of kustomize
+  v5.8.3. They apply in the order of Argo CD: `namePrefix`, `nameSuffix`,
+  `images`, `replicas`, `commonLabels`, `commonAnnotations`, `namespace`,
+  `patches`, then `components`. So the first option that fails gives the
+  error. drydock writes the error text of kustomize after the name of the
+  command, such as `kustomize edit set image: invalid format of image`.
+  Earlier drydock releases merged the options with their own rules.
+- Kustomize source `images` as `kustomize edit set image`. An entry without
+  `=` names the image and sets its tag, its digest, or both, as in
+  `nginx:1.2@sha256:...`. An empty name before `=` counts as no `=`, so
+  `=nginx:1.2` sets the tag of `nginx`. An entry with only a name, such as
+  `nginx`, fails. `nginx=` is accepted and sets an entry with only the
+  name: it replaces an `nginx` entry of the kustomization, and otherwise
+  changes nothing. A `*` new name, tag, or digest
+  keeps the value of the same image in the kustomization. The last entry
+  for a name wins. Then every image is sorted by name, one per name, so a
+  rename can feed a later rename: `a=b` with a kustomization image `b`
+  renamed to `c` gives `c`. Spaces stay in the value.
+- Kustomize source `replicas` as `kustomize edit set replicas`. A name that
+  holds `=` fails. The replicas are sorted by name, one per name.
+- Kustomize source `commonLabels` and `commonAnnotations` as `kustomize
+  edit add label` and `kustomize edit add annotation`. A key that is
+  already in the map that the command writes fails, also with the same
+  value, unless `forceCommonLabels` or `forceCommonAnnotations` is set.
+  Without `labelWithoutSelector`, that map is `commonLabels`, and the
+  `labels` entries are not looked at. With it, the labels go to the first
+  `labels` entry without `includeSelectors` and with the same
+  `includeTemplates` setting, or to a new entry, and only that entry is
+  looked at. When that entry has no `pairs`, kustomize panics, and drydock
+  fails with a message that says so. `labelIncludeTemplates` without
+  `labelWithoutSelector` fails.
+  Each entry is passed as `<key>:<value>`, so the key ends at its first
+  `:`, and a value in double quotes loses the quotes. The build environment
+  reaches the label values, and reaches the annotation values only with
+  `commonAnnotationsEnvsubst`.
+- Kustomize source `patches` as Argo CD adds them. When no edit command
+  wrote the kustomization file before them, Argo CD reads the `patches`
+  field of the file itself, and an empty field fails (`expected 'patches'
+  field in kustomization.yaml to be []any, but got <nil>`). An edit command
+  that only prints its help does not write the file. kustomize reads the
+  patches as JSON with unknown fields disallowed, so drydock decodes them
+  the same way. A patch option other than `allowNameChange` and
+  `allowKindChange` fails (`invalid Kustomization: json: unknown field`),
+  and the field names match without regard to letter case, so
+  `AllowNameChange` works. The unknown field error comes after the
+  component errors, because kustomize reads the patches only in the next
+  command.
+- Kustomize source `components` as `kustomize edit add component`. Each
+  entry is a glob from the source directory, as `filepath.Glob` reads it.
+  A match whose name starts with `.` is dropped, unless the entry's last
+  element starts with `.` too. A match that is the kustomization file, or a
+  component that the kustomization already lists, is not added again. An
+  entry that matches nothing is kept when it is a remote ref or a
+  directory, and fails with `has no match` otherwise, with the text of
+  kustomize. An empty entry fails with `new root cannot be empty`. An
+  absolute entry fails with `new root '...' cannot be absolute`, because
+  drydock never reads absolute paths. Under `ignoreMissingComponents`, the
+  first valid component goes through the same command. Argo CD checks the
+  entry as written, so a folder named `[a]` with a kustomization file is
+  kept, and the glob then adds the folder `a`. The kustomization files of
+  the kept folder are render cache inputs, and changed-only selection owns
+  them. drydock lists directories for the globs only inside the
+  repository. A directory outside it, or a path whose text enters `.git`,
+  adds no matches. The globs resolve each path element in order, as the OS
+  does. A `..` after a symlink goes up from the symlink's target, and a
+  `..` after a missing element or a file finds no match. An entry without
+  a match is then loaded as a folder after kustomize cleans its text, so
+  `file.yaml/../a` names the folder `a`, as in kustomize. One difference
+  from the OS: an absolute symlink target must start with the repository
+  root, as written or with its symlinks resolved. Any other absolute target
+  counts as outside the repository. A symlink that leads out of the
+  repository or into `.git` fails with drydock's symlink error before
+  drydock lists or reads anything there.
+  Any other symlink is followed. When it leads to no match, such as a
+  folder without the wanted entry or a file, it adds nothing, as in Argo
+  CD. When a match passes through it, the render fails with the symlink
+  error, because drydock rejects component paths that pass through a
+  symlink. A component path is checked before drydock reads any file
+  under it. So drydock never lists or reads `.git` through a symlink in
+  a checkout that does not change while drydock runs. Argo CD follows such
+  a symlink. Before drydock lists a folder, it makes sure that the folder
+  it opened is the one it resolved, which catches a swap of the last path
+  element for a symlink. It does not catch a swap of a middle element. A
+  process that rewrites the checkout while drydock runs is outside
+  drydock's protection, but drydock still never reads outside the
+  repository.
+- Argo CD passes most option values to these commands without `--` in
+  front. So kustomize reads an image, a replica name, a label or
+  annotation key, or a component that starts with `-` as a flag. An unknown
+  flag fails, `--` ends the flags, and `-h` or `--help` makes the command
+  change nothing. A known flag takes effect: the label key `-ftest.x` sets
+  `--force`, because pflag reads `-f` and drops the rest, which starts with
+  `test.`. drydock reads them the same way. `namePrefix`, `nameSuffix`, and
+  `namespace` are passed after `--`.
+- The persistent render cache key holds the path of each input, and each
+  component that a glob matches is an input. So a new, removed, or renamed
+  match changes the key, and an entry that does not match changes neither
+  the render nor the key. The directory that the glob lists is not an
+  input, so a symlink elsewhere in it does not turn the cache off.
+- For changed-only selection, a component glob also owns the directory
+  that it lists, as a path prefix: the leading path elements without a
+  glob character. So a change that removes a match there selects the
+  source. A glob that lists the repository root owns nothing more than its
+  matches, as for a Helm value file glob. Each path element just before a
+  `..`, such as `mid` in `../../mid/../components/*`, is owned too: the
+  glob finds no match when that element is missing or a file, so a change
+  that adds or deletes it selects the source.
+- Recorded divergence from Argo CD v3.6.1: Argo CD fails a Kustomize
+  source whose `kustomize.version` is not registered in `argocd-cm` with
+  `kustomize.version.<version>` or `kustomize.path.<version>` (`kustomize
+  version <version> is not registered`, `util/settings/settings.go:
+  300-321`). drydock does not check the registration. It renders with its
+  own kustomize and reports a warning for the version. drydock can run
+  without the `argocd-cm` of the cluster, and a registered version also
+  selects `kustomize.buildOptions.<version>`, which drydock does not read.
 - Remote Kustomize refs in `resources`, `bases`, `components`,
   `patches.path`, `patchesJson6902.path`, non-inline
   `patchesStrategicMerge`, `generators`, `transformers`, `validators`,

@@ -387,6 +387,12 @@ APPLICATIONS=(
   parity-plugin-container
   parity-avp
   parity-avp-secret
+  # spec.source.kustomize options as the kustomize edit commands of Argo CD
+  # apply them: images, commonLabels and commonAnnotations, and components.
+  parity-kustomize-source-images
+  parity-kustomize-source-labels
+  parity-kustomize-source-labels-without-selector
+  parity-kustomize-source-components
   # ApplicationSet name validation: the empty-name and duplicated-name
   # Applications must be absent on both sides, so only these survive.
   parity-empty-name-alpha

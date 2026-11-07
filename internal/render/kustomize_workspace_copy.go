@@ -2,9 +2,11 @@ package render
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -290,6 +292,11 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 		if isRemoteKustomizeRef(component) || filepath.IsAbs(component) {
 			continue
 		}
+		// Check the path before the graph walk reads any file under it, so
+		// a symlink to .git never gets read.
+		if err := rejectSourceKustomizeComponentPath(repoRoot, component, componentPath); err != nil {
+			return nil, nil, nil, err
+		}
 		if _, err := os.Lstat(componentPath); err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -309,27 +316,132 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 }
 
 // sourceKustomizeAddedComponents returns the spec.source.kustomize
-// components that rendering adds and, under ignoreMissingComponents, the
-// optional render inputs of the components it does not add: the
-// in-repository directories skipped before the first valid component and the
-// kustomization file names of each component after it.
+// components that rendering adds and the optional render inputs that decide
+// them. Under ignoreMissingComponents the optional inputs are the
+// in-repository directories skipped before the first valid component, the
+// kustomization file names of the kept component, which decide that it is
+// kept, and the kustomization file names of each component after it. The
+// kept folder itself is not always a glob match, for example when its name
+// holds glob characters, so its own files are inputs. The components
+// then go through the globs of `kustomize edit add component`
+// (sourceKustomizeComponentMatches).
+//
+// The directories that the globs list are not inputs. Each match is a
+// component, whose files are inputs, and the render cache key records the
+// path of each input. So a new, removed, or renamed match changes the set
+// of inputs and the key, and an entry that does not match changes neither
+// the render nor the key. The order of the matches follows from their
+// names. Owning the listed directory as a whole tree would digest every
+// file under it, and a symlink anywhere under it would turn the cache off.
 func sourceKustomizeAddedComponents(repoRoot, sourceRoot string, kustomize *argoappv1.ApplicationSourceKustomize) ([]string, []string, error) {
-	if !kustomize.IgnoreMissingComponents {
-		return kustomize.Components, nil, nil
+	components := kustomize.Components
+	var optionalRefs []string
+	if kustomize.IgnoreMissingComponents {
+		selection, err := selectIgnoreMissingComponents(sourceRoot, repoRoot, kustomize.Components)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, skipped := range selection.skipped {
+			optionalRefs = appendNonEmpty(optionalRefs, skipped.probe)
+		}
+		optionalRefs = append(optionalRefs, laterIgnoreMissingComponentInputs(sourceRoot, repoRoot, selection.later)...)
+		if !selection.found {
+			return nil, optionalRefs, nil
+		}
+		optionalRefs = append(optionalRefs, keptIgnoreMissingComponentInputs(repoRoot, selection.keptRel)...)
+		components = []string{selection.kept}
 	}
-	selection, err := selectIgnoreMissingComponents(sourceRoot, repoRoot, kustomize.Components)
+	matches, _, err := sourceKustomizeComponentMatches(repoRoot, sourceRoot, components)
 	if err != nil {
 		return nil, nil, err
 	}
-	var optionalRefs []string
-	for _, skipped := range selection.skipped {
-		optionalRefs = appendNonEmpty(optionalRefs, skipped.probe)
+	return matches, optionalRefs, nil
+}
+
+// sourceKustomizeComponentMatches returns the components that `kustomize
+// edit add component` reads from the patterns in components, without the
+// source kustomization file itself, and the directories that the glob
+// patterns list (kustomizeComponentGlobDir), which changed-only selection
+// owns. When the arguments or the globs fail the command, the patterns come
+// back as written: the render then fails in applySourceKustomizeOptions.
+// A glob that must read through a symlink fails here with the symlink
+// error, so no later step looks at the path the symlink leads to.
+func sourceKustomizeComponentMatches(repoRoot, sourceRoot string, components []string) (matches, globDirs []string, err error) {
+	patterns := sourceKustomizeComponentArgs(components)
+	matches, err = expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot, patterns)
+	if err != nil {
+		return nil, nil, err
 	}
-	optionalRefs = append(optionalRefs, laterIgnoreMissingComponentInputs(sourceRoot, repoRoot, selection.later)...)
-	if !selection.found {
-		return nil, optionalRefs, nil
+	if kustomizationFile, err := findKustomizationFile(sourceRoot); err == nil {
+		name := filepath.Base(kustomizationFile)
+		matches = slices.DeleteFunc(matches, func(match string) bool { return match == name })
 	}
-	return []string{selection.kept}, optionalRefs, nil
+	for _, pattern := range patterns {
+		if globDir, ok := kustomizeComponentGlobDir(sourceRoot, pattern); ok {
+			globDirs = append(globDirs, globDir)
+		}
+	}
+	return matches, globDirs, nil
+}
+
+// sourceKustomizeComponentArgs returns the component patterns that `kustomize
+// edit add component` reads from components after its flags, or components
+// as written when the flags fail the command.
+func sourceKustomizeComponentArgs(components []string) []string {
+	line, err := parseKustomizeEditArgs("add component", components, kustomizeEditCommonFlags)
+	switch {
+	case err != nil:
+		return components
+	case line.help:
+		return nil
+	}
+	return line.args
+}
+
+// expandKustomizeComponentPatternsOrWritten returns the matches of
+// patterns, or patterns as written when the globs fail for any reason but
+// a symlink. The symlink error comes back as is.
+func expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot string, patterns []string) ([]string, error) {
+	matches, err := expandKustomizeComponentPatterns(sourceRoot, repoRoot, patterns)
+	var symlinkErr kustomizeComponentSymlinkError
+	switch {
+	case err == nil:
+		return matches, nil
+	case errors.As(err, &symlinkErr):
+		return nil, err
+	default:
+		return patterns, nil
+	}
+}
+
+// keptIgnoreMissingComponentInputs returns the kustomization file names in
+// the kept ignoreMissingComponents folder, keptRel under repoRoot.
+func keptIgnoreMissingComponentInputs(repoRoot, keptRel string) []string {
+	if keptRel == "" || pathsafety.RelEntersGit(keptRel) {
+		return nil
+	}
+	inputs := make([]string, 0, len(kustomizationFileNames))
+	for _, name := range kustomizationFileNames {
+		inputs = append(inputs, filepath.Join(repoRoot, keptRel, name))
+	}
+	return inputs
+}
+
+// rejectSourceKustomizeComponentPath fails a spec.source.kustomize
+// component path that leaves the repository, enters .git, or passes
+// through a symlink. drydock rejects such a component in the render
+// anyway, and this check runs before any file under it is read.
+func rejectSourceKustomizeComponentPath(repoRoot, component, componentPath string) error {
+	if err := rejectPathOutsideBoundary("kustomize components", componentPath, repoRoot); err != nil {
+		return err
+	}
+	if pathEntersGit(repoRoot, componentPath) {
+		return gitPathRefError("kustomize components", component)
+	}
+	if err := rejectSymlinkedPath(repoRoot, componentPath); err != nil {
+		return fmt.Errorf("kustomize components %q: %w", component, err)
+	}
+	return nil
 }
 
 func appendNonEmpty(values []string, value string) []string {
