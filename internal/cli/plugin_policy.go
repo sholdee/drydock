@@ -219,6 +219,9 @@ func pluginPolicyOnboardingReport(cmd *cobra.Command, deps Dependencies, opts on
 		return pluginonboarding.Report{}, err
 	}
 	inputs := onboardingApplicationInputs(result, selector)
+	if renderErr := renderDiagnostics(cmd.ErrOrStderr(), selectorNoMatchDiagnostics(selector, len(inputs))); renderErr != nil {
+		return pluginonboarding.Report{}, renderErr
+	}
 	return pluginonboarding.Analyze(resultRoot(opts.Path), inputs, result.Settings, opts.ExistingPolicy, pluginonboarding.AnalyzeOptions{
 		IncludeUnused:        opts.IncludeUnused,
 		BootstrapEntrypoints: hints,

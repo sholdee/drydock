@@ -68,11 +68,11 @@ func newDiffAppsCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			repoMaps, err := parseRepoMaps(appsFlags.repoMaps)
+			request, err := diffRequestWithSelector(cmd, appsFlags)
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.DiffApps(context.Background(), diffRequestFromFlags(cmd, appsFlags, repoMaps))
+			result, err := deps.Orchestrator.DiffApps(context.Background(), request)
 			diagnosticColor := deps.isTerminal(cmd.ErrOrStderr())
 			if err != nil {
 				if renderErr := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); renderErr != nil {
@@ -85,6 +85,7 @@ func newDiffAppsCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
+	bindSelectorFlag(apps, &appsFlags)
 	bindDiffPathFlag(apps, &appsFlags)
 	bindChangedOnlyFlags(apps, &appsFlags)
 	bindDiffExitFlag(apps, &appsFlags)
@@ -186,11 +187,11 @@ func newDiffImagesCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			repoMaps, err := parseRepoMaps(imagesFlags.repoMaps)
+			request, err := diffRequestWithSelector(cmd, imagesFlags)
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.DiffImages(context.Background(), diffRequestFromFlags(cmd, imagesFlags, repoMaps))
+			result, err := deps.Orchestrator.DiffImages(context.Background(), request)
 			diagnosticColor := deps.isTerminal(cmd.ErrOrStderr())
 			if err != nil {
 				if renderErr := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); renderErr != nil {
@@ -203,6 +204,7 @@ func newDiffImagesCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(images, &imagesFlags)
+	bindSelectorFlag(images, &imagesFlags)
 	bindDiffPathFlag(images, &imagesFlags)
 	bindChangedOnlyFlags(images, &imagesFlags)
 	bindDiffExitFlag(images, &imagesFlags)
@@ -224,6 +226,23 @@ type imageDiffOutput struct {
 
 func diffRequestFromFlags(cmd *cobra.Command, flags commonFlags, repoMaps []source.RepoMap) app.DiffRequest {
 	return requestOptionsFromFlags(commandAwareFlags(cmd, flags), repoMaps).Diff()
+}
+
+// diffRequestWithSelector is diffRequestFromFlags for the fleet diff
+// commands: it also parses -l/--selector into DiffRequest.LabelSelector, so
+// the diff renders only the selected Applications on each side.
+func diffRequestWithSelector(cmd *cobra.Command, flags commonFlags) (app.DiffRequest, error) {
+	selector, err := parseApplicationSelector(flags.selector)
+	if err != nil {
+		return app.DiffRequest{}, err
+	}
+	repoMaps, err := parseRepoMaps(flags.repoMaps)
+	if err != nil {
+		return app.DiffRequest{}, err
+	}
+	request := diffRequestFromFlags(cmd, flags, repoMaps)
+	request.LabelSelector = selector
+	return request, nil
 }
 
 func bindDiffColorFlag(cmd *cobra.Command, colorMode *string) {

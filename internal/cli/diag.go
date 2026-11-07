@@ -71,6 +71,7 @@ func newDiagCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(cmd, &flags)
+	bindSelectorFlag(cmd, &flags)
 	cmd.Flags().BoolVar(&options.includeSettings, "settings", false, "include redacted Argo CD settings summary in structured diagnostic output")
 	cmd.Flags().BoolVar(&options.includeRender, "render", false, "include render-backed diagnostics by rendering Applications")
 	cmd.Flags().BoolVar(&options.includePluginExecutions, "plugin-executions", false, "include plugin execution metadata in structured diagnostic output; renders Applications")
@@ -88,6 +89,10 @@ func runDiagCommand(cmd *cobra.Command, deps Dependencies, flags commonFlags, op
 	if parseErr != nil {
 		return parseErr
 	}
+	selector, parseErr := parseApplicationSelector(flags.selector)
+	if parseErr != nil {
+		return parseErr
+	}
 	repoMaps, err := parseRepoMaps(flags.repoMaps)
 	if err != nil {
 		return err
@@ -102,7 +107,10 @@ func runDiagCommand(cmd *cobra.Command, deps Dependencies, flags commonFlags, op
 	request.RecordCacheEvents = flags.cacheEvents
 	result, err := runDiag(context.Background(), deps.Orchestrator, request, diagMode{
 		Render: options.includeRender || flags.cacheEvents || options.includePluginExecutions,
-	})
+	}, applicationSelectorFunc(selector))
+	if err == nil {
+		result.Diagnostics = append(result.Diagnostics, selectorNoMatchDiagnostics(selector, len(result.Applications))...)
+	}
 	result.Diagnostics = diagnostic.FilterProjectDiagnostics(diagnostic.WithStableCodes(result.Diagnostics), request.ProjectDiagnosticsMode)
 	if err != nil && len(result.Diagnostics) == 0 {
 		return err
@@ -183,11 +191,13 @@ type diagMode struct {
 	Render bool
 }
 
-func runDiag(ctx context.Context, orchestrator Orchestrator, request app.DiagRequest, mode diagMode) (app.DiagResult, error) {
+// runDiag runs the static or the render-backed diagnostics. selectApps, when
+// it is not nil, limits the Applications that are validated and rendered.
+func runDiag(ctx context.Context, orchestrator Orchestrator, request app.DiagRequest, mode diagMode, selectApps app.ApplicationSelector) (app.DiagResult, error) {
 	if mode.Render {
-		return orchestrator.Diag(ctx, request, nil)
+		return orchestrator.Diag(ctx, request, selectApps)
 	}
-	return orchestrator.DiagStatic(ctx, request, nil)
+	return orchestrator.DiagStatic(ctx, request, selectApps)
 }
 
 func nonNilDiagnostics(diagnostics []diagnostic.Diagnostic) []diagnostic.Diagnostic {

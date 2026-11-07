@@ -40,19 +40,12 @@ drydock get apps --path .
 ```
 
 `get apps` defaults to table output and supports `-o table`, `-o name`,
-`-o json`, and `-o yaml`. Use `-l` or `--selector` with Kubernetes label
-selector syntax to match `Application.metadata.labels`:
+`-o json`, and `-o yaml`. Use `-l` or `--selector` to list only some
+Applications (see [Select Applications by label](#select-applications-by-label)):
 
 ```bash
 drydock get apps --path . -l 'env in (prod,stage),tier!=test'
 ```
-
-A child Application that drydock finds by rendering its parent has the
-tracking metadata that Argo CD sets on it, from the tracking settings of the
-repository. Under label tracking, the child has the label
-`app.kubernetes.io/instance` (or the configured
-`application.instanceLabelKey`) with the parent name, and `-l` can select on
-it.
 
 List rendered image references from Applications:
 
@@ -141,6 +134,54 @@ Kustomize inputs, changed-path selection, or rendered fleet discovery.
 
 For generated ApplicationSet behavior, see [ApplicationSets](/docs/applicationsets/).
 For repository shapes, see [Repository topologies](/concepts/topologies/).
+
+### Select Applications by label
+
+`-l` or `--selector` takes a Kubernetes label selector and matches it against
+`Application.metadata.labels`. Only the commands that run on many
+Applications accept it, and each of them uses it:
+
+| Command | What the selector limits |
+| --- | --- |
+| `get apps` | The Applications that are listed. |
+| `get images` | The Applications that are rendered for the image list. |
+| `build apps` | The Applications that are rendered and printed. |
+| `test apps` | The Applications that are tested. |
+| `diff apps`, `diff images` | The Applications that are rendered and compared on both sides. |
+| `diag` | The Applications that are validated against their AppProjects and, with `--render`, rendered. |
+| `plugin-policy init`, `plugin-policy doctor` | The Applications that are analyzed for plugin use. |
+
+drydock still discovers every Application, because discovery must read the
+whole repository. A command that renders then renders only the selected
+Applications. `diag`
+also reports discovery, settings, and plugin policy diagnostics, because these
+belong to the repository and not to one Application.
+
+`build app`, `test app`, and `diff app` name one Application, so they do not
+accept `-l`.
+
+In a diff, an Application that exists on only one side matches with its
+labels on that side. An Application that exists on both sides matches when
+its labels on either side match, and it is then compared on both sides. So a
+selected Application shows its added and removed resources, and a label change
+does not split it into an added and a removed Application. With changed-only
+selection, which is the default, drydock diffs an Application only when the
+selector selects it and the change reaches it.
+
+When the selector matches no discovered Application, the command still
+succeeds with an empty result and reports a `selector.no-match` warning with
+its other diagnostics: on stderr, or in the markdown or structured report when
+diagnostics go there. The warning tells an empty result from a selector apart
+from an empty repository or a diff with no change. `test apps` then prints
+`No Applications matched the selector.`
+
+A child Application that drydock finds by rendering its parent has the
+tracking metadata that Argo CD sets on it, from the tracking settings of the
+repository. Under label tracking, the child has the label
+`app.kubernetes.io/instance` (or the configured
+`application.instanceLabelKey`) with the parent name, and `-l` can select on
+it. A selector does not add the children of a selected parent: each child
+must match on its own labels.
 
 ## Build Commands
 
@@ -336,7 +377,9 @@ SKIPPED argocd/skipped unsupported ApplicationSet generator ...
 ```
 
 When `test apps` discovers no Applications, text output prints
-`No Applications discovered.` and structured JSON output prints `[]`.
+`No Applications discovered.` and structured JSON output prints `[]`. When
+`-l` matches no Application, text output prints
+`No Applications matched the selector.` instead.
 
 Status values are:
 
@@ -403,6 +446,10 @@ Use `--render` when the diagnostic report should include render-backed
 diagnostics. `--cache-events` and `--plugin-executions` also opt into the
 render-backed path so source-acquisition and plugin execution metadata reflect
 Application rendering.
+
+Use `-l` to validate and render only some Applications, for example
+`drydock diag --path . --render -l team=payments`. Discovery, settings, and
+plugin policy diagnostics are still reported for the whole repository.
 
 Structured diagnostic output can include a redacted settings summary:
 

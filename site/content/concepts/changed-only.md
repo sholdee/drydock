@@ -129,6 +129,16 @@ all changed paths are considered. Ignore globs are applied after includes, so
 ignore wins. When every changed path is filtered out, drydock reports an empty
 diff instead of rendering the fleet.
 
+Limit the diff to Applications with matching labels:
+
+```bash
+drydock diff apps --repo . --ref HEAD --ref-orig main -l team=payments
+```
+
+drydock first selects the changed Applications, then keeps only those that
+the selector matches on either side. An Application that changed but does not
+match, or that matches but did not change, is not rendered.
+
 `diff app` selects one requested Application directly and does not use
 changed-only Git path filtering.
 
