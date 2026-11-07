@@ -263,6 +263,19 @@ cases:
     fileMissing: true
     argocdMessage: "values-*.yaml: no such file or directory"
     drydockMessage: 'read helm value file "values-*.yaml": file does not exist'
+  # kustomize loads helmCharts values files with LoadRestrictionsRootOnly
+  # unless kustomize.buildOptions sets --load-restrictor
+  # LoadRestrictionsNone (fileloader.go:320-332 at kustomize/api v0.21.3).
+  # Argo CD names absolute paths, drydock paths from the repository root.
+  - name: parity-decode-kustomize-helm-values-outside-root
+    source: render
+    argocdMessage: "could not load additionalValuesFile: security; file '"
+    drydockMessage: "could not load additionalValuesFile: security; file 'workloads/directory-decode/kustomize-helm-values-outside-root.yaml' is not in or below 'workloads/directory-decode/kustomize-helm-values-outside-root'"
+  # A values file that is a directory fails in the file loader.
+  - name: parity-decode-kustomize-helm-values-directory
+    source: render
+    argocdMessage: "kustomize-helm-values-directory/vals' must resolve to a file"
+    drydockMessage: "'workloads/directory-decode/kustomize-helm-values-directory/vals' must resolve to a file"
   # Render cases have no failing file. helm or kustomize fails the render
   # with a message that names no file, and Argo CD reports a
   # ComparisonError.

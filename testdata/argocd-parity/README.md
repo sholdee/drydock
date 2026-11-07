@@ -1364,7 +1364,7 @@ resolver.
 
 ### Helm and Kustomize helmCharts renders that fail
 
-Nine more cases fail inside `helm template` or kustomize, not on the
+Eleven more cases fail inside `helm template` or kustomize, not on the
 decode of the output. Their messages are Helm and kustomize texts, so
 `TestGeneratedParityDecodeFixtures` has no offline upstream oracle for
 them. `TestHelmRenderParityDecodeFixtures` in `internal/render` renders
@@ -1388,6 +1388,8 @@ a `ComparisonError` that contains `argocdMessage`.
 | Application | why it fails |
 | --- | --- |
 | `parity-decode-kustomize-helm-release-name-dash` | kustomize rejects the `releaseName` `-bad`, which helm would read as a flag |
+| `parity-decode-kustomize-helm-values-outside-root` | `additionalValuesFiles` names `../kustomize-helm-values-outside-root.yaml`, outside the kustomization directory, and the smoke `argocd-cm` keeps the default `LoadRestrictionsRootOnly`. Argo CD names absolute paths, so `argocdMessage` is the start of the text |
+| `parity-decode-kustomize-helm-values-directory` | `valuesFile` names the directory `vals`, which the kustomize file loader cannot load |
 | `parity-decode-helm-release-name-long` | `helm.releaseName` has 54 characters, and helm allows 53 |
 | `parity-decode-helm-release-name-template` | Argo CD passes the release name as `--name-template`, and `{{ .Missing.Field }` does not parse as a Go template |
 | `parity-decode-helm-version` | Argo CD v3.6.1 accepts `helm.version` empty, `v3`, or `v4`, not `v2` |
@@ -1459,11 +1461,14 @@ run that failed under `--keep-cluster` can leave them set, and a later
 `--existing-cluster` run would then render every Application with the tools
 off.
 
-The controller reads `argocd-cm` through an informer, so its first
-comparison of an Application can come before it sees the keys.
+`argocd app manifests` asks the API server, which reads the keys from its
+settings manager and sends them to the repo-server with the manifest
+request. The settings manager reads `argocd-cm` through an informer, so the
+first request can come before it sees the patched keys.
 `capture_source_type_gates_manifest` captures each Application until the
 capture is the plain directory render, with a hard refresh between tries,
-and fails after 60 tries.
+and fails after 60 tries. `save_source_type_gate_keys` reads each key with
+a template that also works when `argocd-cm` has no `data`.
 
 | Application | source | rendered as |
 | --- | --- | --- |

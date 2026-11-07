@@ -2678,7 +2678,7 @@ save_source_type_gate_keys() {
   local key value patch=""
   for key in "${SOURCE_TYPE_GATE_KEYS[@]}"; do
     value="$(kubectl --request-timeout=30s -n argocd get configmap argocd-cm \
-      -o go-template="{{ with index .data \"${key}\" }}{{ . }}{{ end }}")"
+      -o go-template="{{ with .data }}{{ with index . \"${key}\" }}{{ . }}{{ end }}{{ end }}")"
     [[ -n "${patch}" ]] && patch+=","
     if [[ -z "${value}" ]]; then
       patch+="\"${key}\":null"
@@ -2722,9 +2722,12 @@ source_type_gates_capture_ok() {
 }
 
 # capture_source_type_gates_manifest captures one source type gate
-# Application. The controller reads argocd-cm through an informer, so its
-# first comparison can come before it sees the keys. The capture is retried
-# with a hard refresh until it shows the plain directory render.
+# Application. `argocd app manifests` asks the API server, which reads the
+# keys from its settings manager and sends them to the repo-server with the
+# manifest request. The settings manager reads argocd-cm through an
+# informer, so the first request can come before it sees the patched keys.
+# The capture is retried with a hard refresh until it shows the plain
+# directory render.
 capture_source_type_gates_manifest() {
   local app="$1"
   local output_dir="$2"
