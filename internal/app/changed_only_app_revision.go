@@ -114,7 +114,7 @@ func applicationReadsAppRevision(root, controllerNamespace string, application a
 			if clean, err := cleanLocalSourcePath(source.Path); err == nil {
 				sourceDir := filepath.Join(root, clean)
 				if info, err := os.Stat(sourceDir); err == nil && info.IsDir() {
-					if overridden, err := mergeArgocdSourceOverrides(source, sourceDir, application.InstanceName(controllerNamespace)); err == nil {
+					if overridden, err := mergeArgocdSourceOverrides(source, root, sourceDir, application.InstanceName(controllerNamespace)); err == nil {
 						merged = overridden
 					}
 				}
