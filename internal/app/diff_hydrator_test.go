@@ -9,6 +9,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/sholdee/drydock/internal/config"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -115,5 +116,52 @@ func TestSelectionOwnsHydratorSyncPathOnlyWhenRenderedLocally(t *testing.T) {
 	selected, _ := SelectChangedApplicationInputs(got, []string{"hydrated/cm.yaml"})
 	if names := applicationNames(selected); !slices.Equal(names, []string{"tracked"}) {
 		t.Fatalf("selected = %v, want only the Application whose sync branch renders from this tree", names)
+	}
+}
+
+// TestPersistentRenderCacheKeyFollowsHydratorSyncBranchCommit pins that the
+// persistent render cache key of a fetched source hydrator sync source
+// changes with the commit of its branch: the source identity carries the
+// fetched revision. A sync branch read from a --repo-map snapshot has no
+// identity and is never cached.
+func TestPersistentRenderCacheKeyFollowsHydratorSyncBranchCommit(t *testing.T) {
+	root := t.TempDir()
+	plan, err := Plan(argoappv1.Application{Name: "hyd", Namespace: "argocd", Spec: argoappv1.ApplicationSpec{SourceHydrator: &argoappv1.SourceHydrator{
+		DrySource:  argoappv1.DrySource{RepoURL: "https://github.com/example/config", Path: "dry"},
+		SyncSource: argoappv1.SyncSource{RepoURL: "https://github.com/example/deployments", TargetBranch: "env/prod", Path: "hydrated"},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyAt := func(revision string) string {
+		t.Helper()
+		acquirer := &countingGitAcquirer{path: t.TempDir(), revision: revision}
+		provider, cleanup, err := newLocalProvider(context.Background(), Orchestrator{GitAcquirer: acquirer}, root, config.ArgoSettings{}, BuildRequest{Path: root}, nil, "drydock-hydrator-key-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cleanup()
+		_, identity, err := provider.resolveSourceRootIdentity(context.Background(), resolvedSourceForPlan(plan.Sources[0]))
+		if err != nil {
+			t.Fatalf("resolveSourceRootIdentity() error = %v", err)
+		}
+		if identity.Kind != sourceIdentityKindGit || identity.Revision != revision {
+			t.Fatalf("identity = %#v, want the fetched sync branch commit %s", identity, revision)
+		}
+		if got := acquirer.calls(); got != 1 || acquirer.requests[0].Revision != "env/prod" {
+			t.Fatalf("git requests = %#v, want one for branch env/prod", acquirer.requests)
+		}
+		input := persistentKeyFixtureInput()
+		input.Sources = []SourceIdentity{identity}
+		key, err := persistentRenderCacheKey(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	first := keyAt("1111111111111111111111111111111111111111")
+	second := keyAt("2222222222222222222222222222222222222222")
+	if first == second {
+		t.Fatal("a new sync branch commit did not change the persistent render cache key")
 	}
 }
