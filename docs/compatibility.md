@@ -630,16 +630,23 @@ Supported:
   `DirectClientConfig.Namespace` and `DeferredLoadingClientConfig.Namespace`).
   The rule, in order:
   1. `HELM_NAMESPACE` in the repo-server container, when it is not empty.
-     It wins also over `KUBECONFIG`.
+     It wins also over `KUBECONFIG`, and drydock then reads nothing else.
   2. A `KUBECONFIG` that is not empty names a kubeconfig file, which drydock
      cannot read. drydock warns and goes on as if it were unset. An empty
      `KUBECONFIG` is unset. The repo-server has no kubeconfig of its own.
-  3. When a service account token is mounted, `POD_NAMESPACE`, else the pod
-     namespace. The token is mounted when the pod spec
-     `automountServiceAccountToken` is `true`, or unset while the
-     ServiceAccount does not set it to `false`, or when the container mounts
-     a volume at the token path.
-  4. Else `default`.
+  3. Without a kubeconfig, a `HELM_KUBECONTEXT` that is not empty names a
+     context that does not exist, so client-go fails and Helm uses
+     `default` (`ConfirmUsable`, `client_config.go:441-446`).
+  4. When a service account token is mounted, `POD_NAMESPACE`, else the
+     namespace file next to the token, which is the pod namespace. The
+     kubelet mounts both when the pod spec `automountServiceAccountToken` is
+     `true`, or unset while the ServiceAccount does not set it to `false`. A
+     volume that the container mounts at the token path holds the namespace
+     file when it is a Secret volume or a projected volume with a
+     `downwardAPI` item at the path `namespace`. Without the file, the
+     namespace is `default` (`inClusterClientConfig.Namespace`,
+     `client_config.go:646-661`).
+  5. Else `default`.
 
   The upstream `install.yaml` sets `automountServiceAccountToken: false`,
   so the namespace is `default`. The argo-cd Helm chart sets
@@ -654,13 +661,21 @@ Supported:
     namespace gets the destination namespace.
   - A committed file, with the rules for a committed `argocd-cm`: only a
     file that also holds Argo CD objects or settings, such as the upstream
-    `install.yaml`, and not a file that a rendered install read. Its
-    namespace is its own, else the `namespace` of the kustomization in its
-    directory that lists it, else the destination namespace of the
-    Applications on this cluster whose source path holds it. A file that
-    only Applications on other clusters render does not count. When
-    drydock cannot tell the namespace, it assumes the Argo CD namespace and
-    warns.
+    `install.yaml`, and not a file that a rendered install read. An
+    Application renders the file when one of its sources renders this
+    repository (not an `oci://` artifact and not a chart from a chart
+    repository) and reads the file: a Kustomize source whose kustomization
+    graph reads it, or a directory source with the file directly in its
+    path, or below it with `directory.recurse`. A Helm chart renders its
+    templates, and a plugin is not known, so neither counts. The namespace
+    is the `kustomize.namespace` of such an Application, else the
+    `namespace` of the kustomization in its directory that lists it, which
+    the kustomize namespace transformer sets over the object's own, else
+    its own namespace, else the destination namespace of such an
+    Application. A file that only Applications on other clusters render
+    does not count. When drydock cannot tell the namespace of a Deployment
+    or a ServiceAccount, it assumes the Argo CD namespace, and it warns for
+    the Deployment.
 
   A Deployment without containers is a patch and does not count. A
   repo-server counts when it comes from the same install as a discovered
@@ -668,10 +683,13 @@ Supported:
   count, drydock uses the first in this order: from the same install as an
   `argocd-cm`, then rendered before committed, then by path and document
   index. A repo-server that gives another namespace adds a warning. An
-  `HELM_NAMESPACE`, `POD_NAMESPACE`, or `KUBECONFIG` from a ConfigMap, a
-  Secret, another `valueFrom`, `envFrom`, or a `$(VAR)` reference also adds
-  a warning that names the repo-server and the namespace that drydock uses.
-  drydock keeps only the kind of such a source, never its value. Without a
+  `HELM_NAMESPACE`, `HELM_KUBECONTEXT`, `POD_NAMESPACE`, or `KUBECONFIG`
+  from a ConfigMap, a Secret, another `valueFrom`, `envFrom`, or a `$(VAR)`
+  reference also adds a warning that names the repo-server and the
+  namespace that drydock uses, unless a literal `HELM_NAMESPACE` decides
+  the namespace. drydock keeps only the kind of such a source, never its
+  value. Of a ServiceAccount it keeps only the name, namespace, labels, and
+  `automountServiceAccountToken`. Without a
   repo-server that counts, drydock uses `default`. The namespace is part of
   the render settings signature, so a change renders every Application
   again. Earlier drydock releases used the release name as written and an
@@ -1332,13 +1350,24 @@ Supported:
   the kustomize file loader loads them (`fileloader.go:320-332` and
   `loadrestrictions.go:15-30` at kustomize/api v0.21.3). Under the default
   `LoadRestrictionsRootOnly`, a file outside the kustomization directory
-  fails with `security; file '...' is not in or below '...'`. With
+  fails with `security; file '...' is not in or below '...'`. The
+  `values.yaml` of the chart, which kustomize loads when the entry sets no
+  `valuesFile`, counts too, so a `helmGlobals.chartHome` outside the
+  kustomization directory fails, unless the entry has `valuesInline` with
+  `valuesMerge: replace`. A directory fails with `'...' must resolve to a
+  file` before the root is checked. With
   `kustomize.buildOptions` `--load-restrictor LoadRestrictionsNone`, a file
-  outside it loads when it stays inside the repository root. A directory
-  fails with `'...' must resolve to a file`. drydock names the paths from
-  the repository root, where kustomize names absolute paths. Earlier drydock
-  releases loaded files outside the kustomization directory under
-  `LoadRestrictionsRootOnly` too.
+  outside it loads when it stays inside the repository root. drydock names
+  the paths from the repository root, where kustomize names absolute paths.
+  Earlier drydock releases loaded files outside the kustomization directory
+  under `LoadRestrictionsRootOnly` too.
+- Recorded divergence: kustomize resolves the symlinks of a `helmCharts`
+  values file path before it checks the root (`fsondisk.go:51-81`), so a
+  symlink that resolves inside the kustomization directory loads. drydock
+  fails any symlink component in such a path. The Helm value file loader,
+  the prepared Kustomize workspace, and the render cache input digests all
+  reject symlinks there, and changing them together is a larger change
+  than this parity fix.
 - kustomize accumulates the resources of a kustomization, with the builds
   of its bases, before it runs its generators (`kusttarget.go:202-235`).
   So a missing local resource is reported before an error of the
