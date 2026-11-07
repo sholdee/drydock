@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -118,7 +119,9 @@ func (w *kustomizeWorkspace) classifyKustomizePlugin(field kustomizePluginField,
 // skippedFunctionsDiagnostic reports the functions that kustomize skips. A
 // skipped generator adds only its own configuration, marked
 // config.kubernetes.io/local-config, which kustomize drops at the end of
-// the build. A skipped transformer changes nothing.
+// the build. A skipped transformer changes no resource. kustomize still
+// lists it in the transformations annotation of buildMetadata
+// transformerAnnotations, which drydock does not (recorded divergence).
 func skippedFunctionsDiagnostic(execFunctions, emptyFunctions int) diagnostic.Diagnostic {
 	var reasons []string
 	if execFunctions != 0 {
@@ -131,7 +134,7 @@ func skippedFunctionsDiagnostic(execFunctions, emptyFunctions int) diagnostic.Di
 		Code:     KustomizeExecFunctionSkippedCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "kustomize",
-		Message:  "kustomize skips " + strings.Join(reasons, ", and ") + "; a skipped generator adds only its own configuration, which kustomize drops at the end of the build, and a skipped transformer changes nothing",
+		Message:  "kustomize skips " + strings.Join(reasons, ", and ") + "; a skipped generator adds only its own configuration, which kustomize drops at the end of the build, and a skipped transformer changes no resource",
 	}
 }
 
@@ -297,7 +300,7 @@ func (w *kustomizeWorkspace) prepareKustomizeTransformers(ctx context.Context, d
 		if err != nil {
 			return err
 		}
-		w.recordRewrittenEntry(rel, entry)
+		w.recordRewrittenEntry(dir, rel, entry)
 		remaining = append(remaining, rel)
 	}
 	kustomization.Transformers = remaining
@@ -328,13 +331,22 @@ func kustomizeDirectoryPluginError(err error, opts RenderOptions, settings kusto
 }
 
 // recordRewrittenEntry records that the generated file rel stands for a
-// generators: or transformers: entry, so the origin annotations and errors
-// of the build can name the entry (restoreRewrittenEntryPaths).
-func (w *kustomizeWorkspace) recordRewrittenEntry(rel, entry string) {
+// generators: or transformers: entry of the kustomization in dir, so the
+// origin annotations and errors of the build can name the entry
+// (restoreRewrittenEntryPaths). kustomize names the kustomization file for
+// an inline entry, as configuredIn.
+func (w *kustomizeWorkspace) recordRewrittenEntry(dir, rel, entry string) {
 	if w.rewrittenEntries == nil {
 		w.rewrittenEntries = map[string]string{}
 	}
-	w.rewrittenEntries[filepath.ToSlash(rel)] = strings.TrimSpace(entry)
+	name := strings.TrimSpace(entry)
+	if _, inline := inlineKustomizeGeneratorDocuments(entry); inline {
+		name = kustomizationFileNames[0]
+		if file, err := findKustomizationFile(dir); err == nil {
+			name = filepath.Base(file)
+		}
+	}
+	w.rewrittenEntries[filepath.ToSlash(rel)] = name
 }
 
 // kustomizeOriginAnnotations are the annotations of buildMetadata
@@ -351,17 +363,21 @@ func (w *kustomizeWorkspace) restoreRewrittenEntryText(text string) string {
 	}
 	for _, root := range w.workspaceRoots() {
 		text = strings.ReplaceAll(text, root+string(filepath.Separator), "")
+		text = strings.ReplaceAll(text, root, ".")
 	}
 	return text
 }
 
-// workspaceRoots returns the temp repository root as written and with its
-// symlinks resolved, as krusty can name either.
+// workspaceRoots returns the temp repository root with its symlinks
+// resolved and as written, as krusty can name either. The longer one comes
+// first: on macOS /private/var/... holds /var/..., which must not be
+// replaced first.
 func (w *kustomizeWorkspace) workspaceRoots() []string {
 	roots := []string{w.tempRepoRoot}
 	if resolved, err := filepath.EvalSymlinks(w.tempRepoRoot); err == nil && resolved != w.tempRepoRoot {
 		roots = append(roots, resolved)
 	}
+	slices.SortFunc(roots, func(a, b string) int { return len(b) - len(a) })
 	return roots
 }
 

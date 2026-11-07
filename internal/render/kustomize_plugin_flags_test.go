@@ -343,3 +343,49 @@ func TestKustomizeSkippedGeneratorWithOptionsFailsClosed(t *testing.T) {
 		t.Fatalf("Render() error = %v, want the generator option failure", err)
 	}
 }
+
+// An inline transformers entry is named by its kustomization file in the
+// transformations annotation, as kustomize names it.
+func TestKustomizeInlineTransformerOriginNamesTheKustomization(t *testing.T) {
+	root := t.TempDir()
+	inline := strings.ReplaceAll(builtinLabelTransformer+"---\n"+fooExecFunction, "\n", "\n    ")
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "buildMetadata: [transformerAnnotations]\nresources: [cm.yaml]\ntransformers:\n  - |\n    "+strings.TrimSpace(inline)+"\n")
+	writeFile(t, filepath.Join(root, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+	manifests, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{
+		KustomizeCaller: KustomizeCallerArgoCD,
+		BuildOptions:    []string{"--enable-alpha-plugins"},
+	})
+	if err != nil || len(manifests) != 1 {
+		t.Fatalf("Render() = %d manifests, error %v", len(manifests), err)
+	}
+	if got := manifests[0].Object.GetAnnotations()["alpha.config.kubernetes.io/transformations"]; !strings.Contains(got, "configuredIn: kustomization.yaml") || strings.Contains(got, "LabelTransformer\nmetadata") {
+		t.Fatalf("transformations = %q, want configuredIn: kustomization.yaml", got)
+	}
+}
+
+// Errors name the repository, not the temp workspace, also for the source
+// path ".", and the longer resolved root goes first.
+func TestKustomizeWorkspaceRootsLeaveErrors(t *testing.T) {
+	tmp := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &kustomizeWorkspace{tempRepoRoot: tmp}
+	text := "kustomize build " + resolved + ": a " + resolved + "/app/x.yaml and " + tmp + "/app/y.yaml in " + tmp
+	if got, want := w.restoreRewrittenEntryText(text), "kustomize build .: a app/x.yaml and app/y.yaml in ."; got != want {
+		t.Fatalf("restoreRewrittenEntryText() = %q, want %q", got, want)
+	}
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "kustomization.yaml"), "resources: [cm.yaml]\ngenerators: [fn.yaml, fn.yaml]\n")
+	writeFile(t, filepath.Join(root, "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+	writeFile(t, filepath.Join(root, "fn.yaml"), fooExecFunction)
+	_, _, err = (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "."}, RenderOptions{
+		KustomizeCaller: KustomizeCallerArgoCD,
+		BuildOptions:    []string{"--enable-alpha-plugins"},
+	})
+	if err == nil || strings.Contains(err.Error(), "drydock-kustomize-") || strings.Contains(err.Error(), ".drydock") {
+		t.Fatalf("Render() error = %v, want no workspace path", err)
+	}
+}

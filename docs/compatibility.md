@@ -1524,7 +1524,7 @@ Supported:
   with `--enable-exec`. With `--enable-alpha-plugins` alone, kustomize
   skips every exec function, and it skips a function annotation that names
   neither a container nor an exec program with any flags. A skipped
-  transformer changes nothing. A skipped generator still adds its own
+  transformer changes no resource. A skipped generator still adds its own
   configuration, marked `config.kubernetes.io/local-config`, and kustomize
   drops it only at the end of the top-level build (`fnplugin.go:166-183`,
   `kusttarget.go:162`). Until then, the configuration takes part in the
@@ -1567,9 +1567,8 @@ Supported:
   replace` (`kusttarget.go:267-296`, `reswrangler.go:558-566`). When the
   resources of the kustomization already hold that ID, the merge works,
   and the later output then fails with `exists; can not use behavior:
-  'unspecified', behavior must be merge or replace`. To tell the two cases,
-  drydock builds the resources of the kustomization on their own, and only
-  for such a merge. Earlier drydock releases merged into the output.
+  'unspecified', behavior must be merge or replace`. Earlier drydock
+  releases merged into the output.
 - Recorded divergences for `kustomize.buildOptions`:
   - `--help` and `-h` fail closed, because kustomize then prints its help
     instead of manifests.
@@ -1606,8 +1605,9 @@ Supported:
     configuration that it adds, and drydock adds it as a resource without
     them.
   - With `buildMetadata: [transformerAnnotations]`, kustomize also lists a
-    skipped transformer in `alpha.config.kubernetes.io/transformations`.
-    drydock does not, because it drops the configuration. The
+    skipped transformer in `alpha.config.kubernetes.io/transformations`,
+    with its `configuredBy`. drydock does not, because it drops the
+    configuration. The
     `config.kubernetes.io/origin` annotation of output that drydock adds as
     resources (`helmCharts`, KSOPS) has the form of a resource, not of
     generator output.
@@ -1615,12 +1615,12 @@ Supported:
     tools fail. drydock adds the moved output with the resources, so a
     collision with a resource fails with krusty's `may not add resource
     with an already registered id`, where kustomize says `exists; can not
-    use behavior: 'unspecified'`. The build of the resources that tells the
-    two merge cases apart is a finished build: it holds the names after the
-    name suffix and no `local-config` configurations, where kustomize also
-    compares the earlier names of a resource. A merge that kustomize finds
-    by an earlier name then fails with `does not exist` in drydock and with
-    `exists` in kustomize.
+    use behavior: 'unspecified'`. In the same way, drydock fails such a
+    merge with `does not exist; cannot merge or replace` also when the
+    resources of the kustomization hold the ID. kustomize then merges and
+    fails on the later output with `exists; can not use behavior`. To tell
+    the two cases apart, drydock would have to build the resources before
+    the build, outside the checks of the main build, so it does not.
 - Kustomize `helmCharts` release names and namespaces as kustomize v5.8.3
   passes them to `helm template`. Without `releaseName`, kustomize passes
   `--generate-name`, and `helm template` renders the release

@@ -212,7 +212,7 @@ func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot st
 			if err != nil {
 				return prepared, err
 			}
-			w.recordRewrittenEntry(rel, entry)
+			w.recordRewrittenEntry(dir, rel, entry)
 			prepared.replacement = rel
 		}
 	}
@@ -221,7 +221,7 @@ func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot st
 		if err != nil {
 			return prepared, err
 		}
-		w.recordRewrittenEntry(rel, entry)
+		w.recordRewrittenEntry(dir, rel, entry)
 		prepared.resources = append(prepared.resources, rel)
 	}
 	if len(ksopsDocs) != 0 && !w.opts.EnableKSOPSCompat {
@@ -241,7 +241,7 @@ func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot st
 				return prepared, err
 			}
 			fileIndex++
-			w.recordRewrittenEntry(rel, entry)
+			w.recordRewrittenEntry(dir, rel, entry)
 			prepared.resources = append(prepared.resources, rel)
 			if ids, ok := kustomizeResourceFileIDs(dir, []string{rel}); ok {
 				step := &docSteps[ksopsSteps[root]]
