@@ -63,7 +63,7 @@ func renderKustomizeBuild(ctx context.Context, source ResolvedSource, opts Rende
 	// Generator-bearing kustomizations always take the prepared-workspace
 	// path: generator classification and ksops-compat emulation happen in
 	// prepareKustomizationDir, so the plain path must be unreachable for them.
-	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) || kustomizeGraphHasGenerators(graph) {
+	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) || kustomizeGraphHasGenerators(graph) || needsKustomizeTransformerPrep(graph, opts, buildSettings) {
 		manifests, renderDiags, err := renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
 		return manifests, append(diags, renderDiags...), err
 	}

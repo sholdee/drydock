@@ -1116,6 +1116,11 @@ func TestKSOPSGeneratorNeedsKustomizePluginFlags(t *testing.T) {
 		{name: "exec function with both flags", manifest: ksopsTestExecFunctionManifest, caller: KustomizeCallerArgoCD, options: []string{"--enable-alpha-plugins", "--enable-exec"}, wantSecret: true},
 		{name: "legacy plugin with alpha plugins", manifest: ksopsTestGeneratorManifest, caller: KustomizeCallerArgoCD, options: []string{"--enable-alpha-plugins"}, wantSecret: true},
 		{name: "plugin command without flags", manifest: ksopsTestGeneratorManifest, caller: KustomizeCallerCommand, wantErr: disabled},
+		// kustomize reads the function annotation with both flags too: a
+		// container function runs in Docker even with an exec program, and
+		// a malformed annotation fails.
+		{name: "container function with both flags", manifest: strings.Replace(ksopsTestExecFunctionManifest, "      exec:", "      container:\n        image: example.com/ksops:v1\n      exec:", 1), caller: KustomizeCallerArgoCD, options: []string{"--enable-alpha-plugins", "--enable-exec"}, wantErr: "viaduct.ai/v1/ksops is a container function"},
+		{name: "malformed function with both flags", manifest: strings.Replace(ksopsTestExecFunctionManifest, "      exec:\n        path: ksops", "      bogus: 1", 1), caller: KustomizeCallerArgoCD, options: []string{"--enable-alpha-plugins", "--enable-exec"}, wantErr: "loading generator plugins: failed to load generator: loader: failed to get FunctionSpec"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -1140,7 +1145,7 @@ func TestKSOPSGeneratorNeedsKustomizePluginFlags(t *testing.T) {
 			}
 			skipped := false
 			for _, diag := range diags {
-				skipped = skipped || diag.Code == "kustomize.ksops-exec-skipped"
+				skipped = skipped || diag.Code == KustomizeExecFunctionSkippedCode
 			}
 			if skipped != tc.wantSkip {
 				t.Fatalf("diagnostics = %#v, want the exec skip warning %t", diags, tc.wantSkip)

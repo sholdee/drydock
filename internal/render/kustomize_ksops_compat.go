@@ -19,8 +19,6 @@ import (
 	goyaml "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/types"
-	"sigs.k8s.io/kustomize/kyaml/fn/runtime/runtimeutil"
-	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 // KSOPS generator manifests are matched by the exact apiVersion/kind strings
@@ -117,12 +115,12 @@ func (w *kustomizeWorkspace) prepareKustomizeGenerators(ctx context.Context, dir
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		keep, generated, err := w.prepareKustomizeGeneratorEntry(dir, boundaryRoot, graphIndex, entryIndex, entry)
+		replacement, generated, err := w.prepareKustomizeGeneratorEntry(dir, boundaryRoot, graphIndex, entryIndex, entry)
 		if err != nil {
 			return err
 		}
-		if keep {
-			remaining = append(remaining, entry)
+		if replacement != "" {
+			remaining = append(remaining, replacement)
 		}
 		kustomization.Resources = append(kustomization.Resources, generated...)
 	}
@@ -130,98 +128,86 @@ func (w *kustomizeWorkspace) prepareKustomizeGenerators(ctx context.Context, dir
 	return nil
 }
 
-//nolint:gocyclo // Coordinates the inline-vs-path branch and three-way generator classification explicitly.
-func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot string, graphIndex, entryIndex int, entry string) (bool, []string, error) {
-	docs, inline := inlineKustomizeGeneratorDocuments(entry)
-	manifestDir := dir
-	describe := strings.TrimSpace(entry)
-	if inline {
-		describe = describeInlineGeneratorEntry(docs)
-	} else {
-		path, info, err := validateLocalKustomizeRef(boundaryRoot, dir, "generators", entry)
-		if err != nil {
-			return false, nil, err
-		}
-		if info == nil {
-			return false, nil, fmt.Errorf("kustomize generators %q: generator manifest not found", entry)
-		}
-		if !info.Mode().IsRegular() {
-			return false, nil, fmt.Errorf("kustomize generators %q: generator manifest must be a regular file", entry)
-		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return false, nil, err
-		}
-		docs, err = decodeYAMLDocumentNodes(content)
-		if err != nil {
-			return false, nil, fmt.Errorf("kustomize generators %q: decode generator manifest: %w", entry, err)
-		}
-		manifestDir = filepath.Dir(path)
+// prepareKustomizeGeneratorEntry returns the generators: entry that stays
+// for krusty, or "", and the resource files that stand for the rest.
+//
+//nolint:gocyclo // Coordinates the classification of every document of the entry.
+func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot string, graphIndex, entryIndex int, entry string) (string, []string, error) {
+	docs, describe, manifestDir, err := readKustomizePluginEntry(kustomizeGeneratorsField, dir, boundaryRoot, entry)
+	if err != nil {
+		return "", nil, err
 	}
-
 	ksopsDocs := make([]*goyaml.Node, 0, len(docs))
-	builtins := 0
+	builtinDocs := make([]*goyaml.Node, 0, len(docs))
+	skipped := 0
 	for _, doc := range docs {
 		root := yamlDocumentRoot(doc)
 		if root == nil {
 			continue
 		}
-		class, apiVersion, kind := classifyGeneratorDocument(root)
-		switch class {
-		case generatorDocumentBuiltin:
-			builtins++
-		case generatorDocumentKSOPS:
+		action, err := w.classifyKustomizePlugin(kustomizeGeneratorsField, describe, root)
+		if err != nil {
+			return "", nil, err
+		}
+		switch action {
+		case kustomizePluginBuiltin:
+			builtinDocs = append(builtinDocs, root)
+		case kustomizePluginKSOPS:
 			ksopsDocs = append(ksopsDocs, root)
-		case generatorDocumentUnsupported:
-			return false, nil, fmt.Errorf("kustomize generators entry %q: generator %s/%s is unsupported (drydock supports KSOPS generators via --enable-ksops-compat and kustomize builtin generator configs)", describe, apiVersion, kind)
+		case kustomizePluginSkip:
+			skipped++
+		case kustomizePluginUnsupported:
+			return "", nil, fmt.Errorf("kustomize generators entry %q: generator %s/%s is unsupported (drydock supports KSOPS generators via --enable-ksops-compat and kustomize builtin generator configs)", describe, yamlMappingString(root, "apiVersion"), yamlMappingString(root, "kind"))
 		}
 	}
-	if len(ksopsDocs) == 0 && builtins == 0 {
-		return false, nil, fmt.Errorf("kustomize generators entry %q: generator manifest has no generator documents", describe)
+	if len(ksopsDocs) == 0 && len(builtinDocs) == 0 && skipped == 0 {
+		return "", nil, fmt.Errorf("kustomize generators entry %q: generator manifest has no generator documents", describe)
 	}
-	if len(ksopsDocs) != 0 && builtins != 0 {
+	if len(ksopsDocs) != 0 && len(builtinDocs) != 0 {
 		// Splitting a mixed manifest would require rewriting the workspace
 		// copy of the file, which is hard-linked to the original repository
 		// tree; reject loudly rather than render incompletely.
-		return false, nil, fmt.Errorf("kustomize generators entry %q mixes KSOPS and builtin generator documents; split them into separate generator manifests", describe)
+		return "", nil, fmt.Errorf("kustomize generators entry %q mixes KSOPS and builtin generator documents; split them into separate generator manifests", describe)
 	}
 	if len(ksopsDocs) == 0 {
-		return true, nil, nil
-	}
-	ksopsDocs, err := w.loadableKSOPSGenerators(ksopsDocs)
-	if err != nil {
-		return false, nil, err
-	}
-	if len(ksopsDocs) == 0 {
-		// kustomize skipped every document, so the entry gives nothing.
-		// An empty resource file stands for it, because krusty fails a
-		// kustomization that the rewrite leaves empty.
-		generatedRel := filepath.ToSlash(filepath.Join(".drydock", "ksops", fmt.Sprintf("%03d-%03d-skipped.yaml", graphIndex, entryIndex)))
-		if err := writeGeneratedKustomizeWorkspaceFile(dir, generatedRel, nil); err != nil {
-			return false, nil, err
+		switch {
+		case skipped == 0:
+			return entry, nil, nil
+		case len(builtinDocs) != 0:
+			// kustomize skipped some documents: krusty gets the rest.
+			rel, err := writeKustomizePluginDocuments(dir, filepath.Join(".drydock", "generators", fmt.Sprintf("%03d-%03d.yaml", graphIndex, entryIndex)), builtinDocs)
+			return rel, nil, err
+		default:
+			// kustomize skipped every document, so the entry gives nothing.
+			// An empty resource file stands for it, because krusty fails a
+			// kustomization that the rewrite leaves empty.
+			generatedRel := filepath.ToSlash(filepath.Join(".drydock", "generators", fmt.Sprintf("%03d-%03d-skipped.yaml", graphIndex, entryIndex)))
+			if err := writeGeneratedKustomizeWorkspaceFile(dir, generatedRel, nil); err != nil {
+				return "", nil, err
+			}
+			return "", []string{generatedRel}, nil
 		}
-		return false, []string{generatedRel}, nil
 	}
 	if !w.opts.EnableKSOPSCompat {
-		return false, nil, fmt.Errorf("kustomize generators entry %q is a KSOPS generator; pass --enable-ksops-compat to render deterministic placeholder manifests without decryption", describe)
+		return "", nil, fmt.Errorf("kustomize generators entry %q is a KSOPS generator; pass --enable-ksops-compat to render deterministic placeholder manifests without decryption", describe)
 	}
 	generated := make([]string, 0, len(ksopsDocs))
 	fileIndex := 0
 	for _, root := range ksopsDocs {
 		files, err := ksopsGeneratorFilesFromDocument(describe, root)
 		if err != nil {
-			return false, nil, err
+			return "", nil, err
 		}
 		for _, fileRef := range files {
 			rel, err := w.emulateKSOPSGeneratorFile(dir, boundaryRoot, manifestDir, graphIndex, entryIndex, fileIndex, fileRef)
 			if err != nil {
-				return false, nil, err
+				return "", nil, err
 			}
 			fileIndex++
 			generated = append(generated, rel)
 		}
 	}
-	return false, generated, nil
+	return "", generated, nil
 }
 
 func ksopsGeneratorFilesFromDocument(describe string, root *goyaml.Node) ([]string, error) {
@@ -610,48 +596,4 @@ func removeYAMLMappingKey(node *goyaml.Node, key string) {
 		filtered = append(filtered, node.Content[i], node.Content[i+1])
 	}
 	node.Content = filtered
-}
-
-// loadableKSOPSGenerators returns the KSOPS generator documents that the
-// kustomize binary runs with the flags of the build. KSOPS is an external
-// plugin, so without --enable-alpha-plugins kustomize fails the build
-// (PluginRestrictionsBuiltinsOnly, api/internal/plugins/loader/loader.go:
-// 205-210 at kustomize/api v0.21.3). A document with an exec function
-// annotation, such as config.kubernetes.io/function, runs only with
-// --enable-exec too. Without it, kustomize skips the function and the
-// generator gives no resources (RunFns.getFilterProvider in kyaml). drydock
-// counts the skipped documents for a warning. Without a found argocd-cm,
-// drydock cannot tell the flags, so it renders every document, as before.
-func (w *kustomizeWorkspace) loadableKSOPSGenerators(docs []*goyaml.Node) ([]*goyaml.Node, error) {
-	if w.opts.KustomizeCaller == KustomizeCallerArgoCDAssumed {
-		return docs, nil
-	}
-	if !w.buildSettings.EnableAlphaPlugins {
-		return nil, fmt.Errorf("loading generator plugins: failed to load generator: external plugins disabled; unable to load external plugin '%s'", yamlMappingString(docs[0], "kind"))
-	}
-	if w.buildSettings.EnableExec {
-		return docs, nil
-	}
-	out := make([]*goyaml.Node, 0, len(docs))
-	for _, doc := range docs {
-		spec, err := runtimeutil.GetFunctionSpec(kyaml.NewRNode(doc))
-		if err != nil {
-			return nil, fmt.Errorf("loading generator plugins: loader: %w", err)
-		}
-		if spec != nil && spec.Exec.Path != "" {
-			w.ksopsSkippedExecGenerators++
-			continue
-		}
-		out = append(out, doc)
-	}
-	return out, nil
-}
-
-func ksopsExecSkippedDiagnostic(skipped int) diagnostic.Diagnostic {
-	return diagnostic.Diagnostic{
-		Code:     "kustomize.ksops-exec-skipped",
-		Severity: diagnostic.SeverityWarning,
-		Category: "kustomize",
-		Message:  fmt.Sprintf("%d KSOPS generators with an exec function gave no resources, because kustomize.buildOptions has no --enable-exec; kustomize skips such functions", skipped),
-	}
 }

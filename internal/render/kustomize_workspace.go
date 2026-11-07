@@ -30,9 +30,10 @@ type kustomizeWorkspace struct {
 	// emits duplicate resource IDs, which kustomize accumulation rejects
 	// before any diagnostic is surfaced.
 	ksopsSubstitutedFiles int
-	// ksopsSkippedExecGenerators counts KSOPS generator documents with an
-	// exec function that kustomize skips without --enable-exec.
-	ksopsSkippedExecGenerators int
+	// skippedExecFunctions counts the generator and transformer
+	// configurations with an exec function that kustomize skips without
+	// --enable-exec.
+	skippedExecFunctions int
 	// sourceOptionDiagnostics holds the warnings from merging the
 	// spec.source.kustomize options into the source kustomization.
 	sourceOptionDiagnostics []diagnostic.Diagnostic
@@ -46,8 +47,8 @@ func (w *kustomizeWorkspace) diagnostics() []diagnostic.Diagnostic {
 	if w.ksopsSubstitutedFiles != 0 {
 		diags = append(diags, ksopsCompatDiagnostic(w.ksopsSubstitutedFiles))
 	}
-	if w.ksopsSkippedExecGenerators != 0 {
-		diags = append(diags, ksopsExecSkippedDiagnostic(w.ksopsSkippedExecGenerators))
+	if w.skippedExecFunctions != 0 {
+		diags = append(diags, execFunctionsSkippedDiagnostic(w.skippedExecFunctions))
 	}
 	return diags
 }
@@ -198,6 +199,9 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 	// remote-acquired generator manifests are materialized in the workspace
 	// before they are classified.
 	if err := w.prepareKustomizeGenerators(ctx, dir, boundaryRoot, graphIndex, &kustomization); err != nil {
+		return fmt.Errorf("%s: %w", manifestPath, err)
+	}
+	if err := w.prepareKustomizeTransformers(ctx, dir, boundaryRoot, graphIndex, &kustomization); err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 
