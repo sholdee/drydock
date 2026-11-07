@@ -1,0 +1,9 @@
+# With Helm on, this template renders. With Helm off, the plain directory
+# render does not walk into templates/.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-gates-chart-template
+  namespace: {{ .Release.Namespace }}
+data:
+  note: {{ .Values.note | quote }}

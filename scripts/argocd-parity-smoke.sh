@@ -104,6 +104,8 @@ SOURCE_TYPE_GATES_RESET='{"data":{"helm.enable":null,"kustomize.enable":null,"js
 SOURCE_TYPE_GATES_APPLICATIONS=(
   parity-gates-helm-discovered
   parity-gates-helm-explicit
+  parity-gates-helm-chart-dir
+  parity-gates-helm-chart-only
   parity-gates-kustomize-discovered
   parity-gates-kustomize-explicit
   parity-gates-jsonnet
@@ -111,6 +113,9 @@ SOURCE_TYPE_GATES_APPLICATIONS=(
 # Set to "true" while the live argocd-cm turns the tools off. The cleanup
 # trap reads it.
 SOURCE_TYPE_GATES_STATE_CHANGED="false"
+# Set by save_source_type_gate_keys: the merge patch that restores the live
+# values of the keys.
+SOURCE_TYPE_GATES_RESTORE=""
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_APPSET_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-appset-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
@@ -2663,37 +2668,85 @@ run_live_diff_smoke() {
   LIVE_DIFF_STATE_CHANGED="false"
 }
 
+# The argocd-cm keys that the source type gate phase changes.
+SOURCE_TYPE_GATE_KEYS=(helm.enable kustomize.enable jsonnet.enable)
+
+# save_source_type_gate_keys records the live values of the source type gate
+# keys as a merge patch that restores them: a key that is missing, or empty,
+# which Argo CD reads the same, is restored as missing.
+save_source_type_gate_keys() {
+  local key value patch=""
+  for key in "${SOURCE_TYPE_GATE_KEYS[@]}"; do
+    value="$(kubectl --request-timeout=30s -n argocd get configmap argocd-cm \
+      -o go-template="{{ with index .data \"${key}\" }}{{ . }}{{ end }}")"
+    [[ -n "${patch}" ]] && patch+=","
+    if [[ -z "${value}" ]]; then
+      patch+="\"${key}\":null"
+    else
+      value="${value//\\/\\\\}"
+      value="${value//\"/\\\"}"
+      patch+="\"${key}\":\"${value}\""
+    fi
+  done
+  SOURCE_TYPE_GATES_RESTORE="{\"data\":{${patch}}}"
+}
+
 # remove_source_type_gates_state deletes the source type gate Applications
-# and removes the argocd-cm keys that turn the tools off. The Applications
+# and restores the source type gate keys that save_source_type_gate_keys
+# recorded, or removes them when nothing was recorded. The Applications
 # have no resources finalizer, so the delete does not wait for a prune.
 remove_source_type_gates_state() {
   kubectl --request-timeout=30s -n argocd delete -f "${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml" --ignore-not-found >/dev/null
+  kubectl --request-timeout=30s -n argocd patch configmap argocd-cm --type merge -p "${SOURCE_TYPE_GATES_RESTORE:-${SOURCE_TYPE_GATES_RESET}}" >/dev/null
+}
+
+# reset_source_type_gate_keys removes the source type gate keys at the start
+# of a run. The fixture install sets none of them, so a key that is there
+# was left by an earlier run that failed under --keep-cluster, and it would
+# turn tools off for every Application of this run.
+reset_source_type_gate_keys() {
   kubectl --request-timeout=30s -n argocd patch configmap argocd-cm --type merge -p "${SOURCE_TYPE_GATES_RESET}" >/dev/null
 }
 
-# assert_source_type_gates_capture fails when the Argo CD capture of a
-# source type gate Application is not the plain directory render: it must
-# hold the ConfigMap named like the Application and nothing that Kustomize
-# or Jsonnet would add. Without this check, both sides rendering with the
-# tools on would pass the comparison.
-assert_source_type_gates_capture() {
+# source_type_gates_capture_ok reports whether the Argo CD capture of a
+# source type gate Application is the plain directory render: it holds the
+# ConfigMap named like the Application and nothing that Helm, Kustomize, or
+# Jsonnet would add. Without this check, both sides rendering with the tools
+# on would pass the comparison.
+source_type_gates_capture_ok() {
   local app="$1"
   local capture="$2"
-  grep -qF "name: ${app}" "${capture}" \
-    || fail "Argo CD did not render the ConfigMap ${app} for ${app} with the tools off; see ${capture}"
-  if grep -qE "name: (kustomized-|parity-gates-jsonnet-evaluated)" "${capture}"; then
-    fail "Argo CD rendered ${app} with Kustomize or Jsonnet on; see ${capture}"
-  fi
+  [[ -s "${capture}" ]] || return 1
+  grep -qF "name: ${app}" "${capture}" || return 1
+  ! grep -qE "name: (kustomized-|parity-gates-jsonnet-evaluated|parity-gates-chart-template|parity-oci-helm-nested)" "${capture}"
+}
+
+# capture_source_type_gates_manifest captures one source type gate
+# Application. The controller reads argocd-cm through an informer, so its
+# first comparison can come before it sees the keys. The capture is retried
+# with a hard refresh until it shows the plain directory render.
+capture_source_type_gates_manifest() {
+  local app="$1"
+  local output_dir="$2"
+  local capture="${output_dir}/${app}.yaml"
+  for _ in {1..60}; do
+    if argocd app manifests "${app}" > "${capture}" 2> "${OUT_DIR}/argocd-${app}.stderr" \
+      && source_type_gates_capture_ok "${app}" "${capture}"; then
+      rm -f "${OUT_DIR}/argocd-${app}.stderr"
+      return 0
+    fi
+    argocd app get "${app}" --hard-refresh >/dev/null 2>&1 || true
+    sleep 2
+  done
+  fail "Argo CD did not render ${app} as a plain directory with the tools off; see ${capture} and ${OUT_DIR}/argocd-${app}.stderr"
 }
 
 run_source_type_gates_smoke() {
   local app argocd_dir drydock_dir stderr_file
   log_step "Turning Helm, Kustomize, and Jsonnet off in argocd-cm"
+  save_source_type_gate_keys
   SOURCE_TYPE_GATES_STATE_CHANGED="true"
   kubectl -n argocd patch configmap argocd-cm --type merge -p "${SOURCE_TYPE_GATES_SETTINGS}" >/dev/null
-  # The controller reads argocd-cm through an informer. Give it time to see
-  # the keys before it reconciles the new Applications.
-  sleep 5
   log_step "Applying the source type gate Applications"
   kubectl -n argocd apply -f "${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml" >/dev/null
   for app in "${SOURCE_TYPE_GATES_APPLICATIONS[@]}"; do
@@ -2703,12 +2756,16 @@ run_source_type_gates_smoke() {
   argocd_dir="$(artifact_dir source-type-gates/argocd-manifests)"
   drydock_dir="$(artifact_dir source-type-gates/drydock-manifests)"
   for app in "${SOURCE_TYPE_GATES_APPLICATIONS[@]}"; do
-    capture_argocd_manifest "${app}" "${app}" "${argocd_dir}"
-    assert_source_type_gates_capture "${app}" "${argocd_dir}/${app}.yaml"
+    capture_source_type_gates_manifest "${app}" "${argocd_dir}"
     stderr_file="${OUT_DIR}/drydock-${app}.stderr"
+    # The chart-only Application reads the chart that the OCI warm run
+    # already holds in the chart cache.
     if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${app}" \
       --path "${SOURCE_TYPE_GATES_REPO_PATH}" \
       --repo-map "${FIXTURE_REPO_URL}=${SOURCE_TYPE_GATES_REPO_PATH}" \
+      --oci-cache-dir "${OCI_CACHE_DIR}" \
+      --chart-cache-dir "${CHART_CACHE_DIR}" \
+      --oci-ca-file "${OCI_CA_FILE}" \
       --offline > "${drydock_dir}/${app}.yaml" 2> "${stderr_file}"); then
       echo "argocd render parity smoke: drydock capture of ${app} failed; its stderr follows" >&2
       cat "${stderr_file}" >&2 || true
@@ -2722,7 +2779,7 @@ run_source_type_gates_smoke() {
     --drydock-dir "${drydock_dir}" \
     --out-dir "${OUT_DIR}/compare-source-type-gates" \
     --ignore-file "${IGNORE_FILE}")
-  log_step "Turning Helm, Kustomize, and Jsonnet on again"
+  log_step "Restoring the Helm, Kustomize, and Jsonnet keys in argocd-cm"
   remove_source_type_gates_state
   SOURCE_TYPE_GATES_STATE_CHANGED="false"
 }
@@ -2776,6 +2833,8 @@ main() {
   configure_application_namespaces
   log_step "Logging in to Argo CD"
   login_argocd
+  log_step "Removing source type gate keys that an earlier run left in argocd-cm"
+  reset_source_type_gate_keys
   log_step "Applying parity fixture Applications"
   apply_fixture_apps
   log_step "Waiting for the OCI generator ApplicationSets"

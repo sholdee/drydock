@@ -140,7 +140,10 @@ func TestSourceTypeGatesSmokeFixture(t *testing.T) {
 	const repoURL = "git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git"
 	build := func(t *testing.T, root string) map[string][]string {
 		t.Helper()
-		result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		// The chart-only Application reads the chart that the smoke pushes
+		// to its OCI registry.
+		acquirer := &recordingChartAcquirer{chartDir: filepath.Join("..", "..", "testdata", "argocd-parity", "oci-chart", "parity-nested-chart")}
+		result, err := Orchestrator{ChartAcquirer: acquirer}.Build(context.Background(), BuildRequest{
 			Path:     root,
 			RepoMaps: []sourcepkg.RepoMap{{URL: repoURL, Path: root}},
 			Offline:  true,
@@ -155,7 +158,7 @@ func TestSourceTypeGatesSmokeFixture(t *testing.T) {
 		return names
 	}
 	gated := build(t, fixture)
-	for _, app := range []string{"parity-gates-helm-discovered", "parity-gates-helm-explicit", "parity-gates-kustomize-discovered", "parity-gates-kustomize-explicit", "parity-gates-jsonnet"} {
+	for _, app := range []string{"parity-gates-helm-discovered", "parity-gates-helm-explicit", "parity-gates-helm-chart-dir", "parity-gates-helm-chart-only", "parity-gates-kustomize-discovered", "parity-gates-kustomize-explicit", "parity-gates-jsonnet"} {
 		if got := gated[app]; !slices.Equal(got, []string{app}) {
 			t.Errorf("gated %s renders %v, want only the ConfigMap %s", app, got, app)
 		}
@@ -178,5 +181,11 @@ func TestSourceTypeGatesSmokeFixture(t *testing.T) {
 	}
 	if got := ungated["parity-gates-jsonnet"]; !slices.Contains(got, "parity-gates-jsonnet-evaluated") {
 		t.Errorf("ungated jsonnet renders %v, want the Jsonnet ConfigMap too", got)
+	}
+	if got := ungated["parity-gates-helm-chart-dir"]; !slices.Equal(got, []string{"parity-gates-chart-template"}) {
+		t.Errorf("ungated helm-chart-dir renders %v, want the template", got)
+	}
+	if got := ungated["parity-gates-helm-chart-only"]; !slices.Equal(got, []string{"parity-oci-helm-nested"}) {
+		t.Errorf("ungated helm-chart-only renders %v, want the template", got)
 	}
 }

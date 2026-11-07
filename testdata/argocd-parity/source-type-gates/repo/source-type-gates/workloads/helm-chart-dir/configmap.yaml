@@ -1,0 +1,9 @@
+# Helm renders only templates/. With Helm off, the plain directory render
+# reads this file and skips Chart.yaml and values.yaml, which have no kind.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-gates-helm-chart-dir
+  namespace: parity-source-type-gates
+data:
+  note: rendered as a plain directory

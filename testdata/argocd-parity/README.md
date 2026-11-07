@@ -623,6 +623,11 @@ name:
 - `helm.valuesObject` overriding `fromValues`, so the rendered ConfigMap
   proves values reached the nested chart and not just that it resolved
 
+The chart root also holds `gate-probe.yaml`, a ConfigMap outside
+`templates/`. No Helm render of the chart holds it. The source type gate
+phase renders the chart with Helm off, as a plain directory, and then it is
+the only resource (see "Source type gate phase").
+
 The smoke harness pushes it with `scripts/argocd-parity-chart-push`, which
 packages the directory and uploads it through helm's own registry client:
 `oras push` cannot produce the helm config
@@ -1438,28 +1443,44 @@ copies the project-policy repos, so its sources live under
 `--repo-map` set to this repo, so it reads
 `source-type-gates/argocd-cm.yaml`. The main comparison never sees it.
 
-`run_source_type_gates_smoke` sets `helm.enable: "false"`,
-`kustomize.enable: "True"`, and `jsonnet.enable: "no"` on the live
-`argocd-cm`, the same keys as the `argocd-cm.yaml` of the repo. Argo CD
-keeps a tool on only for the exact value `true`, so all three tools are off.
-Then the smoke applies `source-type-gates/applications.yaml`, captures
-each Application on both sides, and compares them in
-`compare-source-type-gates/`. At the end it deletes the Applications and
-removes the keys. The phase runs last because the keys change how Argo CD
-renders every Application.
+`run_source_type_gates_smoke` records the live values of the three keys
+and then sets `helm.enable: "false"`, `kustomize.enable: "True"`, and
+`jsonnet.enable: "no"` on the live `argocd-cm`, the same keys as the
+`argocd-cm.yaml` of the repo. Argo CD keeps a tool on only for the exact
+value `true`, so all three tools are off. Then the smoke applies
+`source-type-gates/applications.yaml`, captures each Application on both
+sides, and compares them in `compare-source-type-gates/`. At the end it
+deletes the Applications and restores the recorded values. The phase runs
+last because the keys change how Argo CD renders every Application.
+
+The fixture install sets none of the three keys. So each run removes them
+right after it logs in to Argo CD, before it applies any Application. A
+run that failed under `--keep-cluster` can leave them set, and a later
+`--existing-cluster` run would then render every Application with the tools
+off.
+
+The controller reads `argocd-cm` through an informer, so its first
+comparison of an Application can come before it sees the keys.
+`capture_source_type_gates_manifest` captures each Application until the
+capture is the plain directory render, with a hard refresh between tries,
+and fails after 60 tries.
 
 | Application | source | rendered as |
 | --- | --- | --- |
 | `parity-gates-helm-discovered` | `parity-HelmChart.yaml`, a ConfigMap whose file name ends in `Chart.yaml` | a plain directory, not a Helm chart |
 | `parity-gates-helm-explicit` | a `helm` block and no `Chart.yaml` | a plain directory. With Helm on, the source fails |
+| `parity-gates-helm-chart-dir` | a local chart: `Chart.yaml`, `values.yaml`, `templates/configmap.yaml`, and `configmap.yaml` at the chart root | a plain directory: the root ConfigMap only. `Chart.yaml` and `values.yaml` have no `kind`, and the render does not walk into `templates/` |
+| `parity-gates-helm-chart-only` | `chart: parity/nested/parity-nested-chart` from the OCI Helm registry of the smoke | the extracted chart as a plain directory: the `gate-probe.yaml` ConfigMap at the chart root (`oci-chart/parity-nested-chart/gate-probe.yaml`), which no Helm render of the chart holds |
 | `parity-gates-kustomize-discovered` | a `Kustomization` file with `namePrefix: kustomized-` | a plain directory. The file has no extension, so the directory render skips it |
 | `parity-gates-kustomize-explicit` | a `kustomize` block with `namePrefix: kustomized-` | a plain directory without the prefix |
 | `parity-gates-jsonnet` | `configmap.yaml` and `skipped.jsonnet` | only `configmap.yaml`. With Jsonnet on, the Jsonnet file adds `parity-gates-jsonnet-evaluated` |
 
 Each source renders exactly one ConfigMap named like its Application.
-Before the comparison, `assert_source_type_gates_capture` makes sure that
-each Argo CD capture holds that ConfigMap and nothing that Kustomize or
-Jsonnet adds, so both sides rendering with the tools on cannot pass.
+`source_type_gates_capture_ok` makes sure that each Argo CD capture holds
+that ConfigMap and nothing that Helm, Kustomize, or Jsonnet adds, so both
+sides rendering with the tools on cannot pass. The drydock capture of the
+chart-only Application reads the chart from the chart cache that the OCI
+warm run filled.
 `TestSourceTypeGatesSmokeFixture` in `internal/app` renders the phase
 offline with and without the `argocd-cm.yaml`.
 

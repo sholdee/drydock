@@ -1,0 +1,11 @@
+# Helm renders only templates/, so this file is not in any Helm render of
+# the chart. The source type gate phase of the smoke turns Helm off, and
+# then Argo CD and drydock render the chart directory as a plain directory,
+# which holds only this ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-gates-helm-chart-only
+  namespace: parity-source-type-gates
+data:
+  note: rendered as a plain directory
