@@ -64,10 +64,7 @@ type BuildRequest struct {
 	rootRevision  string
 	// rootRepo is the Git repository that the rootRevision snapshot came
 	// from. It is set with rootRevision.
-	rootRepo string
-	// rootRefName is the --ref or --ref-orig name that the rootRevision
-	// snapshot came from. It is set with rootRevision.
-	rootRefName          string
+	rootRepo             string
 	selfRepo             selfRepoRefs
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map

@@ -14,7 +14,6 @@ import (
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
-	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 // sourceHydratorCode identifies the advisory for an Application with
@@ -47,20 +46,6 @@ func sourceHydratorDiagnostic(application argoappv1.Application) (diagnostic.Dia
 	}, true
 }
 
-// hydratorBranchForRequest is the branch whose content the tree of request
-// holds (localProvider.hydratorBranch): the --ref or --ref-orig name of a
-// diff side that renders a Git ref, else the branch checked out at root.
-func hydratorBranchForRequest(root string, request BuildRequest) string {
-	if strings.TrimSpace(request.rootRevision) != "" {
-		name := strings.TrimSpace(request.rootRefName)
-		if sourcepkg.IsCommitSHA(name) {
-			return ""
-		}
-		return name
-	}
-	return gitref.CurrentBranch(root)
-}
-
 // resolveHydratorSyncSource resolves the tree of a source hydrator sync
 // source. Argo CD reads syncSource.path at syncSource.targetBranch, so
 // drydock reads that branch too, never the local tree only because the
@@ -71,8 +56,12 @@ func hydratorBranchForRequest(root string, request BuildRequest) string {
 //     with another branch checked out, drydock renders a snapshot of the
 //     branch. Any other target fails, because drydock cannot read the
 //     branch from it.
-//   - The local repository renders from the local tree when the branch is
-//     the one the tree holds (localProvider.hydratorBranch).
+//   - The local repository renders from the tree of this side when the
+//     branch is one that the tree tracks, by the rule that every source of
+//     the local repository follows (selfRepoMatcher.matches): HEAD, a
+//     --ref or --ref-orig name of a diff, or the default branch of the
+//     repository. Both sides of a diff then read their own tree, so a
+//     change to the hydrated path shows in the diff.
 //   - Any other source comes from the Git cache or a fetch, and --offline
 //     fails on a cache miss.
 func (p localProvider) resolveHydratorSyncSource(ctx context.Context, source render.ResolvedSource) (string, SourceIdentity, error) {
@@ -99,15 +88,11 @@ func (p localProvider) resolveHydratorSyncSource(ctx context.Context, source ren
 }
 
 // hydratorSyncIsLocalTree reports whether a source hydrator sync source
-// renders from the local tree: its repository is the local repository and
-// its branch is the one the tree holds.
+// renders from the local tree: its repository is the local repository, and
+// the tree tracks its branch (resolveHydratorSyncSource).
 func (p localProvider) hydratorSyncIsLocalTree(source render.ResolvedSource) bool {
 	branch := strings.TrimSpace(source.TargetRevision)
-	if branch == "" || branch != p.hydratorBranch || strings.TrimSpace(source.RepoURL) == "" {
-		return false
-	}
-	_, ok := p.selfRepoURLKeys[sourcepkg.CanonicalGitURLKey(source.RepoURL)]
-	return ok
+	return branch != "" && p.isSelfRepoRef(source.RepoURL, branch)
 }
 
 // hydratorSnapshot is one snapshot of a branch of a --repo-map Git

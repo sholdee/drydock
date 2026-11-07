@@ -204,6 +204,18 @@ metadata:
 	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/repo.git"}}); err != nil {
 		t.Fatal(err)
 	}
+	// origin/HEAD names master, so master is the default branch that the
+	// self-repo rule tracks.
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewHashReference("refs/remotes/origin/master", head.Hash())); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewSymbolicReference("refs/remotes/origin/HEAD", "refs/remotes/origin/master")); err != nil {
+		t.Fatal(err)
+	}
 	worktree, err := repo.Worktree()
 	if err != nil {
 		t.Fatal(err)
@@ -248,8 +260,8 @@ spec:
 // TestBuildRendersHydratorSyncSource renders an Application with
 // spec.sourceHydrator. drydock renders the sync source at its branch, as
 // the Argo CD controller compares it. It never renders the dry source or
-// spec.source, and it reads the local tree only when the tree holds the
-// sync branch.
+// spec.source, and it reads the local tree only when the self-repo rule
+// tracks the sync branch there.
 func TestBuildRendersHydratorSyncSource(t *testing.T) {
 	const self = "https://example.test/repo.git"
 	testCases := []struct {
@@ -263,7 +275,7 @@ func TestBuildRendersHydratorSyncSource(t *testing.T) {
 	}{
 		{name: "repo-mapped Git repository at another branch", syncRepo: self, branch: "env/prod", syncPath: "workloads/hydrated", repoMap: true, want: "from-hydrated-branch"},
 		{name: "repo-mapped Git repository at the checked-out branch", syncRepo: self, branch: "master", syncPath: "workloads/hydrated", repoMap: true, want: "from-hydrated"},
-		{name: "local repository at the checked-out branch", syncRepo: self, branch: "master", syncPath: "workloads/hydrated", want: "from-hydrated"},
+		{name: "local repository at its default branch", syncRepo: self, branch: "master", syncPath: "workloads/hydrated", want: "from-hydrated"},
 		{name: "local repository at another branch", syncRepo: self, branch: "env/prod", syncPath: "workloads/hydrated", wantErr: "env/prod"},
 		// The review repro: the sync path is also the local dry path, in
 		// another repository.
@@ -429,22 +441,6 @@ func TestParitySpecCasesMatchUpstream(t *testing.T) {
 	}
 }
 
-// TestHydratorBranchForRequest pins the branch that a tree holds: the
-// --ref or --ref-orig name of a diff side that renders a Git ref, never a
-// commit SHA, and the checked-out branch otherwise.
-func TestHydratorBranchForRequest(t *testing.T) {
-	root := t.TempDir()
-	hydratorBranchRepo(t, root)
-	if got := hydratorBranchForRequest(root, BuildRequest{}); got != "master" {
-		t.Fatalf("worktree branch = %q, want master", got)
-	}
-	if got := hydratorBranchForRequest(root, BuildRequest{rootRevision: "0123456789abcdef0123456789abcdef01234567", rootRefName: "env/prod"}); got != "env/prod" {
-		t.Fatalf("ref side branch = %q, want env/prod", got)
-	}
-	if got := hydratorBranchForRequest(root, BuildRequest{rootRevision: "0123456789abcdef0123456789abcdef01234567", rootRefName: "0123456789abcdef0123456789abcdef01234567"}); got != "" {
-		t.Fatalf("SHA side branch = %q, want empty", got)
-	}
-}
 
 // TestValidateApplicationSpecSourcesAppliesSyncPathSchema pins the CRD
 // schema of spec.sourceHydrator.syncSource.path (minLength 1 and the

@@ -597,18 +597,12 @@ func unownedByNeitherSide(leftUnowned, rightUnowned []string) []string {
 }
 
 // withSideRoots records on each side's request the tree it renders: the
-// snapshot revision and the --ref-orig or --ref name of a side that renders
-// a Git ref, and the repository the snapshot came from.
+// snapshot revision of a side that renders a Git ref, and the repository
+// the snapshot came from.
 func (request DiffRequest) withSideRoots(left, right BuildRequest) (BuildRequest, BuildRequest) {
 	left.rootRevision = request.leftPathRevision
 	right.rootRevision = request.rightPathRevision
 	left.rootRepo = request.Repo
 	right.rootRepo = request.Repo
-	if request.leftPathRevision != "" {
-		left.rootRefName = request.RefOrig
-	}
-	if request.rightPathRevision != "" {
-		right.rootRefName = request.Ref
-	}
 	return left, right
 }
