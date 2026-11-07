@@ -181,25 +181,30 @@ func repoServerGroup(candidate discovery.SettingsCandidate) string {
 }
 
 // staticRepoServerNamespace works out the namespace of a committed
-// repo-server object as kustomize and Argo CD place it: the namespace of
-// the kustomization in its directory that lists it, which the kustomize
-// NamespaceTransformer sets over the object's own, else its own namespace,
-// else the destination namespace of the Applications on this cluster that
-// render the file. A kustomize.namespace of such an Application wins over
-// all of them, because Argo CD sets it on the kustomization. remote
-// reports a file that only Applications on other clusters render: that
-// repo-server runs another Argo CD.
+// repo-server object as kustomize and Argo CD place it. kustomize applies
+// the namespace of every kustomization on the way from the source root to
+// the file, and the outermost one wins (NamespaceTransformer, checked with
+// kustomize 5.8.3); a kustomize.namespace of the Application is set on the
+// source root by Argo CD, so it is the outermost. Without one, the object's
+// own namespace counts, then the destination namespace of the Applications
+// on this cluster that render the file. A file that no Application renders
+// gets the namespace of the kustomization in its own directory that lists
+// it; drydock does not search the repository for kustomizations further up.
+// remote reports a file that only Applications on other clusters render:
+// that repo-server runs another Argo CD.
 func staticRepoServerNamespace(root string, candidate discovery.SettingsCandidate, applications []discovery.ApplicationFile, settings config.ArgoSettings) (namespace string, known, remote bool, diags []diagnostic.Diagnostic) {
 	file := filepath.ToSlash(candidate.Path)
 	renders := staticFileRenders(root, file, applications, settings)
 	if renders.remoteOnly {
 		return "", false, true, nil
 	}
-	if len(renders.overrides) > 0 {
-		return pickStaticNamespace(file, renders.overrides, "kustomize.namespace values")
+	if len(renders.kustomizeNamespaces) > 0 {
+		return pickStaticNamespace(file, renders.kustomizeNamespaces, "kustomization namespaces")
 	}
-	if namespace := kustomizationNamespaceFor(root, path.Dir(file), path.Base(file)); namespace != "" {
-		return namespace, true, false, nil
+	if !renders.rendered {
+		if namespace := kustomizationNamespaceFor(root, path.Dir(file), path.Base(file)); namespace != "" {
+			return namespace, true, false, nil
+		}
 	}
 	if namespace := candidate.Object.GetNamespace(); namespace != "" {
 		return namespace, true, false, nil
@@ -221,25 +226,29 @@ func pickStaticNamespace(file string, namespaces []string, what string) (string,
 // staticRenders is what the discovered Applications do with a committed
 // file.
 type staticRenders struct {
-	// destinations and overrides are the destination namespaces and the
-	// kustomize.namespace values of the Applications on this cluster that
-	// render the file, sorted and without duplicates.
-	destinations []string
-	overrides    []string
-	// remoteOnly reports that only Applications on other clusters render
-	// the file.
+	// destinations are the destination namespaces of the Applications on
+	// this cluster that render the file, and kustomizeNamespaces the
+	// outermost kustomization namespace of each Kustomize source among
+	// them, sorted and without duplicates.
+	destinations        []string
+	kustomizeNamespaces []string
+	// rendered reports that an Application on this cluster renders the
+	// file, and remoteOnly that only Applications on other clusters do.
+	rendered   bool
 	remoteOnly bool
 }
 
 func staticFileRenders(root, file string, applications []discovery.ApplicationFile, settings config.ArgoSettings) staticRenders {
 	var out staticRenders
 	inCluster, remote := 0, 0
+	gates := sourceTypeGatesFromSettings(settings)
 	for _, appFile := range applications {
 		if appFile.Tier == discovery.SourceTierExternalManifest {
 			continue
 		}
 		for _, source := range applicationSources(appFile.Application) {
-			if !sourceRendersCommittedFile(root, source, file, sourceTypeGatesFromSettings(settings)) {
+			reads, kustomizeNamespace := sourceRendersCommittedFile(root, source, file, gates)
+			if !reads {
 				continue
 			}
 			server, ok := project.ResolveDestinationServer(appFile.Application.Spec.Destination, settings)
@@ -249,12 +258,11 @@ func staticFileRenders(root, file string, applications []discovery.ApplicationFi
 			}
 			inCluster++
 			out.destinations = appendSortedUnique(out.destinations, appFile.Application.Spec.Destination.Namespace)
-			if source.Kustomize != nil {
-				out.overrides = appendSortedUnique(out.overrides, source.Kustomize.Namespace)
-			}
+			out.kustomizeNamespaces = appendSortedUnique(out.kustomizeNamespaces, kustomizeNamespace)
 			break
 		}
 	}
+	out.rendered = inCluster > 0
 	out.remoteOnly = inCluster == 0 && remote > 0
 	return out
 }
@@ -269,79 +277,149 @@ func appendSortedUnique(values []string, value string) []string {
 }
 
 // sourceRendersCommittedFile reports whether source renders the committed
-// file as it is. The source must render this repository: not an OCI
-// artifact, not a chart from a chart repository, and a path in the tree
-// (localProvider.sourceResolvesToRepoRoot). A Kustomize source renders the
-// file when its graph reads it. A directory source renders a file directly
-// in its path, or below it with directory.recurse. A Helm chart renders its
-// templates, not a committed file, and a plugin is not known.
-func sourceRendersCommittedFile(root string, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) bool {
-	sourcePath, ok := committedFileSourcePath(root, source, file)
-	if !ok {
-		return false
+// file as it is, and for a Kustomize source the outermost kustomization
+// namespace on the way to the file. The source must render this
+// repository: not an OCI artifact, not a chart from a chart repository, and
+// a path in the tree (localProvider.sourceResolvesToRepoRoot). A Kustomize
+// source renders the file when its graph reads it, also from outside its
+// path, such as a base. A directory source renders a file directly in its
+// path, or below it with directory.recurse, when its include and exclude
+// globs let the file through. A Helm chart renders its templates, not a
+// committed file, and a plugin is not known.
+func sourceRendersCommittedFile(root string, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) (bool, string) {
+	if source.Path == "" || !(localProvider{repoRoot: root}).sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {
+		return false, ""
 	}
+	sourcePath, err := cleanLocalSourcePath(source.Path)
+	if err != nil {
+		return false, ""
+	}
+	sourcePath = filepath.ToSlash(sourcePath)
 	resolved := render.ResolvedSource{RepoRoot: root, Path: sourcePath}
 	if explicitType, err := source.ExplicitType(); err == nil && explicitType != nil {
 		resolved.ExplicitType = *explicitType
 	}
 	if resolved.ExplicitType == argoappv1.ApplicationSourceTypePlugin || source.Plugin != nil {
-		return false
+		return false, ""
 	}
 	renderer, err := selectLocalRenderer(resolved, gates)
 	if err != nil {
-		return false
+		return false, ""
 	}
 	switch renderer.(type) {
 	case render.KustomizeRenderer:
 		paths, err := render.KustomizeSelectionPaths(context.Background(), root, sourcePath, source.Kustomize)
-		return err == nil && slices.Contains(paths, file)
-	case render.DirectoryRenderer:
-		if path.Dir(file) == sourcePath || (sourcePath == "." && !strings.Contains(file, "/")) {
-			return true
+		if err != nil || !slices.Contains(paths, file) {
+			return false, ""
 		}
-		return source.Directory != nil && source.Directory.Recurse
+		namespace := ""
+		if source.Kustomize != nil {
+			namespace = source.Kustomize.Namespace
+		}
+		if namespace == "" {
+			namespace = kustomizationChainNamespace(root, sourcePath, file)
+		}
+		return true, namespace
+	case render.DirectoryRenderer:
+		return directorySourceReadsFile(root, source, sourcePath, file), ""
 	}
-	return false
+	return false, ""
 }
 
-// committedFileSourcePath returns the clean local path of source when the
-// source renders this repository and its path holds file.
-func committedFileSourcePath(root string, source argoappv1.ApplicationSource, file string) (string, bool) {
-	if source.Path == "" || !(localProvider{repoRoot: root}).sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {
-		return "", false
+// directorySourceReadsFile reports whether a directory source at
+// sourcePath reads file.
+func directorySourceReadsFile(root string, source argoappv1.ApplicationSource, sourcePath, file string) bool {
+	if sourcePath != "." && !strings.HasPrefix(file, sourcePath+"/") {
+		return false
 	}
-	sourcePath, err := cleanLocalSourcePath(source.Path)
-	if err != nil {
-		return "", false
+	direct := path.Dir(file) == sourcePath || (sourcePath == "." && !strings.Contains(file, "/"))
+	if source.Directory == nil {
+		return direct
 	}
-	sourcePath = filepath.ToSlash(sourcePath)
-	if sourcePath != "." && file != sourcePath && !strings.HasPrefix(file, sourcePath+"/") {
-		return "", false
+	if !direct && !source.Directory.Recurse {
+		return false
 	}
-	return sourcePath, true
+	sourceRoot := filepath.Join(root, filepath.FromSlash(sourcePath))
+	return render.DirectoryIncludesFile(sourceRoot, filepath.Join(root, filepath.FromSlash(file)), source.Directory.Include, source.Directory.Exclude)
 }
 
-// kustomizationNamespaceFor returns the namespace of the kustomization in
-// dir when it lists file as a resource.
-func kustomizationNamespaceFor(root, dir, file string) string {
+// kustomizationChainNamespace returns the outermost namespace of the
+// kustomizations on the way from the kustomization at sourcePath to the one
+// that lists file in its resources, through resources, bases, and
+// components that are local directories. kustomize applies the namespace
+// of each kustomization on the way, so the outermost one wins.
+func kustomizationChainNamespace(root, sourcePath, file string) string {
+	visited := map[string]bool{}
+	var walk func(dir string, chain []string) (string, bool)
+	walk = func(dir string, chain []string) (string, bool) {
+		if visited[dir] || len(chain) > 64 {
+			return "", false
+		}
+		visited[dir] = true
+		kustomization, ok := readKustomizationRefs(root, dir)
+		if !ok {
+			return "", false
+		}
+		chain = append(chain, kustomization.Namespace)
+		refs := append(append(append([]string(nil), kustomization.Resources...), kustomization.Bases...), kustomization.Components...)
+		for _, ref := range refs {
+			if strings.Contains(ref, "://") {
+				continue
+			}
+			target := path.Clean(path.Join(dir, ref))
+			if target == file {
+				for _, namespace := range chain {
+					if namespace != "" {
+						return namespace, true
+					}
+				}
+				return "", true
+			}
+			if namespace, found := walk(target, chain); found {
+				return namespace, true
+			}
+		}
+		return "", false
+	}
+	namespace, _ := walk(sourcePath, nil)
+	return namespace
+}
+
+type kustomizationRefs struct {
+	Namespace  string   `json:"namespace"`
+	Resources  []string `json:"resources"`
+	Bases      []string `json:"bases"`
+	Components []string `json:"components"`
+}
+
+// readKustomizationRefs reads the namespace and the refs of the
+// kustomization in dir.
+func readKustomizationRefs(root, dir string) (kustomizationRefs, bool) {
 	for _, name := range render.KustomizationFileNames {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(dir), name))
 		if err != nil {
 			continue
 		}
-		var kustomization struct {
-			Namespace string   `json:"namespace"`
-			Resources []string `json:"resources"`
-		}
+		var kustomization kustomizationRefs
 		if err := sigsyaml.Unmarshal(data, &kustomization); err != nil {
-			return ""
+			return kustomizationRefs{}, false
 		}
-		for _, resource := range kustomization.Resources {
-			if path.Clean(resource) == file {
-				return kustomization.Namespace
-			}
-		}
+		return kustomization, true
+	}
+	return kustomizationRefs{}, false
+}
+
+// kustomizationNamespaceFor returns the namespace of the kustomization in
+// dir when it lists file as a resource.
+func kustomizationNamespaceFor(root, dir, file string) string {
+	kustomization, ok := readKustomizationRefs(root, dir)
+	if !ok {
 		return ""
+	}
+	for _, resource := range kustomization.Resources {
+		if path.Clean(path.Join(dir, resource)) == path.Join(dir, file) {
+			return kustomization.Namespace
+		}
 	}
 	return ""
 }

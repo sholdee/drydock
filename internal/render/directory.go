@@ -571,3 +571,10 @@ func relativeManifestPath(repoRoot, path string) (string, error) {
 	}
 	return rel, nil
 }
+
+// DirectoryIncludesFile reports whether a directory source rooted at root
+// reads filePath under its include and exclude globs, as the renderer
+// filters the files it walks (directoryManifestIncluded).
+func DirectoryIncludesFile(root, filePath, include, exclude string) bool {
+	return directoryManifestIncluded(root, filePath, RenderOptions{DirectoryInclude: include, DirectoryExclude: exclude})
+}

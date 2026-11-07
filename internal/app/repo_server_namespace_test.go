@@ -404,3 +404,77 @@ func TestHelmNamespaceProbeNSRepository(t *testing.T) {
 		t.Fatalf("diagnostics = %q, want no unknown-input warning: a literal HELM_NAMESPACE decides", msgs)
 	}
 }
+
+// A Kustomize overlay that reads a base outside its path renders the
+// committed install, and kustomize applies the namespace of every
+// kustomization on the way, the outermost last, so it wins.
+func TestHelmNamespaceOverlayReadsACommittedBase(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "base", "argocd", "install.yaml"), repoServerKustomizeInstall)
+	writeTestFile(t, filepath.Join(root, "base", "argocd", "kustomization.yaml"), "namespace: base-ns\nresources:\n  - install.yaml\n")
+	writeTestFile(t, filepath.Join(root, "overlays", "prod", "kustomization.yaml"), "namespace: argocd\nresources:\n  - ../../base/argocd\n")
+	writeReviewApplication(t, root, "argocd", "overlays/prod", "", "dest")
+	if ns, msgs := buildHelmNamespace(t, root); ns != "argocd" {
+		t.Fatalf("HelmNamespace = %q, diagnostics %q, want the outermost kustomization namespace argocd", ns, msgs)
+	}
+	// The same overlay on another cluster runs another Argo CD.
+	root = t.TempDir()
+	writeTestFile(t, filepath.Join(root, "base", "argocd", "install.yaml"), repoServerKustomizeInstall)
+	writeTestFile(t, filepath.Join(root, "base", "argocd", "kustomization.yaml"), "namespace: argocd\nresources:\n  - install.yaml\n")
+	writeTestFile(t, filepath.Join(root, "overlays", "prod", "kustomization.yaml"), "resources:\n  - ../../base/argocd\n")
+	writeTestFile(t, filepath.Join(root, "cluster.yaml"), remoteClusterSecret)
+	writeRemoteApplication(t, root, "remote", reviewRepoURL, "overlays/prod", "")
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root, Offline: true})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+	if got := result.Settings.HelmNamespace(); got != "default" {
+		t.Fatalf("HelmNamespace = %q, want default: only an Application on another cluster renders the base", got)
+	}
+}
+
+// A directory source reads only the files that its include and exclude
+// globs let through.
+func TestHelmNamespaceDirectorySourceHonorsIncludeAndExclude(t *testing.T) {
+	for _, tc := range []struct {
+		name, directory, want string
+	}{
+		{name: "excluded", directory: "    directory:\n      exclude: install.yaml\n", want: "argocd"},
+		{name: "not included", directory: "    directory:\n      include: other.yaml\n", want: "argocd"},
+		{name: "included", directory: "    directory:\n      include: install.yaml\n", want: "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, filepath.Join(root, "bootstrap", "install.yaml"), strings.Replace(repoServerKustomizeInstall, "metadata:\n  name: argocd-repo-server\n", "metadata:\n  name: argocd-repo-server\n  namespace: argocd\n", 1))
+			writeTestFile(t, filepath.Join(root, "cluster.yaml"), remoteClusterSecret)
+			writeRemoteApplication(t, root, "plain", reviewRepoURL, "bootstrap", tc.directory)
+			result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root, Offline: true})
+			if err != nil {
+				t.Fatalf("ListApplications() error = %v", err)
+			}
+			if got := result.Settings.HelmNamespace(); got != tc.want {
+				t.Fatalf("HelmNamespace = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The kustomize.namespace of an Application wins over every kustomization
+// namespace, because Argo CD sets it on the source kustomization. It
+// applies only while the source renders with Kustomize: with
+// kustomize.enable off, the source is a plain directory (probe of the
+// fourth review).
+func TestHelmNamespaceKustomizeNamespaceOverride(t *testing.T) {
+	root := t.TempDir()
+	install := strings.Replace(repoServerKustomizeInstall, "metadata:\n  name: argocd-repo-server\n", "metadata:\n  name: argocd-repo-server\n  namespace: other\n", 1)
+	writeTestFile(t, filepath.Join(root, "argocd", "install.yaml"), install)
+	writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), "namespace: other\nresources:\n  - install.yaml\n")
+	writeReviewApplication(t, root, "argocd", "argocd", "    kustomize:\n      namespace: argocd\n", "argocd")
+	if ns, msgs := buildHelmNamespace(t, root); ns != "argocd" {
+		t.Fatalf("HelmNamespace = %q, diagnostics %q, want the kustomize.namespace argocd", ns, msgs)
+	}
+	writeReviewArgoCDConfigMap(t, root, "  kustomize.enable: \"false\"\n")
+	if ns, msgs := buildHelmNamespace(t, root); ns != "other" {
+		t.Fatalf("HelmNamespace = %q, diagnostics %q, want other: with Kustomize off the object keeps its namespace", ns, msgs)
+	}
+}
