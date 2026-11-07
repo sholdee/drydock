@@ -1605,13 +1605,10 @@ dependencies:
     version: '>=0.12.0'
     repository: oci://registry-1.docker.io/cloudpirates
 `)
-	writeFile(t, filepath.Join(parent, "Chart.lock"), `
-dependencies:
+	writeHelmChartLock(t, parent, `
   - name: postgres
     repository: oci://registry-1.docker.io/cloudpirates
     version: 0.12.4
-digest: sha256:example
-generated: "2026-01-01T00:00:00Z"
 `)
 	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
 apiVersion: v1
@@ -1659,7 +1656,11 @@ metadata:
 	}
 }
 
-func TestHelmRendererAcquiresIncompatibleVendoredOCIChartDependency(t *testing.T) {
+// A vendored subchart of another version than Chart.yaml names still
+// counts: helm template matches dependencies by name only
+// (action.CheckDependencies), so the repo-server never runs `helm
+// dependency build` and renders the vendored chart.
+func TestHelmRendererUsesVendoredChartOfAnotherVersion(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "parent")
 	child := filepath.Join(root, "acquired", "postgres")
@@ -1706,15 +1707,18 @@ metadata:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
-	if got, want := len(acquirer.requests), 1; got != want {
+	if got, want := len(acquirer.requests), 0; got != want {
 		t.Fatalf("chart acquire calls = %d, want %d", got, want)
 	}
-	if !containsManifest(result, "ConfigMap", "postgres-config") || containsManifest(result, "ConfigMap", "stale-postgres-config") {
-		t.Fatalf("manifests = %#v, want acquired compatible dependency only", manifestNames(result))
+	if containsManifest(result, "ConfigMap", "postgres-config") || !containsManifest(result, "ConfigMap", "stale-postgres-config") {
+		t.Fatalf("manifests = %#v, want the vendored dependency only", manifestNames(result))
 	}
 }
 
-func TestHelmRendererUsesChartLockWhenVendoredVersionSatisfiesRange(t *testing.T) {
+// A vendored subchart also wins over a Chart.lock version: the lock is read
+// only by `helm dependency build`, which never runs while every dependency
+// has a chart under charts/.
+func TestHelmRendererUsesVendoredChartOverChartLock(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "parent")
 	child := filepath.Join(root, "acquired", "postgres")
@@ -1769,15 +1773,17 @@ metadata:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
-	if got, want := len(acquirer.requests), 1; got != want {
+	if got, want := len(acquirer.requests), 0; got != want {
 		t.Fatalf("chart acquire calls = %d, want %d", got, want)
 	}
-	if !containsManifest(result, "ConfigMap", "locked-postgres-config") || containsManifest(result, "ConfigMap", "unlocked-postgres-config") {
-		t.Fatalf("manifests = %#v, want locked dependency only", manifestNames(result))
+	if containsManifest(result, "ConfigMap", "locked-postgres-config") || !containsManifest(result, "ConfigMap", "unlocked-postgres-config") {
+		t.Fatalf("manifests = %#v, want the vendored dependency only", manifestNames(result))
 	}
 }
 
-func TestHelmRendererRemovesIncompatibleVendoredChartArchive(t *testing.T) {
+// A vendored chart archive of another version than Chart.yaml names also
+// counts, as a vendored directory does.
+func TestHelmRendererUsesVendoredArchiveOfAnotherVersion(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "parent")
 	child := filepath.Join(root, "acquired", "postgres")
@@ -1824,11 +1830,11 @@ metadata:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
-	if got, want := len(acquirer.requests), 1; got != want {
+	if got, want := len(acquirer.requests), 0; got != want {
 		t.Fatalf("chart acquire calls = %d, want %d", got, want)
 	}
-	if !containsManifest(result, "ConfigMap", "postgres-config") || containsManifest(result, "ConfigMap", "archived-postgres-config") {
-		t.Fatalf("manifests = %#v, want acquired dependency only", manifestNames(result))
+	if containsManifest(result, "ConfigMap", "postgres-config") || !containsManifest(result, "ConfigMap", "archived-postgres-config") {
+		t.Fatalf("manifests = %#v, want the vendored archive only", manifestNames(result))
 	}
 }
 

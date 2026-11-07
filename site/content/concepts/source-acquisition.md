@@ -116,7 +116,11 @@ source: Argo CD's repo-server dispatches on the scheme before it looks at
 Drydock resolves missing HTTP(S) and OCI chart dependencies declared in
 `Chart.yaml` through its native chart cache. With `--offline`, cache hits are
 allowed but network fetches are disabled. The source checkout is not mutated,
-and drydock does not run `helm dependency build`.
+and drydock does not run `helm dependency build`. It does the same steps as
+that command in Argo CD: a dependency is missing only when `charts/` has no
+chart of its name, a `Chart.lock` must match `Chart.yaml`, and the build
+fetches every remote dependency at its locked or resolved version, also the
+vendored ones.
 
 Local `file://`, repository-alias, or otherwise unresolved dependencies must
 already be available under `charts/`. Missing local dependencies fail with a

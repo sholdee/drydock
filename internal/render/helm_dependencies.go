@@ -1,8 +1,12 @@
 package render
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,13 +18,30 @@ import (
 	"helm.sh/helm/v4/pkg/chart/common"
 	"helm.sh/helm/v4/pkg/chart/loader"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
+	chartv2loader "helm.sh/helm/v4/pkg/chart/v2/loader"
 	chartv2util "helm.sh/helm/v4/pkg/chart/v2/util"
+	"helm.sh/helm/v4/pkg/provenance"
 )
 
+// prepareHelmDependencyWorkspace runs drydock's `helm dependency build` when
+// helm template would ask for one. helm template fails only when a
+// Chart.yaml dependency has no chart of the same name under charts/
+// (action.CheckDependencies, helm v4.3.1 pkg/action/install.go:839-869), and
+// the repo-server then runs `helm dependency build` once
+// (reposerver/repository/repository.go:1402-1416 and 1251-1271 at v3.6.1).
+// A vendored chart whose version does not match Chart.yaml or Chart.lock
+// still counts, so nothing is fetched then. The build fetches every remote
+// dependency (helmDependencyBuildRequests), also the ones that are vendored,
+// into a temporary copy of the chart, and removes the outdated archives
+// (removeOutdatedHelmDependencyArchives).
 func prepareHelmDependencyWorkspace(ctx context.Context, chartPath, chartSourcePath string, chrt helmchart.Charter, opts RenderOptions) (helmchart.Charter, func(), error) {
-	requests, err := missingAcquirableHelmDependencyRequests(chrt, opts.OCIChartRepositories)
+	missing, err := missingHelmDependencies(chrt)
+	if err != nil || len(missing) == 0 {
+		return chrt, nil, err
+	}
+	requests, keep, err := helmDependencyBuildRequests(chrt, missing, opts.OCIChartRepositories)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("helm chart dependencies %s: error building helm chart dependencies: %w", chartSourcePath, err)
 	}
 	if len(requests) == 0 {
 		return chrt, nil, nil
@@ -43,14 +64,33 @@ func prepareHelmDependencyWorkspace(ctx context.Context, chartPath, chartSourceP
 		return nil, nil, fmt.Errorf("copy helm chart for dependency acquisition: %w", err)
 	}
 
+	if err := acquireHelmDependencies(ctx, tempChartPath, requests, opts); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	if err := removeOutdatedHelmDependencyArchives(filepath.Join(tempChartPath, "charts"), keep); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+
+	prepared, err := loader.Load(tempChartPath)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("load helm chart with acquired dependencies %s: %w", chartSourcePath, err)
+	}
+	return prepared, cleanup, nil
+}
+
+// acquireHelmDependencies fetches each request and puts the chart under the
+// charts/ directory of the chart copy at tempChartPath.
+func acquireHelmDependencies(ctx context.Context, tempChartPath string, requests []chart.Request, opts RenderOptions) error {
 	acquirer := opts.ChartAcquirer
 	if acquirer == nil {
 		acquirer = chart.DefaultAcquirer{}
 	}
 	for _, request := range requests {
 		if err := ctx.Err(); err != nil {
-			cleanup()
-			return nil, nil, err
+			return err
 		}
 		result, err := acquirer.Acquire(ctx, request, chart.Options{
 			CacheDir:        opts.ChartCacheDir,
@@ -63,47 +103,202 @@ func prepareHelmDependencyWorkspace(ctx context.Context, chartPath, chartSourceP
 		})
 		if err != nil {
 			recordChartCacheEvent(opts, request, err, chart.Result{})
-			cleanup()
-			return nil, nil, fmt.Errorf("acquire helm chart dependency %s: %s", request.Name, redactKustomizeChartAcquireError(err, request.Repository, opts.ChartCredentials))
+			return fmt.Errorf("acquire helm chart dependency %s: %s", request.Name, redactKustomizeChartAcquireError(err, request.Repository, opts.ChartCredentials))
 		}
 		recordChartCacheEvent(opts, request, nil, result)
 
 		dst, err := replaceHelmDependencyChartTargets(tempChartPath, request.Name)
 		if err != nil {
-			cleanup()
-			return nil, nil, err
+			return err
 		}
 		if err := copyRegularTree(result.ChartDir, dst); err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("copy acquired helm chart dependency %s: %w", request.Name, err)
+			return fmt.Errorf("copy acquired helm chart dependency %s: %w", request.Name, err)
 		}
 	}
-
-	prepared, err := loader.Load(tempChartPath)
-	if err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("load helm chart with acquired dependencies %s: %w", chartSourcePath, err)
-	}
-	return prepared, cleanup, nil
+	return nil
 }
 
-func missingAcquirableHelmDependencyRequests(chrt helmchart.Charter, ociRepositories map[string]bool) ([]chart.Request, error) {
-	missing, err := missingHelmDependencies(chrt)
-	if err != nil {
-		return nil, err
+// helmDependencyBuildRequests returns the chart requests of `helm dependency
+// build` for chrt, whose dependencies missing have no chart under charts/,
+// and the names of the dependencies whose vendored archives the build keeps.
+//
+// With a Chart.lock, the build runs Manager.Build (helm v4.3.1
+// pkg/downloader/manager.go:89-155): the lock must match Chart.yaml
+// (checkHelmChartLock), every repository in it must be known
+// (checkHelmLockRepositories), and every locked dependency is fetched at
+// its locked version. Without a Chart.lock, it runs Manager.Update, which
+// resolves each Chart.yaml version against its repository
+// (chart.VersionHelmDependency) and fetches that version. A dependency
+// without a repository must be under charts/, and drydock fetches no
+// file:// or repository-alias dependency: those must be vendored, and stay.
+// When a missing dependency is one that drydock does not fetch, it fetches
+// nothing, and the render fails on the missing dependency.
+func helmDependencyBuildRequests(chrt helmchart.Charter, missing []helmchart.Dependency, ociRepositories map[string]bool) ([]chart.Request, map[string]bool, error) {
+	parent, ok := chrt.(*chartv2.Chart)
+	if !ok || parent.Metadata == nil {
+		return nil, nil, nil
 	}
-	requests := make([]chart.Request, 0, len(missing))
-	for _, dependency := range missing {
-		dependency = helmLockedDependency(chrt, dependency)
+	dependencies := parent.Metadata.Dependencies
+	policy := chart.VersionHelmDependency
+	if parent.Lock != nil {
+		if err := checkHelmChartLock(parent); err != nil {
+			return nil, nil, err
+		}
+		if err := checkHelmLockRepositories(parent.Lock.Dependencies); err != nil {
+			return nil, nil, err
+		}
+		dependencies = parent.Lock.Dependencies
+		policy = chart.VersionHelmLocked
+	}
+	keep := map[string]bool{}
+	fetched := map[string]bool{}
+	seen := map[chart.Request]bool{}
+	var requests []chart.Request
+	for _, dependency := range dependencies {
+		if dependency == nil {
+			continue
+		}
 		request, ok, err := helmDependencyChartRequest(dependency, ociRepositories)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if ok {
+		if !ok {
+			keep[dependency.Name] = true
+			continue
+		}
+		request.VersionPolicy = policy
+		fetched[dependency.Name] = true
+		// helm downloads one chart URL once (downloadAll), so two aliases
+		// of one chart fetch it once.
+		if !seen[request] {
+			seen[request] = true
 			requests = append(requests, request)
 		}
 	}
-	return requests, nil
+	for _, dependency := range missing {
+		accessor, err := helmchart.NewDependencyAccessor(dependency)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !fetched[accessor.Name()] {
+			return nil, nil, nil
+		}
+	}
+	return requests, keep, nil
+}
+
+// checkHelmChartLock fails a Chart.lock whose digest does not match the
+// dependencies of Chart.yaml, as Manager.Build does (helm v4.3.1
+// pkg/downloader/manager.go:105-131). Build replaces a repository alias in
+// Chart.yaml with the URL of the repository that Argo CD added before it
+// hashes, and drydock does not know those URLs, so it skips the check when
+// a dependency names a repository alias.
+func checkHelmChartLock(parent *chartv2.Chart) error {
+	req := parent.Metadata.Dependencies
+	for _, dependency := range req {
+		if dependency != nil && (strings.HasPrefix(dependency.Repository, "@") || strings.HasPrefix(dependency.Repository, "alias:")) {
+			return nil
+		}
+	}
+	sum, err := helmHashReq(req, parent.Lock.Dependencies)
+	if err == nil && sum == parent.Lock.Digest {
+		return nil
+	}
+	if parent.Metadata.APIVersion != chartv2.APIVersionV1 {
+		return errors.New("the lock file (Chart.lock) is out of sync with the dependencies file (Chart.yaml). Please update the dependencies with 'helm dependency update'")
+	}
+	if v2Sum, err := helmHashV2Req(req); err == nil && v2Sum == parent.Lock.Digest {
+		return nil
+	}
+	return errors.New("the lock file (requirements.lock) is out of sync with the dependencies file (requirements.yaml). Please update the dependencies")
+}
+
+// helmHashReq is resolver.HashReq (helm v4.3.1
+// internal/resolver/resolver.go:213-220), which helm keeps internal.
+func helmHashReq(req, lock []*chartv2.Dependency) (string, error) {
+	data, err := json.Marshal([2][]*chartv2.Dependency{req, lock})
+	if err != nil {
+		return "", err
+	}
+	sum, err := provenance.Digest(bytes.NewBuffer(data))
+	return "sha256:" + sum, err
+}
+
+// helmHashV2Req is resolver.HashV2Req (helm v4.3.1
+// internal/resolver/resolver.go:227-236), the Helm 2 lock digest.
+func helmHashV2Req(req []*chartv2.Dependency) (string, error) {
+	data, err := json.Marshal(map[string][]*chartv2.Dependency{"dependencies": req})
+	if err != nil {
+		return "", err
+	}
+	sum, err := provenance.Digest(bytes.NewBuffer(data))
+	return "sha256:" + sum, err
+}
+
+// checkHelmLockRepositories fails a locked dependency whose repository helm
+// does not know, as Manager.hasAllRepos does (helm v4.3.1
+// pkg/downloader/manager.go:463-490). The repo-server adds only the https
+// and oci repositories of Chart.yaml before the build (getHelmDependencyRepos,
+// reposerver/repository/repository.go:1208-1240 at v3.6.1), and the build
+// itself skips oci and file:// repositories. So an http:// repository fails,
+// with the text of `helm dependency build` (pkg/cmd/dependency_build.go).
+// drydock does not know the repositories that a repository alias names, so
+// it lets such an entry pass.
+func checkHelmLockRepositories(dependencies []*chartv2.Dependency) error {
+	var missing []string
+	for _, dependency := range dependencies {
+		if dependency == nil {
+			continue
+		}
+		repository := dependency.Repository
+		switch {
+		case repository == "",
+			strings.HasPrefix(repository, "file://"),
+			strings.HasPrefix(repository, "oci://"),
+			strings.HasPrefix(repository, "@"),
+			strings.HasPrefix(repository, "alias:"):
+			continue
+		}
+		if parsed, err := url.Parse(repository); err == nil && parsed.Scheme == "https" {
+			continue
+		}
+		missing = append(missing, repository)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("no repository definition for %s. Please add the missing repos via 'helm repo add'", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// removeOutdatedHelmDependencyArchives removes the chart archives under
+// chartsPath that the build did not fetch, as Manager.safeMoveDeps does
+// (helm v4.3.1 pkg/downloader/manager.go:404-460): every file that loads as
+// a chart, unless the chart is a dependency that the build keeps (keep).
+// drydock puts a fetched dependency in a directory, which already replaced
+// the archives of that name (replaceHelmDependencyChartTargets).
+// Directories stay, as in helm.
+func removeOutdatedHelmDependencyArchives(chartsPath string, keep map[string]bool) error {
+	entries, err := os.ReadDir(chartsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read helm chart dependencies %s: %w", chartsPath, err)
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		archivePath := filepath.Join(chartsPath, entry.Name())
+		archived, err := chartv2loader.LoadFile(archivePath)
+		if err != nil || keep[archived.Name()] {
+			continue
+		}
+		if err := os.Remove(archivePath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove outdated helm chart dependency archive %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
 }
 
 func helmDependencyChartRequest(dependency helmchart.Dependency, ociRepositories map[string]bool) (chart.Request, bool, error) {
@@ -205,39 +400,6 @@ func helmDependencyVersionAndRepository(dependency helmchart.Dependency) (string
 	}
 }
 
-func helmLockedDependency(chrt helmchart.Charter, dependency helmchart.Dependency) helmchart.Dependency {
-	chart, ok := chrt.(*chartv2.Chart)
-	if !ok || chart.Lock == nil {
-		return dependency
-	}
-	name, repository, ok := helmDependencyNameAndRepository(dependency)
-	if !ok {
-		return dependency
-	}
-	for _, locked := range chart.Lock.Dependencies {
-		if locked == nil || locked.Name != name {
-			continue
-		}
-		if repository != "" && locked.Repository != "" && locked.Repository != repository {
-			continue
-		}
-		return locked
-	}
-	return dependency
-}
-
-func helmDependencyNameAndRepository(dependency helmchart.Dependency) (string, string, bool) {
-	accessor, err := helmchart.NewDependencyAccessor(dependency)
-	if err != nil {
-		return "", "", false
-	}
-	_, repository, ok := helmDependencyVersionAndRepository(dependency)
-	if !ok {
-		return "", "", false
-	}
-	return accessor.Name(), repository, true
-}
-
 func processHelmDependencies(chrt helmchart.Charter, values map[string]any, manifestPath string) error {
 	if err := checkHelmDependencies(chrt); err != nil {
 		return fmt.Errorf("helm chart dependencies %s require vendored charts: %w", manifestPath, err)
@@ -271,6 +433,10 @@ func checkHelmDependencies(chrt helmchart.Charter) error {
 	return fmt.Errorf("found in Chart.yaml, but missing in charts/ directory: %s", strings.Join(missing, ", "))
 }
 
+// missingHelmDependencies returns the Chart.yaml dependencies that have no
+// chart of the same name under charts/, as action.CheckDependencies finds
+// them (helm v4.3.1 pkg/action/install.go:839-869). It matches names only:
+// a vendored chart of another version still counts.
 func missingHelmDependencies(chrt helmchart.Charter) ([]helmchart.Dependency, error) {
 	accessor, err := helmchart.NewAccessor(chrt)
 	if err != nil {
@@ -280,51 +446,22 @@ func missingHelmDependencies(chrt helmchart.Charter) ([]helmchart.Dependency, er
 	var missing []helmchart.Dependency
 dependencies:
 	for _, required := range accessor.MetaDependencies() {
-		required = helmLockedDependency(chrt, required)
+		requiredAccessor, err := helmchart.NewDependencyAccessor(required)
+		if err != nil {
+			return nil, err
+		}
 		for _, dependency := range accessor.Dependencies() {
-			ok, err := helmDependencySatisfied(required, dependency)
+			dependencyAccessor, err := helmchart.NewAccessor(dependency)
 			if err != nil {
 				return nil, err
 			}
-			if ok {
+			if dependencyAccessor.Name() == requiredAccessor.Name() {
 				continue dependencies
 			}
 		}
 		missing = append(missing, required)
 	}
 	return missing, nil
-}
-
-func helmDependencySatisfied(required helmchart.Dependency, dependency helmchart.Charter) (bool, error) {
-	requiredAccessor, err := helmchart.NewDependencyAccessor(required)
-	if err != nil {
-		return false, err
-	}
-	dependencyAccessor, err := helmchart.NewAccessor(dependency)
-	if err != nil {
-		return false, err
-	}
-	if dependencyAccessor.Name() != requiredAccessor.Name() {
-		return false, nil
-	}
-
-	requiredVersion, _, ok := helmDependencyVersionAndRepository(required)
-	if !ok || strings.TrimSpace(requiredVersion) == "" {
-		return true, nil
-	}
-	dependencyVersion := helmChartVersion(dependency)
-	if dependencyVersion == "" {
-		return false, nil
-	}
-	return chartv2util.IsCompatibleRange(requiredVersion, dependencyVersion), nil
-}
-
-func helmChartVersion(chrt helmchart.Charter) string {
-	chart, ok := chrt.(*chartv2.Chart)
-	if !ok || chart.Metadata == nil {
-		return ""
-	}
-	return chart.Metadata.Version
 }
 
 func recordChartCacheEvent(opts RenderOptions, request chart.Request, acquireErr error, acquired chart.Result) {
