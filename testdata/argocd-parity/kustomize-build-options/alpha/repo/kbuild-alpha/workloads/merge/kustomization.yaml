@@ -1,0 +1,11 @@
+# kustomize runs configMapGenerator before helmCharts, so the merge finds
+# no ConfigMap parity-kbuild-alpha-merge and fails.
+helmCharts:
+  - name: probe
+    releaseName: merge
+    namespace: parity-kbuild-alpha
+configMapGenerator:
+  - name: parity-kbuild-alpha-merge
+    behavior: merge
+    literals:
+      - fromGenerator=true
