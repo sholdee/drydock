@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 func writeKustomizeBuildOptionsSource(t *testing.T, root string) {
@@ -145,5 +147,93 @@ helmCharts:
 		if diag.Code == diagnostic.CodeSettingsInstallRenderFailed {
 			t.Fatalf("diagnostic = %#v, want the install rendered", diag)
 		}
+	}
+}
+
+// The render cache key must tell no argocd-cm from an argocd-cm with
+// "--enable-helm" and no kustomize versions: their build flags match, but
+// only the second fails a kustomize.version that it does not register.
+func TestRenderCacheKeySeparatesFoundArgoCDConfigMap(t *testing.T) {
+	// The render cache keeps renders of the Git work tree under drydock.
+	root, fixture := initSelfRepoDiffGitRepo(t, reviewRepoURL)
+	writeTestFile(t, filepath.Join(root, "kbuild", "kustomization.yaml"), "resources: [cm.yaml]\n")
+	writeTestFile(t, filepath.Join(root, "kbuild", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: probe\n")
+	writeReviewApplication(t, root, "kbuild", "kbuild", "    kustomize:\n      version: v9.9.9\n", "demo")
+	commitDiffGitRepo(t, fixture.repo, fixture.wt, "baseline")
+	request := BuildRequest{
+		Path:               root,
+		RenderCacheEnabled: true,
+		RenderCacheDir:     t.TempDir(),
+		EngineFingerprint:  testEngineFingerprint(),
+		RecordCacheEvents:  true,
+	}
+	first, err := (Orchestrator{}).Build(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Build() without argocd-cm error = %v", err)
+	}
+	if !hasRenderCacheAction(first.CacheEvents, "store") {
+		t.Fatalf("cache events = %v, want the render stored", first.CacheEvents)
+	}
+	writeReviewArgoCDConfigMap(t, root, "  kustomize.buildOptions: --enable-helm\n")
+	commitDiffGitRepo(t, fixture.repo, fixture.wt, "argocd-cm")
+	_, err = (Orchestrator{}).Build(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), "kustomize version v9.9.9 is not registered") {
+		t.Fatalf("Build() with argocd-cm and a warm render cache error = %v, want the version not registered", err)
+	}
+}
+
+func hasRenderCacheAction(events []cacheevent.Event, action string) bool {
+	for _, event := range events {
+		if string(event.Source) == "render" && string(event.Action) == action {
+			return true
+		}
+	}
+	return false
+}
+
+// The managed-by label names the kustomize binary of Argo CD, v5.8.3, for
+// --enable-managedby-label and for buildMetadata: [managedByLabel]. krusty
+// alone names the version that provenance finds in the build information
+// of the program. This test lives in internal/app because its test binary
+// does not link sigs.k8s.io/kustomize/kustomize/v5, as the drydock binary
+// does not, so krusty alone would write another version here.
+func TestKustomizeManagedByLabelNamesArgoCDKustomize(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		kustomization string
+		data          string
+		want          string
+	}{
+		{name: "no label", kustomization: "resources: [cm.yaml]\n"},
+		{name: "flag", kustomization: "resources: [cm.yaml]\n", data: "  kustomize.buildOptions: --enable-managedby-label\n", want: "kustomize-v5.8.3"},
+		{name: "build metadata", kustomization: "resources: [cm.yaml]\nbuildMetadata: [managedByLabel]\n", want: "kustomize-v5.8.3"},
+		{name: "flag with helmCharts", kustomization: "resources: [cm.yaml]\nhelmCharts:\n  - name: probe\n    releaseName: probe\n", data: "  kustomize.buildOptions: --enable-helm --enable-managedby-label\n", want: "kustomize-v5.8.3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeKustomizeBuildOptionsSource(t, root)
+			writeTestFile(t, filepath.Join(root, "kbuild", "kustomization.yaml"), tc.kustomization)
+			writeTestFile(t, filepath.Join(root, "kbuild", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+			writeReviewApplication(t, root, "kbuild", "kbuild", "", "demo")
+			if tc.data != "" {
+				writeReviewArgoCDConfigMap(t, root, tc.data)
+			}
+			result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+				Path:     root,
+				RepoMaps: []sourcepkg.RepoMap{{URL: reviewRepoURL, Path: root}},
+				Offline:  true,
+			})
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			if len(result.ApplicationManifests) == 0 {
+				t.Fatal("Build() rendered nothing")
+			}
+			for _, item := range result.ApplicationManifests {
+				if got := item.Manifest.Object.GetLabels()["app.kubernetes.io/managed-by"]; got != tc.want {
+					t.Fatalf("%s managed-by = %q, want %q", item.Manifest.Object.GetName(), got, tc.want)
+				}
+			}
+		})
 	}
 }
