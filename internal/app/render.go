@@ -395,7 +395,7 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	opts := render.RenderOptions{
 		AppName:      application.Name,
 		AppNamespace: application.Namespace,
-		Project:      application.Spec.Project,
+		Project:      application.Spec.GetProject(),
 		Namespace:    application.Spec.Destination.Namespace,
 		ArgoEnv:      argoRenderEnv(application, source, trackingOpts.ControllerNamespace),
 	}
@@ -517,7 +517,7 @@ func argoRenderEnvAt(application argoappv1.Application, source argoappv1.Applica
 	return argoappv1.Env{
 		{Name: "ARGOCD_APP_NAME", Value: application.InstanceName(controllerNamespace)},
 		{Name: "ARGOCD_APP_NAMESPACE", Value: application.Spec.Destination.Namespace},
-		{Name: "ARGOCD_APP_PROJECT_NAME", Value: application.Spec.Project},
+		{Name: "ARGOCD_APP_PROJECT_NAME", Value: application.Spec.GetProject()},
 		{Name: "ARGOCD_APP_REVISION", Value: revision},
 		{Name: "ARGOCD_APP_REVISION_SHORT", Value: shortenRevision(revision, 7)},
 		{Name: "ARGOCD_APP_REVISION_SHORT_8", Value: shortenRevision(revision, 8)},

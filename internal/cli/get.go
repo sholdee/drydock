@@ -210,7 +210,7 @@ func applicationProjections(applications []argoappv1.Application) []map[string]a
 		out = append(out, map[string]any{
 			"namespace": application.Namespace,
 			"name":      application.Name,
-			"project":   application.Spec.Project,
+			"project":   application.Spec.GetProject(),
 			"destination": map[string]string{
 				"name":      application.Spec.Destination.Name,
 				"server":    application.Spec.Destination.Server,

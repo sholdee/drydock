@@ -154,3 +154,13 @@ func assertGoldenResultPluginExecution(t *testing.T, executions []PluginExecutio
 		t.Fatalf("PluginExecution = %#v, want runtime/image metadata", execution)
 	}
 }
+
+// TestApplicationsFromInternalDefaultsEmptyProject pins the project that the
+// public API reports for an Application with an empty spec.project: Argo CD
+// treats it as "default" (ApplicationSpec.GetProject).
+func TestApplicationsFromInternalDefaultsEmptyProject(t *testing.T) {
+	got := applicationsFromInternal([]argoappv1.Application{{Name: "demo", Namespace: "argocd"}})
+	if len(got) != 1 || got[0].Project != argoappv1.DefaultAppProjectName {
+		t.Fatalf("applicationsFromInternal() = %#v, want project %q", got, argoappv1.DefaultAppProjectName)
+	}
+}

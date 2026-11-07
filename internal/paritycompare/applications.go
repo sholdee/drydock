@@ -213,7 +213,7 @@ func projectArgoCDApplication(application argoappv1.Application) applicationProj
 	return applicationProjection{
 		Namespace: application.Namespace,
 		Name:      application.Name,
-		Project:   application.Spec.Project,
+		Project:   application.Spec.GetProject(),
 		Destination: destinationProjection{
 			Name:      application.Spec.Destination.Name,
 			Server:    application.Spec.Destination.Server,

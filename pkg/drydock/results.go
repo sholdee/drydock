@@ -151,7 +151,7 @@ func applicationsFromInternal(applications []argoappv1.Application) []Applicatio
 		out = append(out, Application{
 			Namespace: application.Namespace,
 			Name:      application.Name,
-			Project:   application.Spec.Project,
+			Project:   application.Spec.GetProject(),
 		})
 	}
 	return out
@@ -164,7 +164,7 @@ func manifestsFromInternal(manifests []app.ApplicationManifest) []Manifest {
 			Application: Application{
 				Namespace: item.Application.Namespace,
 				Name:      item.Application.Name,
-				Project:   item.Application.Spec.Project,
+				Project:   item.Application.Spec.GetProject(),
 			},
 			SourceIndex: item.Manifest.SourceIndex,
 			SourceName:  item.Manifest.SourceName,
