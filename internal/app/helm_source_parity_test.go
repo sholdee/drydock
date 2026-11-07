@@ -303,3 +303,21 @@ func TestAVPCompatNativeOptionsIgnoreSourceTypeGates(t *testing.T) {
 		t.Fatal("avpCompatNativeOptions() keeps DirectoryJsonnetDisabled, want it off")
 	}
 }
+
+// A --kube-version that does not parse fails the run, also when every
+// Application sets its own kubeVersion, which wins over the flag.
+func TestInvalidKubeVersionFlagFailsEveryRun(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "chart", "Chart.yaml"), "apiVersion: v2\nname: chart\nversion: 0.1.0\n")
+	writeTestFile(t, filepath.Join(root, "chart", "templates", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: kube\n")
+	writeReviewApplication(t, root, "kube", "chart", "    helm:\n      kubeVersion: 1.30.0\n", "demo")
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:        root,
+		RepoMaps:    []sourcepkg.RepoMap{{URL: reviewRepoURL, Path: root}},
+		Offline:     true,
+		KubeVersion: "not-a-version",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--kube-version: parse kube version \"not-a-version\"") {
+		t.Fatalf("Build() error = %v, want the --kube-version error", err)
+	}
+}

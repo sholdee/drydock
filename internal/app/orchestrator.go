@@ -299,6 +299,9 @@ func (o Orchestrator) DiagStatic(ctx context.Context, request DiagRequest, selec
 }
 
 func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest) (result BuildResult, err error) {
+	if err := request.validateKubeVersion(); err != nil {
+		return BuildResult{}, err
+	}
 	request = resolveBuildRequestRoot(request)
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {
