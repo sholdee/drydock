@@ -1649,12 +1649,17 @@ Supported:
   the kept folder are render cache inputs, and changed-only selection owns
   them. drydock lists directories for the globs only inside the
   repository. A directory outside it, or a path whose text enters `.git`,
-  adds no matches. A glob that must list or look up a path through a
-  symlink in the repository fails with drydock's symlink error before it
-  reads that path, and a component path that passes through a symlink
-  fails before drydock reads any file under it. drydock rejects such
-  component paths in the render anyway. So drydock never lists or reads
-  `.git` through a symlink. Argo CD follows such a symlink.
+  adds no matches. The globs resolve each path element in order, as the OS
+  does, so a `..` after a symlink goes up from the symlink's target. A
+  symlink that leads out of the repository or into `.git` fails with
+  drydock's symlink error before drydock lists or reads anything there.
+  Any other symlink is followed. When it leads to no match, such as a
+  folder without the wanted entry or a file, it adds nothing, as in Argo
+  CD. When a match passes through it, the render fails with the symlink
+  error, because drydock rejects component paths that pass through a
+  symlink. A component path is checked before drydock reads any file
+  under it. So drydock never lists or reads `.git` through a symlink.
+  Argo CD follows such a symlink.
 - Argo CD passes most option values to these commands without `--` in
   front. So kustomize reads an image, a replica name, a label or
   annotation key, or a component that starts with `-` as a flag. An unknown
