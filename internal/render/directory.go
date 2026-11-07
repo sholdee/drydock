@@ -85,6 +85,11 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		files[index].data = nil
 		var fileObjects []generatedObject
 		switch {
+		case isJsonnetFile(file.path) && opts.DirectoryJsonnetDisabled:
+			// argocd-cm jsonnet.enable is off: findManifests skips the file
+			// after the earlier checks read it
+			// (reposerver/repository/repository.go:2019 at v3.6.1).
+			continue
 		case isJsonnetFile(file.path):
 			fileObjects, err = renderJsonnetFile(root, source.RepoRoot, file.path, file.manifestPath, opts)
 		case isJSONSuffixFile(file.path):

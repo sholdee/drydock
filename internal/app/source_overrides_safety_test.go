@@ -112,7 +112,7 @@ func TestArgocdSourceOverridesReadOnlySafeFiles(t *testing.T) {
 func assertUnsafeOverrideFallback(t *testing.T, root string, application argoappv1.Application, want string) {
 	t.Helper()
 	withTimeout(t, func() {
-		got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+		got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, []ApplicationSelectionInput{{Application: application}}).inputs
 		if selected, _ := SelectChangedApplicationInputs(got, []string{"links/target.txt"}); len(selected) != 1 {
 			t.Errorf("selection did not fall back to the spec source (paths %v)", got[0].Paths)
 		}

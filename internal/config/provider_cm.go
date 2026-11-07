@@ -28,6 +28,7 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 		settings.HelmValuesFileSchemesSource = provenance
 	}
 	diags = appendVersionedKustomizeDiagnostics(values, path, basePointer, diags)
+	applySourceTypeEnableKeys(settings, values, path, basePointer)
 	if raw := values["application.resourceTrackingMethod"]; raw != "" {
 		settings.TrackingMethod = Value[string]{
 			Value: raw,
@@ -107,6 +108,20 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 	}
 	diags = appendParsedResourceOverrides(settings, values, path, basePointer, diags)
 	return diags
+}
+
+// applySourceTypeEnableKeys reads helm.enable, kustomize.enable, and
+// jsonnet.enable as written (see ArgoSettings.SourceTypeEnabled).
+func applySourceTypeEnableKeys(settings *ArgoSettings, values map[string]string, path, basePointer string) {
+	if raw, ok := values["helm.enable"]; ok {
+		setSourceTypeEnable(settings, HelmEnableKey, raw, path, basePointer)
+	}
+	if raw, ok := values["kustomize.enable"]; ok {
+		setSourceTypeEnable(settings, KustomizeEnableKey, raw, path, basePointer)
+	}
+	if raw, ok := values["jsonnet.enable"]; ok {
+		setSourceTypeEnable(settings, JsonnetEnableKey, raw, path, basePointer)
+	}
 }
 
 func appendVersionedKustomizeDiagnostics(values map[string]string, path, basePointer string, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {

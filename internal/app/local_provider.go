@@ -69,6 +69,9 @@ type localProvider struct {
 	// reposerver.allow.oob.symlinks. When false, a source fails while the
 	// tree it renders from holds an out-of-bounds symlink.
 	allowOutOfBoundsSymlinks bool
+	// sourceTypes is argocd-cm helm.enable, kustomize.enable, and
+	// jsonnet.enable. A source whose tool is off renders as a directory.
+	sourceTypes sourceTypeGates
 	// symlinkBounds keeps the out-of-bounds symlink check of each tree for
 	// the run. nil checks every time.
 	symlinkBounds *symlinkBoundsMemo
@@ -192,6 +195,7 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 	}
 	opts.CacheEventRecorder = p.cacheEvents
 	opts.DirectoryMaxCombinedManifestsSize = p.maxCombinedDirectoryManifestsSize
+	opts.DirectoryJsonnetDisabled = p.sourceTypes.jsonnetDisabled
 	opts.AcquisitionCollector = p.acquisitions
 	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {
@@ -211,7 +215,7 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 	}
 	opts.BuildOptions = append(opts.BuildOptions, p.kustomizeBuildOptions...)
 	if source.Path != "" {
-		renderer, err := selectLocalRenderer(source)
+		renderer, err := selectLocalRenderer(source, p.sourceTypes)
 		if err != nil {
 			return nil, nearMissDiags, err
 		}

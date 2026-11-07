@@ -76,15 +76,15 @@ func TestDiscoverLocalSourceTypeMatchesUpstream(t *testing.T) {
 			if upstream != string(testCase.want) {
 				t.Fatalf("discovery.AppType() = %q, want %q; the test case is wrong", upstream, testCase.want)
 			}
-			got, err := discoverLocalSourceType(root)
+			got, err := discoverLocalSourceType(root, sourceTypeGates{})
 			if err != nil {
-				t.Fatalf("discoverLocalSourceType() error = %v", err)
+				t.Fatalf("discoverLocalSourceType(, sourceTypeGates{}) error = %v", err)
 			}
 			if got == "" {
 				got = argoappv1.ApplicationSourceTypeDirectory
 			}
 			if got != testCase.want {
-				t.Fatalf("discoverLocalSourceType() = %q, upstream %q", got, testCase.want)
+				t.Fatalf("discoverLocalSourceType(, sourceTypeGates{}) = %q, upstream %q", got, testCase.want)
 			}
 		})
 	}
@@ -105,7 +105,7 @@ func TestSelectLocalRendererPicksHelmForHelmChartFile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	renderer, err := selectLocalRenderer(render.ResolvedSource{RepoRoot: root, Path: "apps/traefik"})
+	renderer, err := selectLocalRenderer(render.ResolvedSource{RepoRoot: root, Path: "apps/traefik"}, sourceTypeGates{})
 	if err != nil {
 		t.Fatalf("selectLocalRenderer() error = %v", err)
 	}

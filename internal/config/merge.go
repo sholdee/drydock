@@ -26,6 +26,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeCompareOptions(&merged, candidate)...)
 		diags = append(diags, mergeIgnoreResourceUpdatesEnabled(&merged, candidate)...)
 		diags = append(diags, mergeInClusterEnabled(&merged, candidate)...)
+		diags = append(diags, mergeSourceTypeEnable(&merged, candidate)...)
 		diags = append(diags, mergeConfigManagementPlugins(&merged, candidate)...)
 		mergeCommandParameters(&merged, candidate)
 		diags = append(diags, mergeMaxCombinedDirectoryManifestsSize(&merged, candidate)...)

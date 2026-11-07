@@ -38,7 +38,7 @@ func (p localProvider) renderDefaultAVPCompatPluginSource(ctx context.Context, s
 	)
 	if source.Path != "" {
 		var renderer render.Renderer
-		renderer, err = selectLocalRenderer(source)
+		renderer, err = selectLocalRenderer(source, sourceTypeGates{})
 		if err != nil {
 			return nil, nil, true, err
 		}
@@ -135,7 +135,7 @@ func (p localProvider) renderAVPCompatPolicyPluginSource(ctx context.Context, so
 	)
 	if source.Path != "" {
 		var renderer render.Renderer
-		renderer, err = selectLocalRenderer(source)
+		renderer, err = selectLocalRenderer(source, sourceTypeGates{})
 		if err == nil {
 			manifests, diags, err = renderer.Render(ctx, source, nativeOptions)
 		}

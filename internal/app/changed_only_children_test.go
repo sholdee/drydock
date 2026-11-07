@@ -544,7 +544,7 @@ func TestSelectChangedDiffSidesSelectsRenderedDescendants(t *testing.T) {
 		{Application: argoappv1.Application{Namespace: "argocd", Name: "listed-dir"}, Paths: []string{"clusters/prod"}},
 	}
 
-	augmented := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, inputs)
+	augmented := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, inputs)
 
 	for i, output := range augmented.inputs {
 		name := output.Application.Name

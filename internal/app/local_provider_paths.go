@@ -31,7 +31,12 @@ func anchorLocalRefRoots(repoRoot string, refRoots map[string]string) (map[strin
 	return out, nil
 }
 
-func selectLocalRenderer(source render.ResolvedSource) (render.Renderer, error) {
+// selectLocalRenderer picks the renderer of a local source as the Argo CD
+// v3.6.1 repo-server picks its type (GetAppSourceType,
+// reposerver/repository/repository.go:1955-1975). A Helm or Kustomize source
+// whose tool gates turn off renders as a plain directory, also when the
+// spec names the type.
+func selectLocalRenderer(source render.ResolvedSource, gates sourceTypeGates) (render.Renderer, error) {
 	sourcePath, err := cleanLocalSourcePath(source.Path)
 	if err != nil {
 		return nil, err
@@ -47,15 +52,21 @@ func selectLocalRenderer(source render.ResolvedSource) (render.Renderer, error) 
 	case argoappv1.ApplicationSourceTypeDirectory:
 		return render.DirectoryRenderer{}, nil
 	case argoappv1.ApplicationSourceTypeHelm:
+		if !gates.enabled(source.ExplicitType) {
+			return render.DirectoryRenderer{}, nil
+		}
 		return render.HelmRenderer{}, nil
 	case argoappv1.ApplicationSourceTypeKustomize:
+		if !gates.enabled(source.ExplicitType) {
+			return render.DirectoryRenderer{}, nil
+		}
 		return render.KustomizeRenderer{}, nil
 	case argoappv1.ApplicationSourceTypePlugin:
 	default:
 		return nil, fmt.Errorf("unsupported explicit source type %q", source.ExplicitType)
 	}
 
-	sourceType, err := discoverLocalSourceType(root)
+	sourceType, err := discoverLocalSourceType(root, gates)
 	if err != nil {
 		return nil, err
 	}
@@ -81,9 +92,9 @@ func selectLocalRenderer(source render.ResolvedSource) (render.Renderer, error) 
 // wins. Directories never match, also when their name does, and a symlink
 // counts as a file because the walk does not follow it. Only the files
 // directly in the directory decide its type; the walk records the files of
-// each subdirectory under that subdirectory. An empty result means a
-// directory source.
-func discoverLocalSourceType(root string) (argoappv1.ApplicationSourceType, error) {
+// each subdirectory under that subdirectory. A file of a type that gates
+// turn off records nothing. An empty result means a directory source.
+func discoverLocalSourceType(root string, gates sourceTypeGates) (argoappv1.ApplicationSourceType, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return "", err
@@ -94,10 +105,10 @@ func discoverLocalSourceType(root string) (argoappv1.ApplicationSourceType, erro
 			continue
 		}
 		name := entry.Name()
-		if strings.HasSuffix(name, "Chart.yaml") {
+		if strings.HasSuffix(name, "Chart.yaml") && gates.enabled(argoappv1.ApplicationSourceTypeHelm) {
 			sourceType = argoappv1.ApplicationSourceTypeHelm
 		}
-		if slices.Contains(render.KustomizationFileNames, name) {
+		if slices.Contains(render.KustomizationFileNames, name) && gates.enabled(argoappv1.ApplicationSourceTypeKustomize) {
 			sourceType = argoappv1.ApplicationSourceTypeKustomize
 		}
 	}

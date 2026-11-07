@@ -109,6 +109,10 @@ type RenderOptions struct {
 	// every file passing include/exclude is read.
 	DirectoryDisableExtensionFilter bool
 
+	// DirectoryJsonnetDisabled reports that argocd-cm jsonnet.enable turns
+	// Jsonnet off. A directory source then skips its .jsonnet files.
+	DirectoryJsonnetDisabled bool
+
 	// DirectoryMaxCombinedManifestsSize is the repo-server limit on the
 	// combined size of the files of one directory source, in bytes. Zero
 	// means no limit.

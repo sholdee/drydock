@@ -113,7 +113,7 @@ func TestSelectionOwnsHydratorSyncPathOnlyWhenRenderedLocally(t *testing.T) {
 		hydratorApp("other-repo", "https://github.com/example/deployments", "main"),
 	}
 	selfRepo := selfRepoRefs{urlKeys: []string{sourcepkg.CanonicalGitURLKey(selfRepoRemoteURL)}, revisions: []string{"main"}}
-	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepo, inputs).inputs
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepo, sourceTypeGates{}, inputs).inputs
 	selected, _ := SelectChangedApplicationInputs(got, []string{"hydrated/cm.yaml"})
 	if names := applicationNames(selected); !slices.Equal(names, []string{"tracked"}) {
 		t.Fatalf("selected = %v, want only the Application whose sync branch renders from this tree", names)

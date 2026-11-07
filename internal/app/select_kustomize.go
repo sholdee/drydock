@@ -55,7 +55,7 @@ type selectionSide struct {
 // parent Application (ParentKey) owns only its own inputs here;
 // selectChangedDiffSides selects it with its parent. Directories in Paths
 // are never walked: a listed input is not a render root.
-func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcepkg.RepoMap, selfRepo selfRepoRefs, inputs []ApplicationSelectionInput) selectionSide {
+func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcepkg.RepoMap, selfRepo selfRepoRefs, gates sourceTypeGates, inputs []ApplicationSelectionInput) selectionSide {
 	tree := newSelectionTree(root, repoMaps, selfRepo)
 	memo := map[string][]string{}
 	kustomizeGraph := func(source argoappv1.ApplicationSource) []string {
@@ -132,7 +132,7 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			// Kustomize renderer and Helm charts and value files reject
 			// symlinks, and neither evaluates Jsonnet. Helm file parameters
 			// own their symlinks above.
-			if rendersAsDirectory(root, source) {
+			if rendersAsDirectory(root, source, gates) {
 				selection := symlinkInputs(source)
 				out[i].Paths = append(out[i].Paths, selection.paths...)
 				if selection.unknown {
@@ -155,9 +155,9 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 }
 
 // rendersAsDirectory reports whether the local renderer renders source as a
-// directory source, as selectLocalRenderer decides for the render. An
-// explicit plugin source is not one.
-func rendersAsDirectory(root string, source argoappv1.ApplicationSource) bool {
+// directory source, as selectLocalRenderer decides for the render with the
+// same source type gates. An explicit plugin source is not one.
+func rendersAsDirectory(root string, source argoappv1.ApplicationSource, gates sourceTypeGates) bool {
 	explicitType, err := source.ExplicitType()
 	if err != nil {
 		return false
@@ -169,7 +169,7 @@ func rendersAsDirectory(root string, source argoappv1.ApplicationSource) bool {
 		}
 		resolved.ExplicitType = *explicitType
 	}
-	renderer, err := selectLocalRenderer(resolved)
+	renderer, err := selectLocalRenderer(resolved, gates)
 	if err != nil {
 		return false
 	}

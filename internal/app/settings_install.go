@@ -296,7 +296,8 @@ func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, l
 	if !local {
 		return ""
 	}
-	sourceType, err := discoverLocalSourceType(filepath.Join(root, filepath.FromSlash(sourcePath)))
+	// The settings are not known yet here, so every tool counts as on.
+	sourceType, err := discoverLocalSourceType(filepath.Join(root, filepath.FromSlash(sourcePath)), sourceTypeGates{})
 	if err != nil {
 		return ""
 	}

@@ -157,7 +157,7 @@ func sourceRootHasLocalChart(root string) bool {
 	if exists, err := localPathExists(filepath.Join(root, "Chart.yaml")); err == nil && exists {
 		return true
 	}
-	sourceType, err := discoverLocalSourceType(root)
+	sourceType, err := discoverLocalSourceType(root, sourceTypeGates{})
 	return err == nil && sourceType == argoappv1.ApplicationSourceTypeHelm
 }
 

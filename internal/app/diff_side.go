@@ -322,8 +322,8 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	// Each side owns the selection-only inputs of its own tree, so a base
 	// file added or deleted by the change is owned by the side that has it.
 	// Each side's self-repo facts decide which $ref roots are local.
-	leftSide := withSelectionOnlyPaths(ctx, leftBuildRequest.Path, leftBuildRequest.RepoMaps, leftBuildRequest.selfRepo, leftList.ApplicationInputs)
-	rightSide := withSelectionOnlyPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, rightList.ApplicationInputs)
+	leftSide := withSelectionOnlyPaths(ctx, leftBuildRequest.Path, leftBuildRequest.RepoMaps, leftBuildRequest.selfRepo, sourceTypeGatesFromSettings(leftList.Settings), leftList.ApplicationInputs)
+	rightSide := withSelectionOnlyPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, sourceTypeGatesFromSettings(rightList.Settings), rightList.ApplicationInputs)
 	leftSelected, rightSelected, unowned := selectChangedDiffSides(leftSide, rightSide, changedPaths, projectNames)
 	var scanDiags []diagnostic.Diagnostic
 	var unscanned []string

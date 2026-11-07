@@ -847,7 +847,7 @@ func localInputDigestPathsForSource(ctx context.Context, plan PlanResult, source
 	if err != nil {
 		return nil, false, err
 	}
-	paths, helmGlobs, err := localToolInputDigestPaths(ctx, plan, sourcePlan, provider.repoRoot, clean)
+	paths, helmGlobs, err := localToolInputDigestPaths(ctx, plan, sourcePlan, provider.repoRoot, clean, provider.sourceTypes)
 	if err != nil {
 		return nil, false, err
 	}
@@ -874,7 +874,7 @@ func argocdSourceOverrideDigestPaths(sourcePath, appName string) []gitref.PathDi
 // digested inputs cannot diverge from the files the render actually reads.
 // The returned bool reports whether any Helm input path contains glob
 // metacharacters.
-func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot, clean string) ([]gitref.PathDigestPath, bool, error) {
+func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot, clean string, gates sourceTypeGates) ([]gitref.PathDigestPath, bool, error) {
 	switch sourcePlan.ExplicitType {
 	case argoappv1.ApplicationSourceTypeDirectory, argoappv1.ApplicationSourceTypeHelm, argoappv1.ApplicationSourceTypeKustomize, "":
 	case argoappv1.ApplicationSourceTypePlugin:
@@ -886,7 +886,7 @@ func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan 
 		RepoRoot:     repoRoot,
 		Path:         clean,
 		ExplicitType: sourcePlan.ExplicitType,
-	})
+	}, gates)
 	if err != nil {
 		return nil, false, err
 	}
