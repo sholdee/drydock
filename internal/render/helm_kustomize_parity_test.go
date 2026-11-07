@@ -174,3 +174,56 @@ func TestDirectoryInputDigestPathsWithJsonnetOff(t *testing.T) {
 		t.Fatal("DirectoryInputDigestPaths() with Jsonnet on error = nil, want the library outside the repository to fail")
 	}
 }
+
+// kustomize loads helmCharts values files with its file loader. Under the
+// default LoadRestrictionsRootOnly a file outside the kustomization
+// directory fails, and a directory fails, with the texts of kustomize 5.8.3.
+func TestKustomizeHelmChartsValuesFilesFollowTheLoadRestrictor(t *testing.T) {
+	files := map[string]string{"../shared.yaml": "x: 1\n", "vals/keep.yaml": "x: 1\n"}
+	for _, tc := range []struct {
+		name, chart, want string
+	}{
+		{name: "additionalValuesFiles outside the root", chart: "    additionalValuesFiles:\n      - ../shared.yaml\n", want: "could not load additionalValuesFile: security; file 'shared.yaml' is not in or below 'app'"},
+		{name: "valuesFile outside the root", chart: "    valuesFile: ../shared.yaml\n", want: "security; file 'shared.yaml' is not in or below 'app'"},
+		{name: "valuesFile outside the root with valuesInline", chart: "    valuesFile: ../shared.yaml\n    valuesInline:\n      a: b\n", want: "security; file 'shared.yaml' is not in or below 'app'"},
+		{name: "additionalValuesFiles directory", chart: "    additionalValuesFiles:\n      - vals\n", want: "could not load additionalValuesFile: 'app/vals' must resolve to a file"},
+		{name: "valuesFile directory", chart: "    valuesFile: vals\n", want: "'app/vals' must resolve to a file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kustomization := "helmCharts:\n  - name: probe\n    releaseName: probe\n" + tc.chart
+			_, err := renderReleaseProbeKustomize(t, kustomization, RenderOptions{}, files)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Render() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	// LoadRestrictionsNone lets kustomize load a file outside the root.
+	for _, chart := range []string{"    additionalValuesFiles:\n      - ../shared.yaml\n", "    valuesFile: ../shared.yaml\n"} {
+		kustomization := "helmCharts:\n  - name: probe\n    releaseName: probe\n" + chart
+		if _, err := renderReleaseProbeKustomize(t, kustomization, RenderOptions{BuildOptions: []string{"--load-restrictor", "LoadRestrictionsNone"}}, files); err != nil {
+			t.Fatalf("Render(%q) with LoadRestrictionsNone error = %v", chart, err)
+		}
+	}
+}
+
+// kustomize accumulates the resources of a kustomization before it runs
+// its generators, so a missing resource is reported before a helmCharts
+// error of the same kustomization.
+func TestKustomizeMissingResourceComesBeforeHelmCharts(t *testing.T) {
+	kustomization := "resources:\n  - missing.yaml\nhelmCharts:\n  - name: probe\n    releaseName: probe\n    additionalValuesFiles:\n      - nope.yaml\n"
+	_, err := renderReleaseProbeKustomize(t, kustomization, RenderOptions{}, nil)
+	want := "accumulating resources: accumulation err='accumulating resources from 'missing.yaml'"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Render() error = %v, want %q", err, want)
+	}
+}
+
+// A helm block error is the Helm renderer's first error.
+func TestHelmRendererReturnsSpecErrorFirst(t *testing.T) {
+	root := t.TempDir()
+	writeReleaseProbeChart(t, filepath.Join(root, "app"), "")
+	_, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{AppName: "x", HelmSpecError: errFakeSpec, ReleaseName: "Bad_Name"})
+	if !errors.Is(err, errFakeSpec) {
+		t.Fatalf("Render() error = %v, want the spec error first", err)
+	}
+}

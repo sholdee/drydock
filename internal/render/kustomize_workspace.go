@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/format"
@@ -139,7 +140,22 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 
+	// kustomize accumulates the resources of a kustomization, with the
+	// builds of its bases, before it runs its generators, and runs the
+	// generators before it adds the components (KustTarget.accumulateTarget,
+	// api/internal/target/kusttarget.go:202-235 at kustomize/api v0.21.3).
+	// So a resource error, and the helmCharts of a base, come before the
+	// helmCharts of this kustomization.
+	resources, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "resources", graphIndex, kustomization.Resources, childInheritedHelmNamespace, true)
+	if err != nil {
+		return fmt.Errorf("%s: %w", manifestPath, err)
+	}
+	kustomization.Resources = resources
+
 	if len(kustomization.HelmCharts) != 0 {
+		if err := missingKustomizeResourceError(dir, kustomization.Resources); err != nil {
+			return fmt.Errorf("%s: %w", manifestPath, err)
+		}
 		nodeRelDir, err := relativeManifestPath(w.tempRepoRoot, dir)
 		if err != nil {
 			return err
@@ -151,12 +167,6 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		kustomization.HelmCharts = nil
 		kustomization.Resources = append(kustomization.Resources, generatedResources...)
 	}
-
-	resources, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "resources", graphIndex, kustomization.Resources, childInheritedHelmNamespace, true)
-	if err != nil {
-		return fmt.Errorf("%s: %w", manifestPath, err)
-	}
-	kustomization.Resources = resources
 
 	components, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "components", graphIndex, kustomization.Components, childInheritedHelmNamespace, false)
 	if err != nil {
@@ -246,4 +256,23 @@ func (w *kustomizeWorkspace) prepareKustomizeRefs(ctx context.Context, dir, boun
 		}
 	}
 	return out, nil
+}
+
+// missingKustomizeResourceError returns the error that kustomize reports
+// for the first local resource of a kustomization that does not exist. The
+// render reaches it only through krusty, after the helmCharts of the
+// kustomization, so it is checked here first, in kustomize's order. The
+// text is the one kustomize prints for the resource (accumulateResources),
+// with the path relative to the kustomization.
+func missingKustomizeResourceError(dir string, resources []string) error {
+	for _, resource := range resources {
+		if isAcquirableRemoteKustomizeResource(resource) || strings.Contains(resource, "://") {
+			continue
+		}
+		target := filepath.Join(dir, filepath.FromSlash(resource))
+		if _, err := os.Lstat(target); err != nil && os.IsNotExist(err) {
+			return fmt.Errorf("accumulating resources: accumulation err='accumulating resources from '%s': %s: no such file or directory'", resource, resource)
+		}
+	}
+	return nil
 }

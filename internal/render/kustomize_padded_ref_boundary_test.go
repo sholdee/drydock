@@ -281,13 +281,13 @@ func paddedInRepoCases() []paddedInRepoCase {
 // paddedInRepoRuns reports whether a case runs at location under the
 // restrictor. A directory outside the listing directory is walked and
 // copied as a graph node, which the listing location covers; RootOnly
-// confines kustomize's file loads to the listing directory (drydock's Helm
-// emulation reads value files itself).
+// confines kustomize's file loads, helmCharts values files included, to the
+// listing directory.
 func paddedInRepoRuns(tc paddedInRepoCase, location string, rootOnly bool) bool {
 	if location != "shared" {
 		return true
 	}
-	return !tc.dir && (!rootOnly || tc.chart)
+	return !tc.dir && !rootOnly
 }
 
 // TestKustomizePaddedRefsNameTheFilesKustomizeReads pins the legitimate
