@@ -1547,13 +1547,14 @@ Supported:
   releases ignored the two flags.
 - `generators:` and `transformers:` entries load as kustomize loads them.
   The resource factory of kustomize parses the documents, so a `List`
-  expands into its items. An entry that names a kustomization directory is
-  built, and its resources are the plugin configurations. Under
+  expands into its items. Under
   `LoadRestrictionsRootOnly`, a file outside the kustomization directory
   fails with `accumulation err='accumulating resources from '<entry>':
   security; file '<path>' is not in or below '<dir>''`, after `loading
   generator plugins: ` for a generator. drydock names the paths from the
-  repository root.
+  repository root. Errors and the `config.kubernetes.io/origin` and
+  `alpha.config.kubernetes.io/transformations` annotations name the entry,
+  not the file that drydock writes for it in its workspace.
 - A generator with `behavior: merge` or `behavior: replace` fails, as in
   kustomize, when it names a resource that only a later generator of the
   same kustomization makes, and drydock added that output as a resource:
@@ -1586,6 +1587,30 @@ Supported:
     `sortOptions: {order: fifo}` in the kustomization. In the default legacy
     order, the output is the same. To match the order, drydock would need a
     hook between the generators of krusty, which its API does not give.
+  - kustomize builds a `generators:` or `transformers:` entry that names a
+    kustomization directory, and its resources are the plugin
+    configurations. drydock does not build such a directory itself, because
+    that would read files before the graph checks. A `generators:`
+    directory entry fails with `is a kustomization directory; drydock does
+    not expand directory entries of generators`. A `transformers:`
+    directory entry stays for krusty, which walks it with the graph checks
+    and applies builtin transformers in it as kustomize does. With a found
+    `argocd-cm` and `--enable-alpha-plugins`, a plugin function in such a
+    directory fails with `drydock does not expand directory entries that
+    hold plugin functions`, where kustomize would skip or run it. A
+    directory entry at or above its kustomization fails in both tools, with
+    `cycle detected` in kustomize and with the graph check text in drydock.
+  - The configuration of a skipped generator that sets
+    `kustomize.config.k8s.io/needs-hash` or `kustomize.config.k8s.io/behavior`
+    fails closed. kustomize applies these generator options to the
+    configuration that it adds, and drydock adds it as a resource without
+    them.
+  - With `buildMetadata: [transformerAnnotations]`, kustomize also lists a
+    skipped transformer in `alpha.config.kubernetes.io/transformations`.
+    drydock does not, because it drops the configuration. The
+    `config.kubernetes.io/origin` annotation of output that drydock adds as
+    resources (`helmCharts`, KSOPS) has the form of a resource, not of
+    generator output.
   - Some errors of such builds have another text in drydock, while both
     tools fail. drydock adds the moved output with the resources, so a
     collision with a resource fails with krusty's `may not add resource
