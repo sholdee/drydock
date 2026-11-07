@@ -1804,7 +1804,7 @@ sides must render this `data`:
 
 ## Kustomize build options phases
 
-`kustomize-build-options/` holds three more fixture repos, one for each
+`kustomize-build-options/` holds four more fixture repos, one for each
 phase that runs after the source type gate phase. Each phase repo has
 `kbuild-<phase>/argocd-cm.yaml` and `kbuild-<phase>/applications.yaml`. The
 smoke copies the repos into the Git repository that it serves, as it copies
@@ -1817,7 +1817,7 @@ Then it applies the Applications and reads `<phase>/expected.psv`. Each line
 of that file is one Application:
 
 1. A `render` line names the text that the Argo CD capture must hold and
-   the text that it must not hold. The API server reads `argocd-cm` through
+   the text that it must not hold. An empty text is not checked. The API server reads `argocd-cm` through
    an informer, so the smoke captures with a hard refresh until the capture
    shows the value of the phase. Then the smoke compares the manifests of
    the two sides in `compare-kustomize-build-options-<phase>/`.
@@ -1831,13 +1831,14 @@ deletes the Applications and sets `kustomize.buildOptions` back to
 `--enable-helm`, the value of the fixture install. Each run also sets that
 value right after it logs in, in case a failed `--keep-cluster` run left
 another value. `TestKustomizeBuildOptionsSmokeFixture` in `internal/app`
-renders the three phases offline.
+renders the four phases offline.
 
 | Phase | `kustomize.buildOptions` | What it pins |
 | --- | --- | --- |
-| `alpha` | `--enable-alpha-plugins --helm-kube-version 1.29.0 --helm-api-versions parity.example.com/v1/FromBuildOptions --enable-managedby-label --reorder none --load-restrictor=` and the flags that change nothing | Without the text `--enable-helm`, Argo CD adds no kube or API versions, so `helmCharts` get `v1.29.0` and not the `kustomize.kubeVersion` or `kustomize.apiVersions` of the Application. Alpha plugins turn Helm on. The shared API versions defect without Argo CD flags. The managed-by label `kustomize-v5.8.3` on every resource |
-| `no-helm` | `--enable-helm=false --load-restrictor LoadRestrictionsRootOnly` | A plain source renders. `helmCharts` fail with `must specify --enable-helm`. A `kustomize.version: v9.9.9` that `argocd-cm` does not register fails with `kustomize version v9.9.9 is not registered` |
+| `alpha` | `--enable-alpha-plugins --helm-kube-version 1.29.0 --helm-api-versions parity.example.com/v1/FromBuildOptions --enable-managedby-label --reorder none --load-restrictor= --helm-command=/usr/local/bin/helm -o /dev/stdout` and the flags that change nothing | Without the text `--enable-helm`, Argo CD adds no kube or API versions, so `helmCharts` get `v1.29.0` and not the `kustomize.kubeVersion` or `kustomize.apiVersions` of the Application. Alpha plugins turn Helm on. The shared API versions defect without Argo CD flags. The managed-by label `kustomize-v5.8.3` on every resource. A helm program path and `-o /dev/stdout` change nothing. Without `--enable-exec`, kustomize skips a KSOPS exec function, so only the ConfigMap of its source renders |
+| `no-helm` | `--enable-helm=false --load-restrictor LoadRestrictionsRootOnly` | A plain source renders. `helmCharts` fail with `must specify --enable-helm`. A `kustomize.version: v9.9.9` that `argocd-cm` does not register fails with `kustomize version v9.9.9 is not registered`. A KSOPS generator fails with `external plugins disabled; unable to load external plugin 'ksops'` |
 | `unknown-flag` | `--enable-helm --no-such-flag` | Every Kustomize source fails with `unknown flag: --no-such-flag` |
+| `output-file` | `--enable-helm -o out.yaml` | kustomize writes the build to a file, so both sides render no manifests and do not fail |
 
 The `alpha` phase cannot show the order of the output: the comparison sorts
 resources by identity. `TestKustomizeReorderNoneKeepsResourceOrder` and

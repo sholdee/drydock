@@ -52,7 +52,7 @@ func TestKustomizeBuildOptionsSmokeFixture(t *testing.T) {
 	const repoURL = "git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git"
 	base := filepath.Join("..", "..", "testdata", "argocd-parity", "kustomize-build-options")
 	data := map[string]map[string]any{}
-	for _, phase := range []string{"alpha", "no-helm", "unknown-flag"} {
+	for _, phase := range []string{"alpha", "no-helm", "unknown-flag", "output-file"} {
 		t.Run(phase, func(t *testing.T) {
 			root := filepath.Join(base, phase, "repo")
 			cases := readKustomizeBuildOptionsSmokeCases(t, filepath.Join(base, phase, "expected.psv"))
@@ -86,6 +86,9 @@ func TestKustomizeBuildOptionsSmokeFixture(t *testing.T) {
 		"parity-kbuild-alpha-helm":         {"kubeVersion": "v1.29.0", "hasBuildOptionsAPI": "true", "hasApplicationAPI": "false", "hasEntryAPI": "false"},
 		"parity-kbuild-alpha-shared-own":   {"kubeVersion": "v1.29.0", "hasBuildOptionsAPI": "false", "hasEntryAPI": "true"},
 		"parity-kbuild-alpha-shared-flags": {"kubeVersion": "v1.29.0", "hasBuildOptionsAPI": "false", "hasEntryAPI": "true"},
+		// Without --enable-exec, kustomize skips the KSOPS exec function, so
+		// only the ConfigMap of the source renders.
+		"parity-kbuild-alpha-ksops": {"plain": "true"},
 	} {
 		for key, value := range want {
 			if data[name][key] != value {
@@ -107,7 +110,12 @@ func checkKustomizeBuildOptionsSmokeCase(t *testing.T, tc kustomizeBuildOptionsS
 		}
 		return
 	}
-	if !ok {
+	if buildErr != nil && strings.Contains(buildErr.Error(), tc.app) {
+		t.Errorf("Build() error = %v, want %s to render", buildErr, tc.app)
+		return
+	}
+	// An empty present text allows an empty render.
+	if !ok && tc.first != "" {
 		t.Errorf("%s did not render; Build() error = %v", tc.app, buildErr)
 		return
 	}

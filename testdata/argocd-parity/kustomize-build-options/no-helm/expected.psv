@@ -5,3 +5,4 @@
 render|parity-kbuild-no-helm-plain|name: parity-kbuild-no-helm-plain|app.kubernetes.io/managed-by
 fail|parity-kbuild-no-helm-charts|must specify --enable-helm|trouble configuring builtin HelmChartInflationGenerator: must specify --enable-helm
 fail|parity-kbuild-no-helm-version|kustomize version v9.9.9 is not registered|error getting kustomize binary path: kustomize version v9.9.9 is not registered
+fail|parity-kbuild-no-helm-ksops|external plugins disabled; unable to load external plugin 'ksops'|loading generator plugins: failed to load generator: external plugins disabled; unable to load external plugin 'ksops'

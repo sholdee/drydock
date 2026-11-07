@@ -5,3 +5,4 @@
 render|parity-kbuild-alpha-helm|app.kubernetes.io/managed-by: kustomize-v5.8.3|
 render|parity-kbuild-alpha-shared|app.kubernetes.io/managed-by: kustomize-v5.8.3|
 render|parity-kbuild-alpha-plain|app.kubernetes.io/managed-by: kustomize-v5.8.3|
+render|parity-kbuild-alpha-ksops|app.kubernetes.io/managed-by: kustomize-v5.8.3|

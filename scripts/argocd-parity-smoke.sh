@@ -124,7 +124,7 @@ SOURCE_TYPE_GATES_RESTORE=""
 # argocd-cm.yaml. The phases run after the source type gate phase, and the
 # last one restores the value of the fixture install.
 KUSTOMIZE_BUILD_OPTIONS_PATH="${REPO_ROOT}/testdata/argocd-parity/kustomize-build-options"
-KUSTOMIZE_BUILD_OPTIONS_PHASES=(alpha no-helm unknown-flag)
+KUSTOMIZE_BUILD_OPTIONS_PHASES=(alpha no-helm unknown-flag output-file)
 # The value that install_argocd sets.
 KUSTOMIZE_BUILD_OPTIONS_DEFAULT="--enable-helm"
 # Set to "true" while the live argocd-cm holds the value of a phase. The
@@ -2990,7 +2990,8 @@ remove_kustomize_build_options_state() {
 # manager reads argocd-cm through an informer, so a capture can still use
 # the value of the earlier phase. The capture is retried with a hard
 # refresh until it holds the present text and not the absent text of the
-# expected.psv line.
+# expected.psv line. An empty text is not checked, and a capture may be
+# empty when the phase sends the build elsewhere.
 capture_kustomize_build_options_manifest() {
   local app="$1"
   local present="$2"
@@ -2999,7 +3000,7 @@ capture_kustomize_build_options_manifest() {
   local capture="${output_dir}/${app}.yaml"
   for _ in {1..60}; do
     if argocd app manifests "${app}" > "${capture}" 2> "${OUT_DIR}/argocd-${app}.stderr" \
-      && grep -qF -- "${present}" "${capture}" \
+      && { [[ -z "${present}" ]] || grep -qF -- "${present}" "${capture}"; } \
       && { [[ -z "${absent}" ]] || ! grep -qF -- "${absent}" "${capture}"; }; then
       rm -f "${OUT_DIR}/argocd-${app}.stderr"
       return 0

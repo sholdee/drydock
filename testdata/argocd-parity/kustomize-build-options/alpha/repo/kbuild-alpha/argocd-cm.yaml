@@ -7,4 +7,4 @@ metadata:
   name: argocd-cm
   namespace: argocd
 data:
-  kustomize.buildOptions: --enable-alpha-plugins --helm-kube-version 1.29.0 --helm-api-versions parity.example.com/v1/FromBuildOptions --enable-managedby-label --reorder none --load-restrictor= --helm-debug --helm-command=helm --network --network-name host -e PARITY=1 --mount type=bind,source=/tmp,target=/tmp --as-current-user --stack-trace
+  kustomize.buildOptions: --enable-alpha-plugins --helm-kube-version 1.29.0 --helm-api-versions parity.example.com/v1/FromBuildOptions --enable-managedby-label --reorder none --load-restrictor= --helm-debug --helm-command=/usr/local/bin/helm -o /dev/stdout --network --network-name host -e PARITY=1 --mount type=bind,source=/tmp,target=/tmp --as-current-user --stack-trace

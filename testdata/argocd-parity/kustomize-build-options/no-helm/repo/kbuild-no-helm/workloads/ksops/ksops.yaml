@@ -1,0 +1,12 @@
+# A KSOPS generator in the exec function form. The smoke installs no ksops
+# program: kustomize must skip or refuse the generator before it runs one.
+apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: secret-generator
+  annotations:
+    config.kubernetes.io/function: |
+      exec:
+        path: ksops
+files:
+  - ./secret.sops.yaml
