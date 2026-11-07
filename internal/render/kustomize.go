@@ -34,6 +34,22 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err != nil {
 		return nil, nil, err
 	}
+	manifests, renderDiags, err := renderKustomizeBuild(ctx, source, opts, buildSettings)
+	if err != nil {
+		return nil, nil, err
+	}
+	diags = append(diags, renderDiags...)
+	if kustomizeOutputDiscarded(buildSettings) {
+		// kustomize builds first and then writes, so a build error still
+		// fails the source.
+		return nil, append(diags, kustomizeOutputDiscardedDiagnostic(buildSettings)), nil
+	}
+	return manifests, diags, nil
+}
+
+// renderKustomizeBuild runs the build of a source with its flags.
+func renderKustomizeBuild(ctx context.Context, source ResolvedSource, opts RenderOptions, buildSettings kustomizeBuildSettings) ([]Manifest, []diagnostic.Diagnostic, error) {
+	var diags []diagnostic.Diagnostic
 
 	root, err := sourceRoot(source)
 	if err != nil {

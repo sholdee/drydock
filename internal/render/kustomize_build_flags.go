@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"slices"
+
+	"github.com/sholdee/drydock/internal/diagnostic"
 
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/resmap"
@@ -65,10 +68,43 @@ func kustomizeHelmMissingFlagError(settings kustomizeBuildSettings) error {
 	if settings.HelmCommand == "" {
 		return fmt.Errorf("%s: must specify --helm-command", prefix)
 	}
-	if settings.HelmCommand != "helm" {
-		return fmt.Errorf("kustomize build option --helm-command %q names a helm program that drydock does not run; drydock renders helmCharts with the Helm library and accepts only the default, \"helm\"", settings.HelmCommand)
+	// kustomize runs the program that --helm-command names. A path to a
+	// program named helm, such as /usr/local/bin/helm, is helm.
+	if path.Base(settings.HelmCommand) != "helm" {
+		return fmt.Errorf("kustomize build option --helm-command %q runs a program other than helm; drydock renders helmCharts with its Helm library and cannot run that program", settings.HelmCommand)
 	}
 	return nil
+}
+
+// kustomizeStdoutPaths are the paths that name the standard output of the
+// kustomize process in the Linux repo-server of Argo CD.
+var kustomizeStdoutPaths = []string{"/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"}
+
+// kustomizeOutputDiscarded reports whether --output sends the build
+// somewhere other than the standard output that Argo CD reads. kustomize
+// writes the build to the --output path, or one file per resource when the
+// path is a directory (NewCmdBuild, commands/build/build.go at kustomize
+// v5.8.3). A path that names the standard output, such as /dev/stdout,
+// gives the usual output. Any other path leaves the standard output empty,
+// and Argo CD then reads no manifests and does not fail.
+func kustomizeOutputDiscarded(settings kustomizeBuildSettings) bool {
+	if settings.OutputPath == "" {
+		return false
+	}
+	return !slices.Contains(kustomizeStdoutPaths, path.Clean(settings.OutputPath))
+}
+
+// KustomizeBuildOutputDiscardedCode identifies the warning for a
+// kustomize build whose --output sends the build to a file.
+const KustomizeBuildOutputDiscardedCode = "kustomize.build-output-discarded"
+
+func kustomizeOutputDiscardedDiagnostic(settings kustomizeBuildSettings) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     KustomizeBuildOutputDiscardedCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "kustomize",
+		Message:  fmt.Sprintf("kustomize build option --output %q writes the build to a file instead of the standard output, so Argo CD reads no manifests from this source; drydock renders none either", settings.OutputPath),
+	}
 }
 
 // kustomizeHelmCapabilities is the kube version and the API versions of one

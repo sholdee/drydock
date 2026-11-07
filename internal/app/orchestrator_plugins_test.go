@@ -2764,11 +2764,11 @@ func TestNativeKustomizePluginBuildOptionsFailClosed(t *testing.T) {
 			},
 		},
 		{
-			name: "output option rejected",
+			name: "help option rejected",
 			plugin: config.ConfigManagementPlugin{
 				Name:            "kustomize-build",
 				GenerateCommand: []string{"kustomize", "build"},
-				GenerateArgs:    []string{"-o", "out.yaml"},
+				GenerateArgs:    []string{"--help"},
 			},
 			wantErr: true,
 		},

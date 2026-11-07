@@ -54,8 +54,7 @@ func TestKustomizeBuildFlagsMatchKustomizeBinary(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		options []string
-		// failClosed: kustomize accepts the options, and drydock fails,
-		// because their output is not the build.
+		// failClosed: kustomize prints its help, and drydock fails.
 		failClosed string
 	}{
 		{name: "no options"},
@@ -92,8 +91,8 @@ func TestKustomizeBuildFlagsMatchKustomizeBinary(t *testing.T) {
 		{name: "flags after double dash", options: []string{"--", "--enable-helm"}},
 		{name: "help", options: []string{"--help"}, failClosed: "--help"},
 		{name: "help shorthand", options: []string{"-h"}, failClosed: "--help"},
-		{name: "output", options: []string{"-o", "out.yaml"}, failClosed: "--output"},
-		{name: "output long", options: []string{"--output=out.yaml"}, failClosed: "--output"},
+		{name: "output", options: []string{"-o", "out.yaml"}},
+		{name: "output long", options: []string{"--output=/dev/stdout"}},
 		{name: "empty output", options: []string{"--output="}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,8 +100,8 @@ func TestKustomizeBuildFlagsMatchKustomizeBinary(t *testing.T) {
 			want, output, help, wantErr := upstreamKustomizeBuild(t, args)
 			got, gotErr := parseKustomizeBuildOptions(tc.options)
 			if tc.failClosed != "" {
-				if wantErr != nil || (!help && output == "") {
-					t.Fatalf("kustomize = %v (help %t, output %q), want a build that drydock fails closed", wantErr, help, output)
+				if wantErr != nil || !help {
+					t.Fatalf("kustomize = %v (help %t), want its help that drydock fails closed", wantErr, help)
 				}
 				if gotErr == nil || !strings.Contains(gotErr.Error(), tc.failClosed) {
 					t.Fatalf("drydock error = %v, want it to name %s", gotErr, tc.failClosed)
@@ -119,6 +118,9 @@ func TestKustomizeBuildFlagsMatchKustomizeBinary(t *testing.T) {
 				t.Fatalf("drydock error = %v, want none as kustomize", gotErr)
 			}
 			assertKustomizeBuildSettingsMatch(t, got, want)
+			if got.OutputPath != output {
+				t.Errorf("OutputPath = %q, kustomize %q", got.OutputPath, output)
+			}
 		})
 	}
 }

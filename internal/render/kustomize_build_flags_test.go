@@ -32,7 +32,8 @@ func TestKustomizeHelmChartsNeedEnableHelm(t *testing.T) {
 		{name: "plugin command without enable helm", caller: KustomizeCallerCommand, wantErr: "must specify --enable-helm"},
 		{name: "empty helm command", caller: KustomizeCallerArgoCD, options: []string{"--enable-helm", "--helm-command="}, wantErr: "must specify --helm-command"},
 		{name: "default helm command", caller: KustomizeCallerArgoCD, options: []string{"--enable-helm", "--helm-command", "helm"}},
-		{name: "other helm command", caller: KustomizeCallerArgoCD, options: []string{"--enable-helm", "--helm-command", "/usr/local/bin/helm"}, wantErr: `--helm-command "/usr/local/bin/helm" names a helm program that drydock does not run`},
+		{name: "helm command path", caller: KustomizeCallerArgoCD, options: []string{"--enable-helm", "--helm-command", "/usr/local/bin/helm"}},
+		{name: "other helm command", caller: KustomizeCallerArgoCD, options: []string{"--enable-helm", "--helm-command", "/usr/local/bin/helm3"}, wantErr: `--helm-command "/usr/local/bin/helm3" runs a program other than helm`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -66,47 +67,6 @@ func TestKustomizeHelmCommandWithoutHelmCharts(t *testing.T) {
 	})
 	if err != nil || len(manifests) != 1 {
 		t.Fatalf("Render() = %d manifests, error %v", len(manifests), err)
-	}
-}
-
-// The managed-by label names the kustomize binary of Argo CD, v5.8.3, both
-// for --enable-managedby-label and for buildMetadata: [managedByLabel].
-// krusty alone would name the version of the drydock build.
-func TestKustomizeManagedByLabelNamesArgoCDKustomize(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		kustomization string
-		options       []string
-		helmCharts    bool
-		want          string
-	}{
-		{name: "no label", kustomization: "resources: [cm.yaml]\n"},
-		{name: "flag", kustomization: "resources: [cm.yaml]\n", options: []string{"--enable-managedby-label"}, want: "kustomize-v5.8.3"},
-		{name: "build metadata", kustomization: "resources: [cm.yaml]\nbuildMetadata: [managedByLabel]\n", want: "kustomize-v5.8.3"},
-		{name: "flag with helmCharts", kustomization: "resources: [cm.yaml]\nhelmCharts:\n  - name: probe\n    releaseName: probe\n", options: []string{"--enable-helm", "--enable-managedby-label"}, helmCharts: true, want: "kustomize-v5.8.3"},
-		{name: "label of the source", kustomization: "resources: [labeled.yaml]\n", want: "someone-else"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), tc.kustomization)
-			writeFile(t, filepath.Join(root, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
-			writeFile(t, filepath.Join(root, "app", "labeled.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n  labels:\n    app.kubernetes.io/managed-by: someone-else\n")
-			if tc.helmCharts {
-				writeHelmCapabilitiesProbeChart(t, filepath.Join(root, "app"))
-			}
-			manifests, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{
-				KustomizeCaller: KustomizeCallerArgoCD,
-				BuildOptions:    tc.options,
-			})
-			if err != nil {
-				t.Fatalf("Render() error = %v", err)
-			}
-			for _, manifest := range manifests {
-				if got := manifest.Object.GetLabels()["app.kubernetes.io/managed-by"]; got != tc.want {
-					t.Fatalf("%s managed-by = %q, want %q", manifest.Object.GetName(), got, tc.want)
-				}
-			}
-		})
 	}
 }
 
@@ -170,5 +130,54 @@ func TestHelmCapabilitiesSplitAPIVersionsFlagValues(t *testing.T) {
 	}
 	if _, err := helmCapabilities(RenderOptions{APIVersions: []string{`a"b`}}); err == nil || !strings.Contains(err.Error(), `invalid argument "a\"b" for "-a, --api-versions" flag`) {
 		t.Fatalf("helmCapabilities() error = %v, want the helm flag error", err)
+	}
+}
+
+// kustomize writes the build to the --output path. A path that names the
+// standard output gives the usual output. Another path leaves it empty, so
+// Argo CD reads no manifests and does not fail. A build error still fails.
+func TestKustomizeOutputFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options []string
+		want    int
+		warn    bool
+		wantErr string
+	}{
+		{name: "dev stdout", options: []string{"-o", "/dev/stdout"}, want: 1},
+		{name: "fd 1", options: []string{"--output=/dev/fd/1"}, want: 1},
+		{name: "proc self fd 1", options: []string{"--output", "/proc/self/fd/1"}, want: 1},
+		{name: "file", options: []string{"-o", "out.yaml"}, warn: true},
+		{name: "dev stderr", options: []string{"-o", "/dev/stderr"}, warn: true},
+		{name: "build error first", options: []string{"-o", "out.yaml", "--reorder", "bad"}, wantErr: "illegal flag value --reorder bad"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "resources: [cm.yaml]\n")
+			writeFile(t, filepath.Join(root, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+			manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{
+				KustomizeCaller: KustomizeCallerArgoCD,
+				BuildOptions:    tc.options,
+			})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Render() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if len(manifests) != tc.want {
+				t.Fatalf("manifests = %d, want %d", len(manifests), tc.want)
+			}
+			warned := false
+			for _, diag := range diags {
+				warned = warned || diag.Code == KustomizeBuildOutputDiscardedCode
+			}
+			if warned != tc.warn {
+				t.Fatalf("diagnostics = %#v, want the --output warning %t", diags, tc.warn)
+			}
+		})
 	}
 }

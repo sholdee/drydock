@@ -62,6 +62,9 @@ type kustomizeBuildSettings struct {
 	// or rejected with a diagnostic.
 	EnableAlphaPlugins bool
 	EnableExec         bool
+	// OutputPath is --output. kustomize then writes the build to that
+	// path instead of its standard output (see kustomizeOutputDiscarded).
+	OutputPath string
 }
 
 // kustomizeBuildFlagValues are the targets of the kustomize build flag set.
@@ -155,9 +158,6 @@ func parseKustomizeBuildArgs(args []string) (kustomizeBuildSettings, []string, e
 		return kustomizeBuildSettings{}, operands, kustomizeBuildError("illegal flag value --reorder %s; legal values: %v", values.reorder,
 			[]string{string(krusty.ReorderOptionLegacy), string(krusty.ReorderOptionNone)})
 	}
-	if values.outputPath != "" {
-		return kustomizeBuildSettings{}, operands, fmt.Errorf("kustomize build option --output writes the build to %q instead of its output, so Argo CD reads no manifests; drydock does not render it", values.outputPath)
-	}
 	settings := kustomizeBuildSettings{
 		LoadRestrictions:   types.LoadRestrictionsRootOnly,
 		Reorder:            krusty.ReorderOptionUnspecified,
@@ -168,6 +168,7 @@ func parseKustomizeBuildArgs(args []string) (kustomizeBuildSettings, []string, e
 		HelmAPIVersions:    values.helmAPIVersions,
 		EnableAlphaPlugins: values.enablePlugins,
 		EnableExec:         values.enableExec,
+		OutputPath:         values.outputPath,
 	}
 	if values.loadRestrictor == types.LoadRestrictionsNone.String() {
 		settings.LoadRestrictions = types.LoadRestrictionsNone
@@ -230,13 +231,6 @@ func kustomizeBuildSettingsFor(opts RenderOptions) (kustomizeBuildSettings, erro
 		}
 	}
 	return settings, nil
-}
-
-// ValidateKustomizeBuildOptions reports whether kustomize build accepts
-// options as the kustomize.buildOptions of Argo CD.
-func ValidateKustomizeBuildOptions(options []string) error {
-	_, err := kustomizeBuildSettingsFor(RenderOptions{KustomizeCaller: KustomizeCallerArgoCD, BuildOptions: options})
-	return err
 }
 
 // NormalizeKustomizeBuildTokens checks that tokens form a plain
