@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	helmchart "helm.sh/helm/v4/pkg/chart"
@@ -39,7 +40,7 @@ func prepareHelmDependencyWorkspace(ctx context.Context, chartPath, chartSourceP
 	if err != nil || len(missing) == 0 {
 		return chrt, nil, err
 	}
-	requests, keep, err := helmDependencyBuildRequests(chrt, missing, opts.OCIChartRepositories)
+	requests, keep, err := helmDependencyBuildRequests(chrt, chartPath, missing, opts.OCIChartRepositories)
 	if err != nil {
 		return nil, nil, fmt.Errorf("helm chart dependencies %s: error building helm chart dependencies: %w", chartSourcePath, err)
 	}
@@ -132,8 +133,10 @@ func acquireHelmDependencies(ctx context.Context, tempChartPath string, requests
 // without a repository must be under charts/, and drydock fetches no
 // file:// or repository-alias dependency: those must be vendored, and stay.
 // When a missing dependency is one that drydock does not fetch, it fetches
-// nothing, and the render fails on the missing dependency.
-func helmDependencyBuildRequests(chrt helmchart.Charter, missing []helmchart.Dependency, ociRepositories map[string]bool) ([]chart.Request, map[string]bool, error) {
+// nothing, and the render fails on the missing dependency. chartPath is the
+// chart directory, whose charts/ directory holds the dependencies without a
+// repository (checkHelmLocalDependency).
+func helmDependencyBuildRequests(chrt helmchart.Charter, chartPath string, missing []helmchart.Dependency, ociRepositories map[string]bool) ([]chart.Request, map[string]bool, error) {
 	parent, ok := chrt.(*chartv2.Chart)
 	if !ok || parent.Metadata == nil {
 		return nil, nil, nil
@@ -158,6 +161,11 @@ func helmDependencyBuildRequests(chrt helmchart.Charter, missing []helmchart.Dep
 		if dependency == nil {
 			continue
 		}
+		if strings.TrimSpace(dependency.Repository) == "" {
+			if err := checkHelmLocalDependency(chartPath, dependency, parent.Lock != nil); err != nil {
+				return nil, nil, err
+			}
+		}
 		request, ok, err := helmDependencyChartRequest(dependency, ociRepositories)
 		if err != nil {
 			return nil, nil, err
@@ -175,16 +183,61 @@ func helmDependencyBuildRequests(chrt helmchart.Charter, missing []helmchart.Dep
 			requests = append(requests, request)
 		}
 	}
+	if ok, err := allHelmDependenciesFetched(missing, fetched); err != nil || !ok {
+		return nil, nil, err
+	}
+	return requests, keep, nil
+}
+
+// allHelmDependenciesFetched reports whether the build fetches every
+// missing dependency.
+func allHelmDependenciesFetched(missing []helmchart.Dependency, fetched map[string]bool) (bool, error) {
 	for _, dependency := range missing {
 		accessor, err := helmchart.NewDependencyAccessor(dependency)
 		if err != nil {
-			return nil, nil, err
+			return false, err
 		}
 		if !fetched[accessor.Name()] {
-			return nil, nil, nil
+			return false, nil
 		}
 	}
-	return requests, keep, nil
+	return true, nil
+}
+
+// checkHelmLocalDependency checks a dependency without a repository as
+// `helm dependency build` does. Without a Chart.lock, resolver.Resolve
+// requires the path charts/<name> (helm v4.3.1
+// internal/resolver/resolver.go:66-77). Then Manager.downloadAll loads
+// charts/<name> as a directory and requires its version to match the
+// dependency version (pkg/downloader/manager.go:279-300), also with a
+// Chart.lock. The errors have helm's text, with the path relative to the
+// chart, as the repo-server runs the build in the chart directory.
+func checkHelmLocalDependency(chartPath string, dependency *chartv2.Dependency, locked bool) error {
+	rel := filepath.ToSlash(filepath.Join("charts", dependency.Name))
+	path := filepath.Join(chartPath, "charts", dependency.Name)
+	if !locked {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("directory %s not found", rel)
+		} else if err != nil {
+			return err
+		}
+	}
+	local, err := chartv2loader.LoadDir(path)
+	if err != nil {
+		return fmt.Errorf("unable to load chart '%s': %w", rel, err)
+	}
+	constraint, err := semver.NewConstraint(dependency.Version)
+	if err != nil {
+		return fmt.Errorf("dependency %s has an invalid version/constraint format: %w", dependency.Name, err)
+	}
+	v, err := semver.NewVersion(local.Metadata.Version)
+	if err != nil {
+		return fmt.Errorf("invalid version %s for dependency %s: %w", dependency.Version, dependency.Name, err)
+	}
+	if !constraint.Check(v) {
+		return fmt.Errorf("dependency %s at version %s does not satisfy the constraint %s", dependency.Name, local.Metadata.Version, dependency.Version)
+	}
+	return nil
 }
 
 // checkHelmChartLock fails a Chart.lock whose digest does not match the
@@ -346,6 +399,11 @@ func helmDependencyChartPath(parentChartPath, name string) (string, error) {
 	return dst, nil
 }
 
+// replaceHelmDependencyChartTargets removes the vendored copies of the
+// dependency name that the build fetches: the directory charts/<name> and
+// each archive under charts/ whose chart is named name. helm decides by
+// the chart name inside the archive too (Manager.safeMoveDeps), so an
+// archive such as redis-cluster-1.0.0.tgz stays when redis is fetched.
 func replaceHelmDependencyChartTargets(parentChartPath, name string) (string, error) {
 	dst, err := helmDependencyChartPath(parentChartPath, name)
 	if err != nil {
@@ -355,18 +413,24 @@ func replaceHelmDependencyChartTargets(parentChartPath, name string) (string, er
 		return "", fmt.Errorf("replace acquired helm chart dependency %s: %w", name, err)
 	}
 	chartsPath := filepath.Dir(dst)
-	for _, archive := range []string{
-		filepath.Join(chartsPath, name+".tgz"),
-		filepath.Join(chartsPath, name+"-*.tgz"),
-	} {
-		matches, err := filepath.Glob(archive)
-		if err != nil {
-			return "", fmt.Errorf("find stale helm chart dependency archives for %s: %w", name, err)
+	entries, err := os.ReadDir(chartsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return dst, nil
 		}
-		for _, match := range matches {
-			if err := removeHelmDependencyArchive(chartsPath, match); err != nil {
-				return "", err
-			}
+		return "", fmt.Errorf("find stale helm chart dependency archives for %s: %w", name, err)
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".tgz" {
+			continue
+		}
+		archivePath := filepath.Join(chartsPath, entry.Name())
+		archived, err := chartv2loader.LoadFile(archivePath)
+		if err != nil || archived.Name() != name {
+			continue
+		}
+		if err := removeHelmDependencyArchive(chartsPath, archivePath); err != nil {
+			return "", err
 		}
 	}
 	return dst, nil

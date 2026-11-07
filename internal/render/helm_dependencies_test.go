@@ -276,3 +276,99 @@ func TestHelmDependencyBuildFailsLikeHelm(t *testing.T) {
 		})
 	}
 }
+
+// TestHelmDependencyBuildKeepsArchivesOfOtherCharts pins that fetching the
+// dependency redis removes only the archives whose chart is redis, as
+// Manager.safeMoveDeps decides by the chart inside the archive. The vendored
+// redis-cluster-1.0.0.tgz of a file:// dependency, which drydock keeps,
+// stays although its file name starts with redis-. The missing postgres
+// starts the build.
+func TestHelmDependencyBuildKeepsArchivesOfOtherCharts(t *testing.T) {
+	root := t.TempDir()
+	parent := writeHelmDependencyParent(t, root, `
+  - name: redis
+    version: 1.0.0
+    repository: https://charts.example.test
+  - name: redis-cluster
+    version: 1.0.0
+    repository: file://../redis-cluster
+  - name: postgres
+    version: 0.12.4
+    repository: oci://registry.example.test/charts
+`)
+	writeArchivedTestChart(t, filepath.Join(parent, "charts"), "redis-cluster", "1.0.0", configMapTemplate("vendored-redis-cluster"))
+	writeArchivedTestChart(t, filepath.Join(parent, "charts"), "redis", "0.9.0", configMapTemplate("vendored-redis"))
+	acquirer := &namedChartAcquirer{chartDirs: map[string]string{
+		"redis":    filepath.Join(root, "acquired", "redis"),
+		"postgres": filepath.Join(root, "acquired", "postgres"),
+	}}
+	result, err := renderHelmDependencyParent(t, root, acquirer)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(acquirer.requests) != 2 {
+		t.Fatalf("chart requests = %#v, want redis and postgres", acquirer.requests)
+	}
+	for _, name := range []string{"fetched-redis", "fetched-postgres", "vendored-redis-cluster"} {
+		if !containsManifest(result, "ConfigMap", name) {
+			t.Fatalf("manifests = %#v, want %s", manifestNames(result), name)
+		}
+	}
+	if containsManifest(result, "ConfigMap", "vendored-redis") {
+		t.Fatalf("manifests = %#v, want the outdated redis archive removed", manifestNames(result))
+	}
+}
+
+// TestHelmDependencyBuildChecksDependenciesWithoutRepository pins how
+// `helm dependency build` checks a dependency without a repository, with
+// helm's text (checked against the helm 4.3.1 binary): without a
+// Chart.lock, charts/<name> must exist as a path, so a vendored archive
+// does not count, and the vendored directory must match the version
+// constraint.
+func TestHelmDependencyBuildChecksDependenciesWithoutRepository(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		vendor  func(t *testing.T, parent string)
+		wantErr string
+	}{
+		{
+			name:    "missing",
+			vendor:  func(*testing.T, string) {},
+			wantErr: "directory charts/sub not found",
+		},
+		{
+			name: "archive",
+			vendor: func(t *testing.T, parent string) {
+				writeArchivedTestChart(t, filepath.Join(parent, "charts"), "sub", "2.0.0", configMapTemplate("vendored-sub"))
+			},
+			wantErr: "directory charts/sub not found",
+		},
+		{
+			name: "other version",
+			vendor: func(t *testing.T, parent string) {
+				writeNamedTestChart(t, filepath.Join(parent, "charts", "sub"), "sub", "1.0.0", configMapTemplate("vendored-sub"))
+			},
+			wantErr: "dependency sub at version 1.0.0 does not satisfy the constraint 2.0.0",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			parent := writeHelmDependencyParent(t, root, `
+  - name: sub
+    version: 2.0.0
+  - name: redis
+    version: 1.0.0
+    repository: https://charts.example.test
+`)
+			tt.vendor(t, parent)
+			acquirer := &namedChartAcquirer{chartDirs: map[string]string{"redis": filepath.Join(root, "acquired", "redis")}}
+			_, err := renderHelmDependencyParent(t, root, acquirer)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Render() error = %v, want %q", err, tt.wantErr)
+			}
+			if len(acquirer.requests) != 0 {
+				t.Fatalf("chart requests = %#v, want none", acquirer.requests)
+			}
+		})
+	}
+}

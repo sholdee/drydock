@@ -582,19 +582,33 @@ Important boundaries:
   - Without a `Chart.lock`, each `Chart.yaml` version resolves against its
     repository, as `helm dependency update` resolves it: the highest index
     version with an archive URL, or the highest strict semver registry
-    tag, that matches the version as a constraint. An `http://` repository
-    works here. With `--offline`, a range resolves from the version list
-    that an earlier online run recorded.
+    tag, that matches the version as a constraint. On an OCI repository, a
+    version that parses as semver, such as `v1.2.3` or `1.2`, is pulled as
+    a tag as written. An `http://` repository works here. With
+    `--offline`, a range resolves from the version list that an earlier
+    online run recorded.
+  - A dependency without a repository must be a directory
+    `charts/<name>` whose version matches the dependency version. Without
+    a `Chart.lock`, a missing path fails with `directory charts/<name> not
+    found`, also when `charts/` holds the chart as an archive. A directory
+    of another version fails with `dependency <name> at version <version>
+    does not satisfy the constraint <constraint>`.
   - The build fetches every remote dependency, also one that is vendored,
-    and removes each chart archive under `charts/` that it did not fetch,
-    also one that `Chart.yaml` does not name. A dependency without a
-    repository stays.
+    and removes each chart archive under `charts/` whose chart it did not
+    fetch, also one that `Chart.yaml` does not name. It decides by the
+    chart name inside the archive, not by the file name. A dependency
+    without a repository stays.
+- Behavior change: when one dependency is missing, drydock now fetches
+  every remote dependency of the chart, also the vendored ones, as
+  `helm dependency build` does in Argo CD. With `--offline`, the chart
+  cache must then hold all of them. A chart with vendored remote
+  dependencies and one missing dependency that rendered offline before can
+  fail with `offline cache miss` until one online run fills the cache.
 - Recorded divergences from strict Argo CD v3.6.1 in that build: drydock
   does not package a `file://` dependency or fetch a repository-alias
   dependency, so those must be vendored, and their vendored copy stays. It
   skips the lock digest check when a dependency names a repository alias,
-  because helm hashes the URL of the repository that Argo CD added. It does
-  not check the version of a vendored dependency without a repository.
+  because helm hashes the URL of the repository that Argo CD added.
   When `charts/` holds a vendored directory of a chart that the build
   fetches, helm keeps both and picks one of them in Go map order. drydock
   replaces the directory with the fetched chart.
