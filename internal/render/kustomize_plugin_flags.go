@@ -11,8 +11,12 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/format"
 	goyaml "go.yaml.in/yaml/v3"
+	"sigs.k8s.io/kustomize/api/hasher"
 	"sigs.k8s.io/kustomize/api/konfig"
+	"sigs.k8s.io/kustomize/api/krusty"
+	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/kustomize/kyaml/fn/runtime/runtimeutil"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 )
@@ -41,10 +45,13 @@ type kustomizePluginField struct {
 	// the field (KustTarget.configureExternalGenerators and
 	// configureExternalTransformers at kustomize/api v0.21.3).
 	errorPrefix string
+	// accumulatePrefix is the text that kustomize puts before an error
+	// that it gets when it reads the entries of the field.
+	accumulatePrefix string
 }
 
 var (
-	kustomizeGeneratorsField   = kustomizePluginField{name: "generators", errorPrefix: "loading generator plugins: failed to load generator: "}
+	kustomizeGeneratorsField   = kustomizePluginField{name: "generators", errorPrefix: "loading generator plugins: failed to load generator: ", accumulatePrefix: "loading generator plugins: "}
 	kustomizeTransformersField = kustomizePluginField{name: "transformers"}
 )
 
@@ -99,52 +106,131 @@ func (w *kustomizeWorkspace) classifyKustomizePlugin(field kustomizePluginField,
 			return kustomizePluginKSOPS, nil
 		}
 		return 0, fmt.Errorf("kustomize %s entry %q: %s/%s is an exec function, which drydock does not run", field.name, describe, apiVersion, kind)
-	default:
+	case spec.Exec.Path != "":
 		w.skippedExecFunctions++
+		return kustomizePluginSkip, nil
+	default:
+		// A function annotation with neither a container nor an exec
+		// program gives kustomize no function to run, with any flags.
+		w.skippedEmptyFunctions++
 		return kustomizePluginSkip, nil
 	}
 }
 
-func execFunctionsSkippedDiagnostic(skipped int) diagnostic.Diagnostic {
+// skippedFunctionsDiagnostic reports the functions that kustomize skips. A
+// skipped generator adds only its own configuration, marked
+// config.kubernetes.io/local-config, which kustomize drops at the end of
+// the build. A skipped transformer changes nothing.
+func skippedFunctionsDiagnostic(execFunctions, emptyFunctions int) diagnostic.Diagnostic {
+	var reasons []string
+	if execFunctions != 0 {
+		reasons = append(reasons, fmt.Sprintf("%d exec functions, because kustomize.buildOptions has --enable-alpha-plugins and no --enable-exec", execFunctions))
+	}
+	if emptyFunctions != 0 {
+		reasons = append(reasons, fmt.Sprintf("%d functions whose annotation names neither a container nor an exec program", emptyFunctions))
+	}
 	return diagnostic.Diagnostic{
 		Code:     KustomizeExecFunctionSkippedCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "kustomize",
-		Message:  fmt.Sprintf("kustomize skips %d exec functions of generators or transformers, because kustomize.buildOptions has --enable-alpha-plugins and no --enable-exec; they give no resources and change nothing", skipped),
+		Message:  "kustomize skips " + strings.Join(reasons, ", and ") + "; a skipped generator adds only its own configuration, which kustomize drops at the end of the build, and a skipped transformer changes nothing",
 	}
 }
 
-// KustomizeExecFunctionSkippedCode identifies the warning for exec
-// functions that kustomize skips without --enable-exec.
+// KustomizeExecFunctionSkippedCode identifies the warning for functions of
+// generators and transformers that kustomize skips.
 const KustomizeExecFunctionSkippedCode = "kustomize.exec-function-skipped"
 
-// readKustomizePluginEntry reads the documents of one generators: or
-// transformers: entry: an inline configuration or a local file.
-func readKustomizePluginEntry(field kustomizePluginField, dir, boundaryRoot, entry string) (docs []*goyaml.Node, describe, manifestDir string, err error) {
-	docs, inline := inlineKustomizeGeneratorDocuments(entry)
-	if inline {
-		return docs, describeInlineGeneratorEntry(docs), dir, nil
+// kustomizePluginEntry is the plugin configurations of one generators: or
+// transformers: entry.
+type kustomizePluginEntry struct {
+	roots       []*goyaml.Node
+	describe    string
+	manifestDir string
+	// rewrite reports that the configurations do not come from one file as
+	// written, so krusty must get them from a generated file: they come
+	// from a kustomization directory.
+	rewrite bool
+}
+
+// readKustomizePluginEntry reads the plugin configurations of one
+// generators: or transformers: entry as kustomize reads them
+// (KustTarget.configureExternalGenerators and
+// configureExternalTransformers): an inline configuration, a file, or a
+// kustomization directory, which kustomize builds. kustomize parses them
+// with its resource factory, which expands a List into its items. A file
+// outside the kustomization directory fails under LoadRestrictionsRootOnly,
+// with the text of KustTarget.accumulateResources.
+func (w *kustomizeWorkspace) readKustomizePluginEntry(field kustomizePluginField, dir, boundaryRoot, entry string) (kustomizePluginEntry, error) {
+	if _, inline := inlineKustomizeGeneratorDocuments(entry); inline {
+		roots, err := kustomizePluginRoots([]byte(entry))
+		if err != nil {
+			return kustomizePluginEntry{}, fmt.Errorf("kustomize %s entry: %w", field.name, err)
+		}
+		return kustomizePluginEntry{roots: roots, describe: describeInlineGeneratorEntry(roots), manifestDir: dir}, nil
 	}
-	describe = strings.TrimSpace(entry)
+	describe := strings.TrimSpace(entry)
 	path, info, err := validateLocalKustomizeRef(boundaryRoot, dir, field.name, entry)
 	if err != nil {
-		return nil, describe, "", err
+		return kustomizePluginEntry{}, err
 	}
+	singular := strings.TrimSuffix(field.name, "s")
 	if info == nil {
-		return nil, describe, "", fmt.Errorf("kustomize %s %q: %s manifest not found", field.name, entry, strings.TrimSuffix(field.name, "s"))
+		return kustomizePluginEntry{}, fmt.Errorf("kustomize %s %q: %s manifest not found", field.name, entry, singular)
+	}
+	if info.IsDir() {
+		roots, err := w.buildKustomizePluginDirectory(path)
+		if err != nil {
+			return kustomizePluginEntry{}, fmt.Errorf("kustomize %s %q: %w", field.name, entry, err)
+		}
+		return kustomizePluginEntry{roots: roots, describe: describe, manifestDir: path, rewrite: true}, nil
 	}
 	if !info.Mode().IsRegular() {
-		return nil, describe, "", fmt.Errorf("kustomize %s %q: %s manifest must be a regular file", field.name, entry, strings.TrimSuffix(field.name, "s"))
+		return kustomizePluginEntry{}, fmt.Errorf("kustomize %s %q: %s manifest must be a regular file", field.name, entry, singular)
+	}
+	loader := kustomizeValuesFileLoader{repoRoot: w.tempRepoRoot, dir: dir, rootOnly: w.buildSettings.LoadRestrictions != types.LoadRestrictionsNone}
+	if err := loader.checkRoot(path); err != nil {
+		return kustomizePluginEntry{}, fmt.Errorf("%saccumulation err='accumulating resources from '%s': %s': must build at directory: '%s': file is not directory", field.accumulatePrefix, entry, err.Error(), loader.display(path))
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, describe, "", err
+		return kustomizePluginEntry{}, err
 	}
-	docs, err = decodeYAMLDocumentNodes(content)
+	roots, err := kustomizePluginRoots(content)
 	if err != nil {
-		return nil, describe, "", fmt.Errorf("kustomize %s %q: decode %s manifest: %w", field.name, entry, strings.TrimSuffix(field.name, "s"), err)
+		return kustomizePluginEntry{}, fmt.Errorf("kustomize %s %q: decode %s manifest: %w", field.name, entry, singular, err)
 	}
-	return docs, describe, filepath.Dir(path), nil
+	return kustomizePluginEntry{roots: roots, describe: describe, manifestDir: filepath.Dir(path)}, nil
+}
+
+// kustomizePluginRoots parses plugin configurations with the resource
+// factory of kustomize, which drops empty documents and expands Lists.
+func kustomizePluginRoots(content []byte) ([]*goyaml.Node, error) {
+	nodes, err := resource.NewFactory(&hasher.Hasher{}).RNodesFromBytes(content)
+	if err != nil {
+		return nil, err
+	}
+	roots := make([]*goyaml.Node, 0, len(nodes))
+	for _, node := range nodes {
+		roots = append(roots, node.YNode())
+	}
+	return roots, nil
+}
+
+// buildKustomizePluginDirectory builds a kustomization directory of plugin
+// configurations with krusty, as kustomize accumulates such an entry.
+func (w *kustomizeWorkspace) buildKustomizePluginDirectory(path string) ([]*goyaml.Node, error) {
+	options := krusty.MakeDefaultOptions()
+	options.LoadRestrictions = w.buildSettings.LoadRestrictions
+	resMap, err := krusty.MakeKustomizer(options).Run(filesys.MakeFsOnDisk(), path)
+	if err != nil {
+		return nil, err
+	}
+	roots := make([]*goyaml.Node, 0, resMap.Size())
+	for _, res := range resMap.Resources() {
+		roots = append(roots, res.Copy().YNode())
+	}
+	return roots, nil
 }
 
 // writeKustomizePluginDocuments writes the plugin configurations that
@@ -188,8 +274,9 @@ func needsKustomizeTransformerPrep(graph []kustomizeGraphNode, opts RenderOption
 // kustomize skips and fails the ones that it would run, when drydock knows
 // the build flags and they hold --enable-alpha-plugins. Without that flag,
 // krusty loads the entries and fails a plugin as kustomize does. An entry
-// that names a directory, a kustomization of transformer configurations,
-// stays as it is.
+// whose configurations change becomes a generated file, also an empty one:
+// it keeps the kustomization from being empty, which krusty fails and
+// kustomize does not, because the original entry is still there.
 func (w *kustomizeWorkspace) prepareKustomizeTransformers(ctx context.Context, dir, boundaryRoot string, graphIndex int, kustomization *types.Kustomization) error {
 	if w.opts.KustomizeCaller == KustomizeCallerArgoCDAssumed || !w.buildSettings.EnableAlphaPlugins {
 		return nil
@@ -199,54 +286,33 @@ func (w *kustomizeWorkspace) prepareKustomizeTransformers(ctx context.Context, d
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if _, inline := inlineKustomizeGeneratorDocuments(entry); !inline {
-			if _, info, err := validateLocalKustomizeRef(boundaryRoot, dir, "transformers", entry); err == nil && info != nil && info.IsDir() {
-				remaining = append(remaining, entry)
-				continue
-			}
-		}
-		kept, skipped, err := w.classifyKustomizeTransformerEntry(dir, boundaryRoot, entry)
+		read, err := w.readKustomizePluginEntry(kustomizeTransformersField, dir, boundaryRoot, entry)
 		if err != nil {
 			return err
 		}
-		switch {
-		case skipped == 0:
-			remaining = append(remaining, entry)
-		case len(kept) != 0:
-			rel, err := writeKustomizePluginDocuments(dir, filepath.Join(".drydock", "transformers", fmt.Sprintf("%03d-%03d.yaml", graphIndex, entryIndex)), kept)
+		kept := make([]*goyaml.Node, 0, len(read.roots))
+		skipped := 0
+		for _, root := range read.roots {
+			action, err := w.classifyKustomizePlugin(kustomizeTransformersField, read.describe, root)
 			if err != nil {
 				return err
 			}
-			remaining = append(remaining, rel)
+			if action == kustomizePluginSkip {
+				skipped++
+				continue
+			}
+			kept = append(kept, root)
 		}
+		if skipped == 0 && !read.rewrite {
+			remaining = append(remaining, entry)
+			continue
+		}
+		rel, err := writeKustomizePluginDocuments(dir, filepath.Join(".drydock", "transformers", fmt.Sprintf("%03d-%03d.yaml", graphIndex, entryIndex)), kept)
+		if err != nil {
+			return err
+		}
+		remaining = append(remaining, rel)
 	}
 	kustomization.Transformers = remaining
 	return nil
-}
-
-// classifyKustomizeTransformerEntry returns the transformer configurations
-// of an entry that kustomize loads, and how many it skips.
-func (w *kustomizeWorkspace) classifyKustomizeTransformerEntry(dir, boundaryRoot, entry string) ([]*goyaml.Node, int, error) {
-	docs, describe, _, err := readKustomizePluginEntry(kustomizeTransformersField, dir, boundaryRoot, entry)
-	if err != nil {
-		return nil, 0, err
-	}
-	kept := make([]*goyaml.Node, 0, len(docs))
-	skipped := 0
-	for _, doc := range docs {
-		root := yamlDocumentRoot(doc)
-		if root == nil {
-			continue
-		}
-		action, err := w.classifyKustomizePlugin(kustomizeTransformersField, describe, root)
-		if err != nil {
-			return nil, 0, err
-		}
-		if action == kustomizePluginSkip {
-			skipped++
-			continue
-		}
-		kept = append(kept, root)
-	}
-	return kept, skipped, nil
 }

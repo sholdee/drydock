@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,12 +21,17 @@ func TestKustomizeGeneratorMergeIntoLaterOutput(t *testing.T) {
 		kustomization string
 		wantErr       string
 		wantData      string
+		// wantSecretKeys are the data keys of the Secret demo-secret.
+		wantSecretKeys string
 	}{
 		{name: "merge into helm output", kustomization: helmChart + "configMapGenerator:\n  - name: shared\n    behavior: merge\n    literals: [a=b]\n", wantErr: `does not exist; cannot merge or replace`},
 		{name: "replace into helm output", kustomization: helmChart + "configMapGenerator:\n  - name: shared\n    behavior: replace\n    literals: [a=b]\n", wantErr: `id resid.ResId{Gvk:resid.Gvk{Group:"", Version:"v1", Kind:"ConfigMap", isClusterScoped:false}, Name:"shared", Namespace:""} does not exist; cannot merge or replace`},
 		{name: "merge into a resource that helm output repeats", kustomization: "resources: [res.yaml]\n" + helmChart + "configMapGenerator:\n  - name: shared\n    behavior: merge\n    literals: [a=b]\n", wantErr: `exists; can not use behavior: 'unspecified', behavior must be merge or replace`},
 		{name: "merge into a resource", kustomization: "resources: [res.yaml]\nhelmCharts:\n  - name: other\n    releaseName: other-release\nconfigMapGenerator:\n  - name: shared\n    behavior: merge\n    literals: [a=b]\n", wantData: "a,fromResource"},
 		{name: "secret merge into KSOPS output", kustomization: ksopsGenerator + "secretGenerator:\n  - name: demo-secret\n    behavior: merge\n    literals: [a=b]\n", wantErr: `Kind:"Secret", isClusterScoped:false}, Name:"demo-secret", Namespace:""} does not exist; cannot merge or replace`},
+		// The entries of generators: run in list order.
+		{name: "builtin merge before KSOPS in generators", kustomization: "generators:\n  - ./merge.yaml\n  - ./secret-generator.yaml\n", wantErr: `Name:"demo-secret", Namespace:""} does not exist; cannot merge or replace`},
+		{name: "builtin merge after KSOPS in generators", kustomization: "generators:\n  - ./secret-generator.yaml\n  - ./merge.yaml\n", wantSecretKeys: "TOKEN,a"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -38,8 +44,9 @@ func TestKustomizeGeneratorMergeIntoLaterOutput(t *testing.T) {
 				writeFile(t, filepath.Join(app, "charts", chart, "templates", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: "+name+"\ndata:\n  fromHelm: \"true\"\n")
 			}
 			writeFile(t, filepath.Join(app, "secret-generator.yaml"), ksopsTestGeneratorManifest)
+			writeFile(t, filepath.Join(app, "merge.yaml"), "apiVersion: builtin\nkind: SecretGenerator\nmetadata:\n  name: demo-secret\nbehavior: merge\nliterals:\n  - a=b\n")
 			writeFile(t, filepath.Join(app, "demo-secret.sops.yaml"), ksopsTestSopsSecret("demo-secret", "TOKEN", "NYI8Q9o3original"))
-			manifests, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{EnableKSOPSCompat: true})
+			manifests, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{EnableKSOPSCompat: true, KustomizeCaller: KustomizeCallerArgoCD, BuildOptions: []string{"--enable-helm", "--enable-alpha-plugins"}})
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("Render() error = %v, want %q", err, tc.wantErr)
@@ -48,6 +55,19 @@ func TestKustomizeGeneratorMergeIntoLaterOutput(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("Render() error = %v", err)
+			}
+			if tc.wantSecretKeys != "" {
+				for _, manifest := range manifests {
+					if manifest.Object.GetKind() != "Secret" {
+						continue
+					}
+					data, _ := manifest.Object.Object["data"].(map[string]any)
+					if got := strings.Join(slices.Sorted(maps.Keys(data)), ","); got != tc.wantSecretKeys {
+						t.Fatalf("Secret %s data keys = %s, want %s", manifest.Object.GetName(), got, tc.wantSecretKeys)
+					}
+					return
+				}
+				t.Fatal("no Secret")
 			}
 			for _, manifest := range manifests {
 				if manifest.Object.GetName() != "shared" {
