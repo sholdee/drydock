@@ -92,3 +92,18 @@ spec:
   destination:
     name: in-cluster
     namespace: parity-kbuild-alpha
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-kbuild-alpha-replacement
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: kbuild-alpha/workloads/replacement
+  destination:
+    name: in-cluster
+    namespace: parity-kbuild-alpha

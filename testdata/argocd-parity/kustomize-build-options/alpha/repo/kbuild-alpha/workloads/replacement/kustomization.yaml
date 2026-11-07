@@ -1,0 +1,18 @@
+# kustomize skips the exec function of the generator without
+# --enable-exec, but it still adds the generator configuration, marked
+# local-config, until the end of the build. The replacement reads it.
+resources:
+  - configmap.yaml
+generators:
+  - generator.yaml
+replacements:
+  - source:
+      kind: Probe
+      name: probe
+      fieldPath: spec.value
+    targets:
+      - select:
+          kind: ConfigMap
+          name: parity-kbuild-alpha-replacement
+        fieldPaths:
+          - data.value
