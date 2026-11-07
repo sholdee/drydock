@@ -1477,10 +1477,11 @@ Supported:
     --helm-command`, as in kustomize.
   - `--output` or `-o` with `/dev/stdout`, `/dev/fd/1`, or `/proc/self/fd/1`
     changes nothing, because kustomize writes the build to its standard
-    output. Extra slashes or `.` elements in such a path change nothing
-    either. With a slash at the end, such as `/dev/stdout/`, Linux refuses
-    to create the file, and the source fails with `open /dev/stdout/: is a
-    directory`, as in kustomize. With any other path, kustomize writes the
+    output. Extra slashes or `.` elements before the file change nothing
+    either. An element after the file fails, as in kustomize, because the
+    file is not a directory: `/dev/stdout/` fails with `open /dev/stdout/:
+    is a directory`, and `/dev/stdout/.` or `/dev/stdout/..` fails with
+    `not a directory`. With any other path, kustomize writes the
     build there, and Argo CD reads no manifests and does not fail. drydock
     then builds the source, so that a build error still fails it, renders no
     manifests, and reports the `kustomize.build-output-discarded` warning.
@@ -1521,9 +1522,17 @@ Supported:
   `config.kubernetes.io/function`, and a malformed one fails with
   `loader: failed to get FunctionSpec: ...`. An exec function runs only
   with `--enable-exec`. With `--enable-alpha-plugins` alone, kustomize
-  skips every exec function: a generator gives no resources, and a
-  transformer changes nothing. drydock does the same and reports the
-  `kustomize.exec-function-skipped` warning. drydock runs no plugin
+  skips every exec function, and it skips a function annotation that names
+  neither a container nor an exec program with any flags. A skipped
+  transformer changes nothing. A skipped generator still adds its own
+  configuration, marked `config.kubernetes.io/local-config`, and kustomize
+  drops it only at the end of the top-level build (`fnplugin.go:166-183`,
+  `kusttarget.go:162`). Until then, the configuration takes part in the
+  build: two copies of it fail, and `replacements` can read it. drydock
+  adds the same configuration as a resource, which krusty also keeps until
+  the end, and reports the `kustomize.exec-function-skipped` warning. A
+  kustomization whose entries kustomize all skips still renders, because
+  drydock keeps an empty stand-in entry. drydock runs no plugin
   program, so a plugin that kustomize would run fails closed with a message
   that names the plugin form: a container function, which kustomize runs in
   a container also when it names an exec program, an exec function with
@@ -1531,20 +1540,35 @@ Supported:
   exception is a KSOPS generator, which drydock emulates under
   `--enable-ksops-compat` when kustomize would run it: as an exec function
   with both flags, or as a plugin program with `--enable-alpha-plugins`.
-  Without an `argocd-cm`, drydock emulates every KSOPS generator and keeps
-  builtins, as before. Earlier drydock releases ignored the two flags.
-- A `configMapGenerator` or `secretGenerator` entry with `behavior: merge`
-  or `behavior: replace` fails, as in kustomize, when it names a resource
-  that only the `helmCharts` or the `generators:` of the same kustomization
-  make. kustomize adds their output after the output of the two builtin
-  generators, so the resource does not exist yet: `merging from generator
-  ... id ... does not exist; cannot merge or replace`
-  (`kusttarget.go:267-296`, `reswrangler.go:558-566`). When the resources
-  of the kustomization already hold that ID, the merge works, and the later
-  output then fails with `exists; can not use behavior: 'unspecified',
-  behavior must be merge or replace`. To tell the two cases, drydock builds
-  the resources of the kustomization on their own, and only for such a
-  merge. Earlier drydock releases merged into the output.
+  KSOPS returns only the resources that it generates, not its
+  configuration (`krm` in `ksops.go` of viaduct-ai/kustomize-sops), so the
+  emulation adds no configuration. Without an `argocd-cm`, drydock emulates
+  every KSOPS generator and keeps builtins, as before. Earlier drydock
+  releases ignored the two flags.
+- `generators:` and `transformers:` entries load as kustomize loads them.
+  The resource factory of kustomize parses the documents, so a `List`
+  expands into its items. An entry that names a kustomization directory is
+  built, and its resources are the plugin configurations. Under
+  `LoadRestrictionsRootOnly`, a file outside the kustomization directory
+  fails with `accumulation err='accumulating resources from '<entry>':
+  security; file '<path>' is not in or below '<dir>''`, after `loading
+  generator plugins: ` for a generator. drydock names the paths from the
+  repository root.
+- A generator with `behavior: merge` or `behavior: replace` fails, as in
+  kustomize, when it names a resource that only a later generator of the
+  same kustomization makes, and drydock added that output as a resource:
+  the output of `helmCharts`, of a KSOPS generator, or the configuration of
+  a skipped generator. kustomize runs `configMapGenerator`,
+  `secretGenerator`, `helmCharts`, and then the documents of `generators:`
+  in list order, so a builtin `SecretGenerator` with `behavior: merge` in
+  `generators:` before a KSOPS entry fails too. The resource does not exist
+  yet: `merging from generator ... id ... does not exist; cannot merge or
+  replace` (`kusttarget.go:267-296`, `reswrangler.go:558-566`). When the
+  resources of the kustomization already hold that ID, the merge works,
+  and the later output then fails with `exists; can not use behavior:
+  'unspecified', behavior must be merge or replace`. To tell the two cases,
+  drydock builds the resources of the kustomization on their own, and only
+  for such a merge. Earlier drydock releases merged into the output.
 - Recorded divergences for `kustomize.buildOptions`:
   - `--help` and `-h` fail closed, because kustomize then prints its help
     instead of manifests.
@@ -1562,6 +1586,16 @@ Supported:
     `sortOptions: {order: fifo}` in the kustomization. In the default legacy
     order, the output is the same. To match the order, drydock would need a
     hook between the generators of krusty, which its API does not give.
+  - Some errors of such builds have another text in drydock, while both
+    tools fail. drydock adds the moved output with the resources, so a
+    collision with a resource fails with krusty's `may not add resource
+    with an already registered id`, where kustomize says `exists; can not
+    use behavior: 'unspecified'`. The build of the resources that tells the
+    two merge cases apart is a finished build: it holds the names after the
+    name suffix and no `local-config` configurations, where kustomize also
+    compares the earlier names of a resource. A merge that kustomize finds
+    by an earlier name then fails with `does not exist` in drydock and with
+    `exists` in kustomize.
 - Kustomize `helmCharts` release names and namespaces as kustomize v5.8.3
   passes them to `helm template`. Without `releaseName`, kustomize passes
   `--generate-name`, and `helm template` renders the release
