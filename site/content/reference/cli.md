@@ -265,8 +265,10 @@ revision, cache, credential, and offline details.
 Capability-gated charts can render optional resources only when a Kubernetes
 version or API version is available. drydock derives a default Kubernetes
 version from its embedded Helm libraries, so the default already
-tracks a real cluster version. Use `--kube-version` to override the per-app
-`kubeVersion` with a specific version; the global override wins. Use repeatable
+tracks a real cluster version. Use `--kube-version` to set the version of
+the destination cluster. A per-app `kubeVersion` wins over it, as in Argo CD.
+drydock checks a chart `kubeVersion` constraint only against an explicit
+version. Use repeatable
 `--api-versions` to add API versions for capability-gated rendering, unioned
 (deduped and sorted) with each app's per-app `apiVersions` rather than replacing
 them. Values accept the `group/version` form (`monitoring.coreos.com/v1`) or the

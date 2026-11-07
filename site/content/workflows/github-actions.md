@@ -507,7 +507,7 @@ extra-diff-args: |
 | `discover-ignore` | unset | Newline-delimited repository-relative glob patterns excluded from discovery before decoding. Applies to test, diff, and image diff steps. |
 | `discover-manifest` | unset | Newline-delimited Argo CD `Application` or `ApplicationSet` YAML files outside the repository to add to discovery. Paths are absolute or relative to the workspace; `..` components are rejected. Applies to test, diff, and image diff steps. |
 | `repo-map` | unset | Newline-delimited repository URL mappings in `URL=PATH` form. |
-| `kube-version` | unset | Kubernetes version for rendering capabilities. Overrides per-app `kubeVersion`. |
+| `kube-version` | unset | Kubernetes version of the destination cluster for rendering capabilities. A per-app `kubeVersion` wins over it. |
 | `api-versions` | unset | Newline-delimited additional Kubernetes API versions for capability-gated rendering, unioned with per-app `apiVersions`. Accepts `group/version` or `group/version/Kind` form. |
 | `parallelism` | unset | Maximum number of Applications to render concurrently. |
 | `max-discovery-depth` | unset | Maximum recursive rendered Application discovery depth. |

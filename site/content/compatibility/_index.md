@@ -125,17 +125,25 @@ drydock reads the `argocd-cm` keys `helm.enable`, `kustomize.enable`, and
 `jsonnet.enable`. Argo CD keeps a tool on only when the key is missing,
 empty, or exactly `true`. When Helm or Kustomize is off, a source of that
 type renders as a plain directory, also when its spec has a `helm` or
-`kustomize` block. When Jsonnet is off, a directory source skips its
-`.jsonnet` files.
+`kustomize` block, and also a chart from a chart repository. The block is
+then not read, so a block that does not parse does not fail the source. When
+Jsonnet is off, a directory source skips its `.jsonnet` files.
 
 Helm renders follow `helm template` as Argo CD runs it. The release name is
 `helm.releaseName` or the Application name, read as a Go template. Without
-`helm.namespace` and a destination namespace, the release namespace is
-`default`. A Kustomize `helmCharts` entry without `releaseName` renders the
-release `release-name`. drydock fails a source where Helm fails it: a
-release name over 53 characters, a library chart, a chart of `apiVersion`
-`v3`, a chart `kubeVersion` that the kube version does not meet, and a
-`helm.version` other than `v3` or `v4`.
+`helm.namespace` and a destination namespace, Helm uses the namespace of
+the repo-server environment. drydock reads it from the repo-server of a
+rendered Argo CD install: the Argo CD namespace when the repo-server mounts
+a service account token, as the argo-cd Helm chart does by default, and
+`default` when it does not, as the upstream `install.yaml` does. Without a
+rendered install, drydock uses `default`. A Kustomize `helmCharts` entry
+without `releaseName` renders the release `release-name`. drydock fails a
+source where Helm fails it: a release name over 53 characters, a library
+chart, a chart of `apiVersion` `v3`, and a `helm.version` other than empty,
+`v3`, or `v4`. It fails a chart `kubeVersion` that the kube version does not
+meet only when the version is explicit (a per-app `kubeVersion` or
+`--kube-version`), because Argo CD checks the version of the destination
+cluster.
 
 Rendering intentionally does not call live Argo CD, Kubernetes, `kubectl`,
 `argocd`, Helm CLI, or Kustomize CLI. That keeps local and CI analysis fast,

@@ -36,16 +36,16 @@ Argo CD instance. The destination cases include these:
 It also checks directory files that fail the source. Each such Application
 lives in its own namespace and holds one file that fails the source. Argo CD
 must report a `ComparisonError` condition, drydock must fail to render, and
-both errors must name the same file. Helm and Kustomize `helmCharts` renders
-that Helm or kustomize fail with a message that names no file, such as an
-invalid release name or a library chart, are checked the same way by their
-message.
-
-A last phase turns Helm, Kustomize, and Jsonnet off in the live `argocd-cm`
-and compares Applications whose sources then render as plain directories. For a `.json` object without a `kind`,
+both errors must name the same file. For a `.json` object without a `kind`,
 the Argo CD controller error quotes the object instead of the file, so the
 check matches the quoted object. Files that both sides skip, and files whose
-text both sides decode first, render in the main manifest comparison.
+text both sides decode first, render in the main manifest comparison. Helm
+and Kustomize `helmCharts` renders that Helm or kustomize fail with a message
+that names no file, such as an invalid release name or a library chart, are
+checked the same way by their message.
+
+A last phase turns Helm, Kustomize, and Jsonnet off in the live `argocd-cm`
+and compares Applications whose sources then render as plain directories.
 
 This check is scoped to generated desired state. Live-only runtime behavior
 such as Kubernetes defaulting, admission mutation, server-side diff, managed
@@ -601,9 +601,17 @@ Supported:
   a source of that type renders as a plain directory, also when the spec
   names the type with a `helm` or `kustomize` block, and the settings of that
   block have no effect (`GetAppSourceType`,
-  `reposerver/repository/repository.go:1955-1975`). When Jsonnet is off, a
-  directory source skips its `.jsonnet` files (`findManifests`, line 2019).
-  Config management plugins are never turned off. drydock reads the keys from
+  `reposerver/repository/repository.go:1955-1975`). A block that does not
+  parse, such as `helm.values: "- not a map"` or a `kubeVersion` that is not
+  a version, then does not fail the source, because Argo CD never reads it.
+  A chart from a chart repository follows the same rule: Argo CD extracts
+  the chart and picks the type in the chart directory (lines 451-470), so
+  with Helm off it renders that directory as a plain directory. When Jsonnet
+  is off, a directory source skips its `.jsonnet` files (`findManifests`,
+  line 2019), and its Jsonnet libraries and imports are no render cache or
+  changed-only inputs. Config management plugins are never turned off, and
+  the native argocd-vault-plugin compatibility path ignores the keys too,
+  because the plugin sidecar runs its own tools. drydock reads the keys from
   `argocd-cm`, from the `configs.cm` values of the argo-cd Helm chart, and
   from a rendered Argo CD install. The keys are part of the render settings
   signature, so a change to them renders every Application again and
@@ -616,11 +624,25 @@ Supported:
   `--name-template`, so Helm reads it as a Go template with the sprig
   functions, and a template that does not parse fails the source. The
   namespace is `helm.namespace`, or else the destination namespace. When
-  both are empty, Argo CD passes no `--namespace`, and Helm uses `default`,
-  because the repo-server has no kubeconfig and mounts no service account
-  token (`EnvSettings.Namespace`, `pkg/cli/environment.go:276-286` at Helm
-  v4.3.1). Earlier drydock releases used the release name as written and an
-  empty `.Release.Namespace`.
+  both are empty, Argo CD passes no `--namespace`, and Helm picks the
+  namespace from the repo-server environment (`EnvSettings.Namespace`,
+  `pkg/cli/environment.go:276-286` at Helm v4.3.1, and client-go
+  `DeferredLoadingClientConfig.Namespace`). The repo-server has no
+  kubeconfig. So the namespace is `HELM_NAMESPACE` when the repo-server
+  container sets it. Else, when a service account token is mounted, it is
+  `POD_NAMESPACE` or the pod namespace. Else it is `default`. drydock reads
+  this from the repo-server Deployment and ServiceAccount of a rendered Argo
+  CD install. The token is mounted when the pod spec
+  `automountServiceAccountToken` is `true`, or unset while the ServiceAccount
+  does not set it to `false`, or when the container mounts a volume at the
+  token path. The upstream `install.yaml` sets it to `false`, so the
+  namespace is `default`. The argo-cd Helm chart sets
+  `repoServer.automountServiceAccountToken: true` by default, so the
+  namespace is the Argo CD namespace. Without a rendered install, and when
+  the container sets `KUBECONFIG`, drydock uses `default`. The namespace is
+  part of the render settings signature, so a change renders every
+  Application again. Earlier drydock releases used the release name as
+  written and an empty `.Release.Namespace`.
 - The checks of `helm template` (Helm v4.3.1) that come before the
   templates render, in Helm's order, with Helm's error text: the release
   name must have at most 53 characters and match the Helm name pattern
@@ -630,9 +652,20 @@ Supported:
   installable`), and its `apiVersion` must be `v1` or `v2` (`invalid chart
   apiVersion`). The chart `kubeVersion` constraint must match the kube
   version (`chart requires kubeVersion: ... which is incompatible with
-  Kubernetes ...`). Argo CD also fails a `helm.version` other than empty,
-  `v3`, or `v4` (`helm version 'v2' is not supported`). Earlier drydock
-  releases rendered these sources.
+  Kubernetes ...`). Argo CD checks the version of the destination cluster,
+  which drydock does not know. So drydock checks the constraint only
+  against an explicit version: a per-app `helm.kubeVersion` or
+  `kustomize.kubeVersion`, a `helmCharts` `kubeVersion`, or
+  `--kube-version`. Without one, it skips the check, and it does not fail
+  a chart that the cluster would accept. Argo CD also fails a `helm.version`
+  other than empty, `v3`, or `v4` (`helm version 'v2' is not supported`).
+  Earlier drydock releases rendered these sources.
+- A per-app `helm.kubeVersion` or `kustomize.kubeVersion` wins over
+  `--kube-version`. Argo CD uses the per-app value and falls back to the
+  cluster version (`ApplicationSource.GetKubeVersionOrDefault`,
+  `pkg/apis/application/v1alpha1/types.go:385-398`), and `--kube-version`
+  stands for the cluster version. Earlier drydock releases let
+  `--kube-version` win.
 - Helm `parameters` and `fileParameters` applied the way Argo CD's
   `helm template` call applies them: every `--set`, then every `--set-string`
   (`forceString: true`), then every `--set-file`, keeping only the last entry
@@ -1224,10 +1257,18 @@ Supported:
   passes them to `helm template`. Without `releaseName`, kustomize passes
   `--generate-name`, and `helm template` renders the release
   `release-name`. Without a namespace in the entry, the kustomization, or a
-  parent kustomization, kustomize passes no `--namespace`, and Helm uses
-  `default`. A `releaseName` or chart `name` that starts with `-` fails, as
-  kustomize fails it. The Helm release name checks above apply too.
-  Earlier drydock releases used the chart name and an empty namespace.
+  parent kustomization, kustomize passes no `--namespace`, and Helm picks
+  the namespace from the repo-server environment, as for a Helm source
+  above, because kustomize runs Helm with that environment
+  (`HelmChartInflationGenerator.go:182`). kustomize configures every
+  `helmCharts` entry of a kustomization before it renders any, so these
+  checks of every entry come first, in this order: a missing chart `name`,
+  a `releaseName` or chart `name` that starts with `-`, a local
+  `additionalValuesFiles` entry that does not exist (`could not load
+  additionalValuesFile`), and a `valuesMerge` other than `merge`,
+  `override`, or `replace`. The Helm release name checks above apply too.
+  Earlier drydock releases used the chart name and an empty namespace, and
+  checked each entry only when it rendered it.
 - Kustomize `helmCharts` `kubeVersion` and `apiVersions` as kustomize reads
   them (`HelmChartInflationGenerator.go:58-70` at kustomize/api v0.21.3).
   The `apiVersions` of an entry replace the `--helm-api-versions` values
@@ -1240,8 +1281,11 @@ Supported:
   itself before it runs Helm. Earlier drydock releases rendered the chart.
 - Kustomize `helmCharts` `valuesFile` and `additionalValuesFiles` are file
   names, not globs, as in kustomize. A path such as `values-*.yaml` reads
-  only a file with that exact name and fails when there is none. Earlier
-  drydock releases expanded the glob.
+  only a file with that exact name and fails when there is none. With
+  `valuesInline` and `valuesMerge: replace`, kustomize never reads
+  `valuesFile`, so a missing one does not fail. The scan for Argo CD
+  settings reads the same files. Earlier drydock releases expanded the
+  glob.
 - Recorded divergence from strict Argo CD v3.6.1: kustomize v5.8.3 copies
   the `--helm-api-versions` list into each `helmCharts` entry without its
   backing array, so the `apiVersions` of one entry overwrite the first flag

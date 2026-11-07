@@ -60,8 +60,10 @@ libraries, so the default tracks a real cluster version without a
 flag. Use these capability flags when a render must target a specific cluster's
 capabilities:
 
-- `--kube-version` overrides the per-app `kubeVersion` with a specific
-  Kubernetes version. The global override wins over any per-app value.
+- `--kube-version` sets the Kubernetes version of the destination cluster.
+  A per-app `kubeVersion` wins over it, as in Argo CD. With an explicit
+  version, a chart `kubeVersion` constraint that the version does not meet
+  fails the source. Without one, drydock skips that check.
 - `--api-versions` adds Kubernetes API versions for capability-gated rendering.
   The flag is repeatable, and the values are unioned (deduped and sorted) with
   each app's per-app `apiVersions` rather than replacing them. Accept either the
