@@ -90,24 +90,33 @@ var kustomizeStdoutPaths = []string{"/dev/stdout", "/dev/fd/1", "/proc/self/fd/1
 // standard output empty, and Argo CD then reads no manifests and does not
 // fail.
 //
-// Linux opens a path with extra or "." elements, such as /dev//stdout, as
-// the cleaned path, so the check cleans the path. A trailing slash is
-// different: Linux refuses to create or truncate a file through such a
-// path (EISDIR), so kustomize fails with "open /dev/stdout/: is a
-// directory".
-// drydock fails such a path to the standard output in the same way. For
-// another path with a trailing slash, drydock cannot tell whether the
-// repo-server has that directory, so it reads the path as a directory and
-// renders nothing.
+// Linux opens a path with extra slashes or "." elements before the file,
+// such as /dev//stdout, as the cleaned path. An element after the file
+// fails, because the file is not a directory: a trailing slash fails the
+// create with EISDIR ("is a directory"), and "." or ".." fails with
+// ENOTDIR ("not a directory"). drydock fails such a path to the standard
+// output with the same text. For another path, drydock cannot tell which
+// directories the repo-server has, so it renders nothing.
 func kustomizeOutputDiscarded(settings kustomizeBuildSettings) (bool, error) {
 	if settings.OutputPath == "" {
 		return false, nil
 	}
-	stdout := slices.Contains(kustomizeStdoutPaths, path.Clean(settings.OutputPath))
-	if stdout && strings.HasSuffix(settings.OutputPath, "/") {
-		return false, fmt.Errorf("open %s: is a directory", settings.OutputPath)
+	elements := strings.Split(settings.OutputPath, "/")
+	for i := range elements {
+		if !slices.Contains(kustomizeStdoutPaths, path.Clean(strings.Join(elements[:i+1], "/"))) {
+			continue
+		}
+		rest := elements[i+1:]
+		switch {
+		case len(rest) == 0:
+			return false, nil
+		case len(rest) == 1 && rest[0] == "":
+			return false, fmt.Errorf("open %s: is a directory", settings.OutputPath)
+		default:
+			return false, fmt.Errorf("open %s: not a directory", settings.OutputPath)
+		}
 	}
-	return !stdout, nil
+	return true, nil
 }
 
 // KustomizeBuildOutputDiscardedCode identifies the warning for a

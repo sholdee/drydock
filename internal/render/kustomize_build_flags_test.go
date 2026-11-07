@@ -151,6 +151,9 @@ func TestKustomizeOutputFlag(t *testing.T) {
 		{name: "dev stderr", options: []string{"-o", "/dev/stderr"}, warn: true},
 		{name: "dev stdout with double slash", options: []string{"-o", "/dev//stdout"}, want: 1},
 		{name: "dev stdout with trailing slash", options: []string{"-o", "/dev/stdout/"}, wantErr: "open /dev/stdout/: is a directory"},
+		{name: "dev stdout dot", options: []string{"-o", "/dev/stdout/."}, wantErr: "open /dev/stdout/.: not a directory"},
+		{name: "dev stdout parent", options: []string{"-o", "/dev/stdout/.."}, wantErr: "open /dev/stdout/..: not a directory"},
+		{name: "dev dot stdout", options: []string{"-o", "/dev/./stdout"}, want: 1},
 		{name: "directory", options: []string{"-o", "manifests/"}, warn: true},
 		{name: "build error first", options: []string{"-o", "out.yaml", "--reorder", "bad"}, wantErr: "illegal flag value --reorder bad"},
 	} {
