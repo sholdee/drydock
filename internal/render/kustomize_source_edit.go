@@ -478,10 +478,11 @@ func editAddKustomizeComponents(kustomization *types.Kustomization, kustomizatio
 // there, such as one outside the repository or one reached through a
 // symlink that leaves it, adds no matches, as a directory that cannot be
 // read adds none to filepath.Glob. A path whose text enters .git adds no
-// matches either. A symlink in the repository to .git is followed, as
-// Argo CD follows it, so its entries can match. The later steps reject
-// such a match, because it passes through a symlink, before kustomize reads
-// any file in it.
+// matches either. A glob that must list or look up a path through a
+// symlink fails with drydock's symlink error before it reads the path,
+// because drydock rejects a component path that passes through a symlink.
+// So a symlink in the repository to .git is never listed. Argo CD follows
+// such a symlink.
 func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []string) ([]string, error) {
 	var out []string
 	var root *os.Root
@@ -503,7 +504,11 @@ func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []strin
 		}
 		glob := kustomizeComponentGlob{root: root, boundaryRoot: filepath.Clean(boundaryRoot), dir: filepath.Clean(dir)}
 		matches, err := glob.glob(pattern, 0)
-		if err != nil {
+		var symlinkErr kustomizeComponentSymlinkError
+		switch {
+		case errors.As(err, &symlinkErr):
+			return nil, fmt.Errorf("kustomize components %q: %w", pattern, symlinkErr.err)
+		case err != nil:
 			return nil, fmt.Errorf("kustomize edit add component: error checking the filesystem: %w", err)
 		}
 		if !strings.HasPrefix(filepath.Base(pattern), ".") {
@@ -545,8 +550,9 @@ func (g kustomizeComponentGlob) glob(pattern string, depth int) ([]string, error
 	}
 	if !kustomizeGlobHasMeta(pattern) {
 		// filepath.Glob drops a path that Lstat cannot read.
-		if !g.exists(pattern) {
-			return nil, nil
+		exists, err := g.exists(pattern)
+		if err != nil || !exists {
+			return nil, err
 		}
 		return []string{pattern}, nil
 	}
@@ -578,6 +584,9 @@ func (g kustomizeComponentGlob) globDir(dirPath, pattern string, matches []strin
 	rel, ok := g.rootPath(dirPath)
 	if !ok {
 		return matches, nil
+	}
+	if err := g.rejectSymlink(dirPath); err != nil {
+		return matches, err
 	}
 	info, err := g.root.Stat(rel)
 	if err != nil || !info.IsDir() {
@@ -626,16 +635,40 @@ func (g kustomizeComponentGlob) confirmDir(path string) error {
 }
 
 // exists reports whether Lstat reads path. Lstat fails on an empty path.
-func (g kustomizeComponentGlob) exists(path string) bool {
+// A path whose parent passes through a symlink fails.
+func (g kustomizeComponentGlob) exists(path string) (bool, error) {
 	if path == "" {
-		return false
+		return false, nil
 	}
 	rel, ok := g.rootPath(path)
 	if !ok {
-		return false
+		return false, nil
+	}
+	if err := g.rejectSymlink(filepath.Dir(path)); err != nil {
+		return false, err
 	}
 	_, err := g.root.Lstat(rel)
-	return err == nil
+	return err == nil, nil
+}
+
+// kustomizeComponentSymlinkError is the error of a component glob that
+// must read a path through a symlink.
+type kustomizeComponentSymlinkError struct {
+	err error
+}
+
+func (e kustomizeComponentSymlinkError) Error() string {
+	return e.err.Error()
+}
+
+// rejectSymlink fails when path, relative to dir, passes through a
+// symlink inside the repository, before the glob reads it.
+func (g kustomizeComponentGlob) rejectSymlink(path string) error {
+	clean := filepath.Clean(filepath.Join(g.dir, path))
+	if err := rejectSymlinkedPath(g.boundaryRoot, clean); err != nil {
+		return kustomizeComponentSymlinkError{err: err}
+	}
+	return nil
 }
 
 // rootPath returns path, relative to dir, as a path relative to the

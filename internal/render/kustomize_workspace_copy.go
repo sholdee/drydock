@@ -291,6 +291,11 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 		if isRemoteKustomizeRef(component) || filepath.IsAbs(component) {
 			continue
 		}
+		// Check the path before the graph walk reads any file under it, so
+		// a symlink to .git never gets read.
+		if err := rejectSourceKustomizeComponentPath(repoRoot, component, componentPath); err != nil {
+			return nil, nil, nil, err
+		}
 		if _, err := os.Lstat(componentPath); err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -312,8 +317,11 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 // sourceKustomizeAddedComponents returns the spec.source.kustomize
 // components that rendering adds and the optional render inputs that decide
 // them. Under ignoreMissingComponents the optional inputs are the
-// in-repository directories skipped before the first valid component and
-// the kustomization file names of each component after it. The components
+// in-repository directories skipped before the first valid component, the
+// kustomization file names of the kept component, which decide that it is
+// kept, and the kustomization file names of each component after it. The
+// kept folder itself is not always a glob match, for example when its name
+// holds glob characters, so its own files are inputs. The components
 // then go through the globs of `kustomize edit add component`
 // (sourceKustomizeComponentMatches).
 //
@@ -339,6 +347,7 @@ func sourceKustomizeAddedComponents(repoRoot, sourceRoot string, kustomize *argo
 		if !selection.found {
 			return nil, optionalRefs, nil
 		}
+		optionalRefs = append(optionalRefs, keptIgnoreMissingComponentInputs(repoRoot, selection.keptRel)...)
 		components = []string{selection.kept}
 	}
 	matches, _ := sourceKustomizeComponentMatches(repoRoot, sourceRoot, components)
@@ -388,6 +397,36 @@ func expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot string, patt
 		return patterns
 	}
 	return matches
+}
+
+// keptIgnoreMissingComponentInputs returns the kustomization file names in
+// the kept ignoreMissingComponents folder, keptRel under repoRoot.
+func keptIgnoreMissingComponentInputs(repoRoot, keptRel string) []string {
+	if keptRel == "" || pathsafety.RelEntersGit(keptRel) {
+		return nil
+	}
+	inputs := make([]string, 0, len(kustomizationFileNames))
+	for _, name := range kustomizationFileNames {
+		inputs = append(inputs, filepath.Join(repoRoot, keptRel, name))
+	}
+	return inputs
+}
+
+// rejectSourceKustomizeComponentPath fails a spec.source.kustomize
+// component path that leaves the repository, enters .git, or passes
+// through a symlink. drydock rejects such a component in the render
+// anyway, and this check runs before any file under it is read.
+func rejectSourceKustomizeComponentPath(repoRoot, component, componentPath string) error {
+	if err := rejectPathOutsideBoundary("kustomize components", componentPath, repoRoot); err != nil {
+		return err
+	}
+	if pathEntersGit(repoRoot, componentPath) {
+		return gitPathRefError("kustomize components", component)
+	}
+	if err := rejectSymlinkedPath(repoRoot, componentPath); err != nil {
+		return fmt.Errorf("kustomize components %q: %w", component, err)
+	}
+	return nil
 }
 
 func appendNonEmpty(values []string, value string) []string {

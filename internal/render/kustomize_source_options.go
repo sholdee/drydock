@@ -55,15 +55,17 @@ func hasKustomizeSourceMutations(opts RenderOptions) bool {
 // build` (util/kustomize/kustomize.go:174-401): namePrefix, nameSuffix,
 // images, replicas, commonLabels, commonAnnotations, namespace, patches,
 // then components. kustomizationFile is the source kustomization file, and
-// content is its text. dir and boundaryRoot are the source directory and
-// repository root in the render workspace. originDir and originRoot are the
-// same paths in the original repository: the component globs, and the
-// dropped-component warning, look there, because the workspace holds only
-// the files the render reads. The returned diagnostics report options that
+// content is its text. originDir and originRoot are the source directory
+// and repository root in the original repository: the
+// ignoreMissingComponents check, the component globs, and the
+// dropped-component warning look there, because the render workspace holds
+// only the files the render reads. A kept component whose name holds glob
+// characters, such as a folder named "[a]", is not in the workspace: only
+// its glob matches are. The returned diagnostics report options that
 // Argo CD v3.6.1 accepts but does not fully apply.
 //
 //nolint:gocyclo // Mirrors Argo CD's source-level Kustomize override surface explicitly.
-func applySourceKustomizeOptions(kustomization *types.Kustomization, kustomizationFile string, content []byte, dir, boundaryRoot, originDir, originRoot string, opts RenderOptions) ([]diagnostic.Diagnostic, error) {
+func applySourceKustomizeOptions(kustomization *types.Kustomization, kustomizationFile string, content []byte, originDir, originRoot string, opts RenderOptions) ([]diagnostic.Diagnostic, error) {
 	kustomize := opts.Kustomize
 	if kustomize == nil {
 		return nil, nil
@@ -153,7 +155,7 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, kustomizati
 		}
 	}
 	if len(kustomize.Components) != 0 {
-		components, dropped, err := sourceKustomizeComponents(dir, boundaryRoot, originDir, originRoot, kustomize.Components, kustomize.IgnoreMissingComponents)
+		components, dropped, err := sourceKustomizeComponents(originDir, originRoot, kustomize.Components, kustomize.IgnoreMissingComponents)
 		if err != nil {
 			return nil, err
 		}
@@ -237,13 +239,15 @@ func envsubstStringMap(in map[string]string, env argoappv1.Env) map[string]strin
 // dropped: the repo-server never reads, checks or copies it, so drydock does
 // not either, and a broken later component cannot fail the render.
 //
+// The check runs in the original repository (dir, boundaryRoot), as the
+// repo-server runs it on its checkout. The render workspace holds the glob
+// matches of the kept component, not always the kept folder itself.
+//
 // dropped names the later components that hold a kustomization file, so the
 // caller can warn about the resources they would have added. This lookup is
-// drydock's own and only feeds the warning. It runs in the original
-// repository (originDir, originRoot), because the render workspace does not
-// hold the dropped components. It looks only for a regular kustomization
-// file, through an os.Root on originRoot, so it reads nothing outside the
-// repository. dropped names each directory once, keyed by the cleaned
+// drydock's own and only feeds the warning. It looks only for a regular
+// kustomization file, through an os.Root on boundaryRoot, so it reads
+// nothing outside the repository. dropped names each directory once, keyed by the cleaned
 // repository-relative path that the repo-server resolves
 // (filepath.Rel(repoRoot, filepath.Join(path, c)) at kustomize.go:357), and
 // leaves out a later entry that resolves to the kept component, such as a
@@ -253,7 +257,7 @@ func envsubstStringMap(in map[string]string, env argoappv1.Env) map[string]strin
 // This is believed to be an upstream bug: argoproj/argo-cd#26576 (merge
 // d631fcdfb) turned an earlier `continue` into `break component`. Revisit
 // this when upstream fixes it.
-func sourceKustomizeComponents(dir, boundaryRoot, originDir, originRoot string, components []string, ignoreMissing bool) (kept, dropped []string, err error) {
+func sourceKustomizeComponents(dir, boundaryRoot string, components []string, ignoreMissing bool) (kept, dropped []string, err error) {
 	if !ignoreMissing {
 		return append(make([]string, 0, len(components)), components...), nil, nil
 	}
@@ -264,7 +268,7 @@ func sourceKustomizeComponents(dir, boundaryRoot, originDir, originRoot string, 
 	if !selection.found {
 		return []string{}, nil, nil
 	}
-	dropped, err = droppedIgnoreMissingComponents(originDir, originRoot, selection.keptRel, selection.later)
+	dropped, err = droppedIgnoreMissingComponents(dir, boundaryRoot, selection.keptRel, selection.later)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -1570,3 +1570,76 @@ func TestKustomizeSourceComponentGlobOwnsItsDirectory(t *testing.T) {
 		t.Fatalf("selection paths = %q, want components/a without the root", selection)
 	}
 }
+
+// Under ignoreMissingComponents, Argo CD checks the folder named by the
+// entry as written, and then `kustomize edit add component` reads the entry
+// as a glob. A folder literally named "[a]" is kept, and the glob adds
+// components/a. The kept folder's kustomization file decides the render,
+// so it is a render cache input and owned by changed-only selection.
+func TestKustomizeSourceIgnoreMissingComponentWithGlobCharacters(t *testing.T) {
+	root := writeSourceEditTestRepo(t, "")
+	writeFile(t, filepath.Join(root, "components", "[a]", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+	writeFile(t, filepath.Join(root, "components", "[a]", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: componentbracket\n")
+	kustomize := argoappv1.ApplicationSourceKustomize{Components: []string{"../../components/[a]"}, IgnoreMissingComponents: true}
+	manifests, err := renderSourceEditTest(t, root, kustomize)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	var got []string
+	for _, manifest := range manifests {
+		if manifest.Object.GetKind() == "ConfigMap" {
+			got = append(got, manifest.Object.GetName())
+		}
+	}
+	if want := []string{"componenta"}; !slices.Equal(got, want) {
+		t.Fatalf("ConfigMaps = %q, want %q", got, want)
+	}
+	const keptFile = "components/[a]/kustomization.yaml"
+	if paths, _ := sourceEditTestDigest(t, root, &kustomize); !slices.Contains(paths, keptFile) {
+		t.Fatalf("digest paths = %q, want %q", paths, keptFile)
+	}
+	selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), &kustomize)
+	if err != nil {
+		t.Fatalf("KustomizeSelectionPaths() error = %v", err)
+	}
+	if !slices.Contains(selection, keptFile) {
+		t.Fatalf("selection paths = %q, want %q", selection, keptFile)
+	}
+}
+
+// A component reached through an in-repository symlink to .git fails with
+// the symlink error before drydock reads or lists anything under .git.
+func TestKustomizeSourceComponentThroughSymlinkToGitFailsFirst(t *testing.T) {
+	for _, component := range []string{"../../components/gitlink/sub", "../../components/gitlink/*"} {
+		t.Run(component, func(t *testing.T) {
+			root := writeSourceEditTestRepo(t, "")
+			writeFile(t, filepath.Join(root, ".git", "sub", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - secret-cm.yaml\n")
+			writeFile(t, filepath.Join(root, ".git", "config"), "[core]\n")
+			if err := os.Symlink(filepath.Join("..", ".git"), filepath.Join(root, "components", "gitlink")); err != nil {
+				t.Fatalf("Symlink() error = %v", err)
+			}
+			kustomize := argoappv1.ApplicationSourceKustomize{Components: []string{component}}
+			_, err := renderSourceEditTest(t, root, kustomize)
+			if err == nil || !strings.Contains(err.Error(), `includes symlink component "gitlink"`) {
+				t.Fatalf("Render() error = %v, want the symlink error", err)
+			}
+			for _, leaked := range []string{"secret-cm.yaml", "config", "sub/kustomization"} {
+				if strings.Contains(err.Error(), leaked) {
+					t.Fatalf("Render() error = %v names %q from .git", err, leaked)
+				}
+			}
+			if _, err := KustomizeInputDigestPaths(context.Background(), ResolvedSource{RepoRoot: root, Path: filepath.Join("apps", "demo")}, RenderOptions{Kustomize: &kustomize}); err == nil || !strings.Contains(err.Error(), `includes symlink component "gitlink"`) {
+				t.Fatalf("KustomizeInputDigestPaths() error = %v, want the symlink error", err)
+			}
+			selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), &kustomize)
+			if err != nil {
+				t.Fatalf("KustomizeSelectionPaths() error = %v", err)
+			}
+			for _, path := range selection {
+				if strings.Contains(path, ".git") || strings.Contains(path, "gitlink/") {
+					t.Fatalf("selection paths = %q, want nothing under .git", selection)
+				}
+			}
+		})
+	}
+}

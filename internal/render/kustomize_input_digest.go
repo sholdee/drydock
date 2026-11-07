@@ -165,6 +165,12 @@ func (c *kustomizeInputCollector) collectSourceKustomizeComponent(ctx context.Co
 			continue
 		}
 		componentRoot := filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(component)))
+		if err := rejectSourceKustomizeComponentPath(c.repoRoot, component, componentRoot); err != nil {
+			if err := c.skip(ctx, err); err != nil {
+				return err
+			}
+			continue
+		}
 		_, graph, err := collectKustomizeGraph(ctx, c.repoRoot, componentRoot, kustomizeInputWalk)
 		if err != nil {
 			if err := c.skip(ctx, err); err != nil {
@@ -227,6 +233,15 @@ func (c *kustomizeInputCollector) collectSkippedComponent(ctx context.Context, s
 		return true, c.skip(ctx, err)
 	}
 	if decision.keep {
+		// The kustomization file of the kept folder decides that it is
+		// kept. The folder is not always a glob match of its own name.
+		if decision.probe != "" {
+			for _, name := range kustomizationFileNames {
+				if err := c.addAbsPath(ctx, filepath.Join(decision.probe, name), true); err != nil {
+					return false, err
+				}
+			}
+		}
 		return false, nil
 	}
 	if decision.probe == "" {
