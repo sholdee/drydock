@@ -2,7 +2,6 @@ package render
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,7 +93,7 @@ func resolveJsonnetLib(repoRoot, raw string) (string, error) {
 	}
 	// filepath.Join cleans, so an absolute lib is joined to the root.
 	path := filepath.Join(absRoot, filepath.FromSlash(lib))
-	resolved, err := resolveJsonnetLibSymlink(path, 10)
+	resolved, err := resolveArgoSymlinkRecursive(path, 10)
 	if err != nil {
 		return "", fmt.Errorf("jsonnet lib %q: internal error: failed to resolve path. Check logs for more details: %w", raw, err)
 	}
@@ -113,28 +112,6 @@ func resolveJsonnetLib(repoRoot, raw string) (string, error) {
 		return "", gitPathRefError("jsonnet lib", raw)
 	}
 	return resolved, nil
-}
-
-// resolveJsonnetLibSymlink is resolveSymbolicLinkRecursive (util/io/path/
-// resolved.go:22-47 at v3.6.1): when path itself is a symlink, it follows it
-// up to maxDepth levels, joining a relative target to the symlink's
-// directory. A path that is not a symlink, or does not exist, is returned
-// unchanged.
-func resolveJsonnetLibSymlink(path string, maxDepth int) (string, error) {
-	target, err := os.Readlink(path)
-	if err != nil {
-		if _, ok := errors.AsType[*os.PathError](err); ok {
-			return path, nil
-		}
-		return "", err
-	}
-	if maxDepth == 0 {
-		return "", errors.New("maximum nesting level reached")
-	}
-	if !strings.HasPrefix(target, string(os.PathSeparator)) {
-		target = filepath.Join(filepath.Dir(path), target)
-	}
-	return resolveJsonnetLibSymlink(target, maxDepth-1)
 }
 
 // boundedJsonnetImporter resolves import, importstr, and importbin the way

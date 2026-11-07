@@ -1,0 +1,13 @@
+# Read only for parity-helm-file-parameter-symlinks-override, whose spec sets
+# no file parameters. The file parameters here go through the same
+# resolution as those of an Application spec.
+helm:
+  fileParameters:
+    - name: chain
+      path: ../../file-parameter-links/chain.txt
+    - name: linkedDir
+      path: ../../file-parameter-links/linked-dir/inner.txt
+    - name: overridden
+      path: ../../file-parameter-links/dangling.txt
+    - name: overridden
+      path: ../../file-parameter-links/linked.txt

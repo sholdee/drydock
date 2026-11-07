@@ -628,6 +628,16 @@ func helmRefInputPaths(opts render.RenderOptions) []string {
 	return paths
 }
 
+// renderRefsForSource resolves the $ref sources that the value files and
+// file parameters paths read. A path is a $ref candidate when it starts
+// with "$", and its ref is its first segment, as in the repo-server's
+// getReferencedSourceName (reposerver/repository/repository.go:1620-1625 at
+// v3.6.1). For an Application with sources, a ref that names no source fails
+// with the repo-server's resolveReferencedSources text (repository.go:
+// 597-611). For an Application with one source, the repo-server skips that
+// check (585-589), so the path is a local path that the renderer
+// env-substitutes: "$$values/a.yaml" is "$values/a.yaml", and
+// "$ARGOCD_APP_NAME/values.yaml" names the Application's directory.
 func renderRefsForSource(plan PlanResult, sourcePlan SourcePlan, paths []string) (map[string]string, map[string]render.ResolvedSource, error) {
 	if len(paths) == 0 {
 		return map[string]string{}, map[string]render.ResolvedSource{}, nil
@@ -636,17 +646,17 @@ func renderRefsForSource(plan PlanResult, sourcePlan SourcePlan, paths []string)
 	refRoots := map[string]string{}
 	refSources := map[string]render.ResolvedSource{}
 	for _, filePath := range paths {
-		refKey, ok, err := helmValueFileRefKey(filePath)
-		if err != nil {
-			return nil, nil, err
-		}
+		refKey, ok := helmValueFileRefKey(filePath)
 		if !ok {
 			continue
 		}
 
 		refSource, exists := plan.Refs[refKey]
 		if !exists {
-			return nil, nil, fmt.Errorf("helm file reference %q references unknown ref %s", filePath, refKey)
+			if err := unknownHelmRefError(plan, refKey); err != nil {
+				return nil, nil, err
+			}
+			continue
 		}
 		if isSameSourceRevision(refSource.Source, sourcePlan.Source) {
 			refRoots[refKey] = "."
@@ -699,15 +709,36 @@ func normalizeTargetRevision(revision string) string {
 	return trimmed
 }
 
-func helmValueFileRefKey(valueFile string) (string, bool, error) {
+// helmValueFileRefKey returns the ref that a Helm value file or file
+// parameter path names: its first segment, when the path starts with "$",
+// as getReferencedSourceName does. A bare "$values" names "$values".
+func helmValueFileRefKey(valueFile string) (string, bool) {
 	if !strings.HasPrefix(valueFile, "$") {
-		return "", false, nil
+		return "", false
 	}
-	ref, refPath, ok := strings.Cut(strings.TrimPrefix(valueFile, "$"), "/")
-	if !ok || ref == "" || refPath == "" {
-		return "", false, fmt.Errorf("helm value file %q must use $ref/path syntax", valueFile)
+	ref, _, _ := strings.Cut(valueFile, "/")
+	return ref, true
+}
+
+// unknownHelmRefError is the error for a $ref candidate whose ref names no
+// source. An Application with sources fails as in the repo-server's
+// resolveReferencedSources (reposerver/repository/repository.go:597-611 at
+// v3.6.1). The repo-server lists the available refs in Go map order;
+// drydock sorts them. An Application with one source has no error: the
+// path is a local path.
+func unknownHelmRefError(plan PlanResult, refKey string) error {
+	if len(plan.Application.Spec.Sources) == 0 {
+		return nil
 	}
-	return "$" + ref, true, nil
+	if len(plan.Refs) == 0 {
+		return fmt.Errorf("source referenced %q, but no source has a 'ref' field defined", refKey)
+	}
+	keys := make([]string, 0, len(plan.Refs))
+	for key := range plan.Refs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return fmt.Errorf("source referenced %q, which is not one of the available sources (%s)", refKey, strings.Join(keys, ", "))
 }
 
 func sourceDiagnostics(application argoappv1.Application, sourcePlan SourcePlan, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {

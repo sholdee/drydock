@@ -477,6 +477,14 @@ func TestCommittedExpectedFileMatchesFixtures(t *testing.T) {
 				t.Fatalf("Application for %s does not contain %q", tc.Name, want)
 			}
 		}
+		if tc.SourceType() == sourceHelmFileParameters {
+			// The file is a file parameter path or the file it resolves
+			// to, which can be missing on purpose.
+			if !strings.Contains(string(app), "fileParameters:\n") {
+				t.Fatalf("Application for %s sets no helm.fileParameters", tc.Name)
+			}
+			continue
+		}
 		failing, err := os.ReadFile(filepath.Join(fixtureRepo, "workloads", "directory-decode", caseDir, tc.File))
 		if err != nil {
 			t.Fatalf("failing file for %s: %v", tc.Name, err)

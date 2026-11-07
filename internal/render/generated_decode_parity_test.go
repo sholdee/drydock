@@ -446,6 +446,11 @@ func renderGeneratedParityCase(t *testing.T, tc parityDecodeCase) (drydockErr, u
 	case "helm":
 		_, _, drydockErr = (HelmRenderer{}).Render(context.Background(), source, opts)
 		_, upstreamErr = upstreamHelmOutcomeFor(t, sourceDir, false, tc.Name, appName, namespace)
+	case "helm-file-parameters":
+		parameters := readParityFileParameters(t, filepath.Join(repoRoot, "directory-decode-applications", strings.TrimPrefix(tc.Name, "parity-decode-")+".yaml"))
+		opts.HelmFileParameters = parameters
+		_, _, drydockErr = (HelmRenderer{}).Render(context.Background(), source, opts)
+		_, upstreamErr = upstreamHelmFileParameterValues(sourceDir, repoRoot, nil, nil, parameters)
 	case "kustomize":
 		_, _, drydockErr = (KustomizeRenderer{}).Render(context.Background(), source, opts)
 		resMap, err := krusty.MakeKustomizer(krusty.MakeDefaultOptions()).Run(filesys.MakeFsOnDisk(), sourceDir)
@@ -470,6 +475,24 @@ func renderGeneratedParityCase(t *testing.T, tc parityDecodeCase) (drydockErr, u
 		t.Fatalf("unknown source %q", tc.Source)
 	}
 	return drydockErr, upstreamErr
+}
+
+// readParityFileParameters returns the helm.fileParameters of the single
+// source of the Application in the file at path.
+func readParityFileParameters(t *testing.T, path string) []v1alpha1.HelmFileParameter {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var application v1alpha1.Application
+	if err := yaml.Unmarshal(data, &application); err != nil {
+		t.Fatalf("parse Application %s: %v", path, err)
+	}
+	if application.Spec.Source == nil || application.Spec.Source.Helm == nil || len(application.Spec.Source.Helm.FileParameters) == 0 {
+		t.Fatalf("Application %s sets no helm.fileParameters", path)
+	}
+	return application.Spec.Source.Helm.FileParameters
 }
 
 // BenchmarkDecodeGeneratedOutput reads a 7 MB stream of large CRDs, the

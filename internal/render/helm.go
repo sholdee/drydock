@@ -43,6 +43,25 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, err
 	}
 
+	releaseName := opts.ReleaseName
+	if releaseName == "" {
+		releaseName = opts.AppName
+	}
+
+	capabilities, err := helmCapabilities(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	// The repo-server resolves the value file and file parameter paths
+	// before it runs helm, and helm reads the values before it loads the
+	// chart (helmTemplate, reposerver/repository/repository.go:1292-1410 at
+	// v3.6.1, and helm pkg/cmd/install.go runInstall), so path and value
+	// errors come before chart errors.
+	inputValues, avpDiags, err := assembleHelmInputValues(ctx, source, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	chart, err := opts.HelmChartLoadCache.Load(chartPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load helm chart %s: %w", manifestPath, err)
@@ -58,18 +77,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	if err != nil {
 		return nil, nil, err
 	}
-
-	releaseName := opts.ReleaseName
-	if releaseName == "" {
-		releaseName = opts.AppName
-	}
-
-	capabilities, err := helmCapabilities(opts)
-	if err != nil {
-		return nil, nil, err
-	}
-	inputValues, avpDiags, err := assembleHelmInputValues(ctx, source, opts, chart, manifestPath)
-	if err != nil {
+	if err := processHelmDependencies(chart, inputValues, manifestPath); err != nil {
 		return nil, nil, err
 	}
 	values, err := helmTemplateValues(chart, inputValues, capabilities, releaseName, opts, manifestPath)
@@ -100,31 +108,38 @@ func helmCapabilities(opts RenderOptions) (*common.Capabilities, error) {
 	return capabilities, nil
 }
 
-func assembleHelmInputValues(ctx context.Context, source ResolvedSource, opts RenderOptions, chart helmchart.Charter, manifestPath string) (map[string]any, []diagnostic.Diagnostic, error) {
+// assembleHelmInputValues resolves the value file and file parameter
+// paths, in that order, and then reads the value files and applies the
+// inline values and parameters, as the repo-server and helm do.
+func assembleHelmInputValues(ctx context.Context, source ResolvedSource, opts RenderOptions) (map[string]any, []diagnostic.Diagnostic, error) {
 	inlineValues := cloneValues(opts.ValuesObject)
 	loadValueFiles, err := shouldLoadHelmValueFiles(opts.ValuesMergeMode, inlineValues)
 	if err != nil {
 		return nil, nil, err
 	}
-	fileValues := map[string]any{}
+	loader := newHelmValueFileLoader(ctx, source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, opts.IgnoreMissingValueFiles, opts, parseHelmValueFile)
+	var plans []plannedHelmValueFile
 	if loadValueFiles {
-		fileValues, err = loadHelmValueFiles(ctx, source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, opts.ValueFiles, opts.IgnoreMissingValueFiles, opts)
-		if err != nil {
+		if plans, err = loader.planAll(opts.ValueFiles); err != nil {
 			return nil, nil, err
 		}
+	}
+	targets, err := resolveHelmFileParameters(source, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	fileValues, err := loader.readAll(plans)
+	if err != nil {
+		return nil, nil, err
 	}
 	inputValues, err := mergeHelmValues(fileValues, inlineValues, opts.ValuesMergeMode)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := applyHelmParameters(ctx, source, opts, inputValues); err != nil {
+	if err := applyHelmParameters(ctx, opts, targets, inputValues); err != nil {
 		return nil, nil, err
 	}
-	avpDiags := applyAVPCompatToHelmValues(inputValues, opts)
-	if err := processHelmDependencies(chart, inputValues, manifestPath); err != nil {
-		return nil, nil, err
-	}
-	return inputValues, avpDiags, nil
+	return inputValues, applyAVPCompatToHelmValues(inputValues, opts), nil
 }
 
 func helmTemplateValues(chart helmchart.Charter, inputValues map[string]any, capabilities *common.Capabilities, releaseName string, opts RenderOptions, manifestPath string) (map[string]any, error) {

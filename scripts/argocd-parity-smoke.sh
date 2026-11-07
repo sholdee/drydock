@@ -40,7 +40,8 @@ PROJECT_POLICY_IN_CLUSTER_SECRET_DIR="${REPO_ROOT}/testdata/argocd-project-polic
 PROJECT_POLICY_IN_CLUSTER_SECRET_NAME="project-policy-in-cluster-secret"
 PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR="${REPO_ROOT}/testdata/argocd-project-policy/in-cluster-disabled"
 # Decode failures for directory sources and for Helm, Kustomize, and plugin
-# output. Each Application in this namespace must fail on both sides: Argo
+# output, and Helm file parameters that fail to resolve or to read. Each
+# Application in this namespace must fail on both sides: Argo
 # CD with a ComparisonError condition and drydock with a render failure,
 # both naming the same file, or the object in it when the Argo CD message
 # names no file. They live outside the argocd namespace
@@ -245,6 +246,8 @@ APPLICATIONS=(
   parity-helm-options-edge
   parity-source-overrides
   parity-ref-fileparam
+  parity-helm-file-parameter-symlinks
+  parity-helm-file-parameter-symlinks-override
   parity-helm-params-edge
   parity-directory-flat
   parity-directory-forced

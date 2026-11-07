@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	jsonpatch "github.com/evanphx/json-patch"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/render"
 	"sigs.k8s.io/yaml"
 )
@@ -67,7 +69,7 @@ func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.
 		return sourcePlan, err
 	}
 	sourceDir := filepath.Join(sourceRoot, sourcePath)
-	merged, err := mergeArgocdSourceOverrides(sourcePlan.Source, sourceDir, p.overrideInstanceName(application))
+	merged, err := mergeArgocdSourceOverrides(sourcePlan.Source, sourceRoot, sourceDir, p.overrideInstanceName(application))
 	if err != nil {
 		return sourcePlan, err
 	}
@@ -85,7 +87,14 @@ func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.
 	return sourcePlan, nil
 }
 
-func mergeArgocdSourceOverrides(source argoappv1.ApplicationSource, sourceDir, appName string) (argoappv1.ApplicationSource, error) {
+// mergeArgocdSourceOverrides merges the .argocd-source.yaml and
+// .argocd-source-<app>.yaml files in sourceDir into source, as the Argo CD
+// v3.6.1 repo-server's mergeSourceParameters does
+// (reposerver/repository/repository.go:1903-1955). A missing file, a
+// dangling symlink, and a directory are skipped there, and so they are here.
+// drydock reads an override file only when it is a regular file whose real
+// path is under root and outside .git (readArgocdSourceOverride).
+func mergeArgocdSourceOverrides(source argoappv1.ApplicationSource, root, sourceDir, appName string) (argoappv1.ApplicationSource, error) {
 	merged := *source.DeepCopy()
 	overrides := []string{filepath.Join(sourceDir, repoSourceFile)}
 	if strings.TrimSpace(appName) != "" {
@@ -93,21 +102,15 @@ func mergeArgocdSourceOverrides(source argoappv1.ApplicationSource, sourceDir, a
 	}
 
 	for _, filename := range overrides {
-		info, err := os.Stat(filename)
-		switch {
-		case os.IsNotExist(err):
-			continue
-		case err != nil:
+		patch, ok, err := readArgocdSourceOverride(root, filename)
+		if err != nil {
 			return source, err
-		case info.IsDir():
+		}
+		if !ok {
 			continue
 		}
 
 		data, err := json.Marshal(merged)
-		if err != nil {
-			return source, fmt.Errorf("%s: %w", filename, err)
-		}
-		patch, err := os.ReadFile(filename)
 		if err != nil {
 			return source, fmt.Errorf("%s: %w", filename, err)
 		}
@@ -143,4 +146,79 @@ func (p localProvider) overrideInstanceName(application argoappv1.Application) s
 		controllerNamespace = defaultArgoCDControllerNamespace
 	}
 	return application.InstanceName(controllerNamespace)
+}
+
+// readArgocdSourceOverride reads one override file. It reports false for a
+// file the repo-server skips: a missing file, a dangling symlink, or a path
+// that is a directory, also through a symlink, wherever it points
+// (mergeSourceParameters stats it, reposerver/repository/repository.go:
+// 1913-1922 at v3.6.1). drydock reads any other file only when its real path
+// is under root and outside .git, also through a symlink or a symlinked
+// directory, and only when it is a regular file, so a named pipe or a device
+// cannot block or flood the render. The repo-server would read such a file,
+// but its out-of-bounds symlink check fails a repository with a symlink that
+// leaves it unless reposerver.allow.oob.symlinks is true.
+func readArgocdSourceOverride(root, filename string) ([]byte, bool, error) {
+	realPath, info, ok, err := statArgocdSourceOverride(filename)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, false, err
+	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: %w", filename, err)
+	}
+	rel, err := filepath.Rel(realRoot, realPath)
+	if err != nil || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) {
+		return nil, false, fmt.Errorf("%s: override file resolves to a path outside the repository, which drydock never reads", filename)
+	}
+	if pathsafety.RelEntersGit(rel) {
+		return nil, false, fmt.Errorf("%s: override file resolves into a .git directory, which drydock never reads", filename)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("%s: override file is not a regular file", filename)
+	}
+	data, err := pathsafety.ReadRegularFile(realPath)
+	if errors.Is(err, pathsafety.ErrNotRegular) {
+		return nil, false, fmt.Errorf("%s: override file is not a regular file", filename)
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: %w", filename, err)
+	}
+	return data, true, nil
+}
+
+// statArgocdSourceOverride returns the absolute real path of an override
+// file and its stat. It reports false for a file that the repo-server
+// skips: a missing file, a dangling symlink, or a directory. A stat reads
+// no contents, so it runs before any bounds check.
+func statArgocdSourceOverride(filename string) (string, os.FileInfo, bool, error) {
+	absFile, err := filepath.Abs(filename)
+	if err != nil {
+		return "", nil, false, err
+	}
+	if _, err := os.Lstat(absFile); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil, false, nil
+		}
+		return "", nil, false, err
+	}
+	realPath, err := filepath.EvalSymlinks(absFile)
+	if os.IsNotExist(err) {
+		return "", nil, false, nil
+	}
+	if err != nil {
+		return "", nil, false, fmt.Errorf("%s: %w", filename, err)
+	}
+	info, err := os.Stat(realPath)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("%s: %w", filename, err)
+	}
+	if info.IsDir() {
+		return "", nil, false, nil
+	}
+	return realPath, info, true, nil
 }

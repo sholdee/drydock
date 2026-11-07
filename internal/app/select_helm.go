@@ -2,15 +2,21 @@ package app
 
 import (
 	"path"
+	"path/filepath"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/render"
 )
 
 // helmLocalSelectionPaths returns the repository paths that a Helm source
-// rendering from the local tree reads through helm.valueFiles and
+// rendering from the local tree at root reads through helm.valueFiles and
 // helm.fileParameters. $ref and env-templated entries are not local paths.
-func helmLocalSelectionPaths(source argoappv1.ApplicationSource) []string {
+// A file parameter path that starts with "/" is relative to the repository
+// root, as in Argo CD. A file parameter also owns the symlinks that its
+// path passes through and the paths they end at
+// (helmFileParameterSymlinkSelectionPaths).
+func helmLocalSelectionPaths(root string, source argoappv1.ApplicationSource) []string {
 	if source.Helm == nil {
 		return nil
 	}
@@ -21,7 +27,52 @@ func helmLocalSelectionPaths(source argoappv1.ApplicationSource) []string {
 		}
 	}
 	for _, parameter := range source.Helm.FileParameters {
-		if selectionPath, ok := helmLocalInputSelectionPath(source.Path, parameter.Path, false); ok {
+		sourcePath, file := source.Path, parameter.Path
+		if strings.HasPrefix(file, "/") {
+			sourcePath, file = "", strings.TrimLeft(file, "/")
+		}
+		if selectionPath, ok := helmLocalInputSelectionPath(sourcePath, file, false); ok {
+			paths = append(paths, selectionPath)
+		}
+		paths = append(paths, helmFileParameterSymlinkSelectionPaths(root, source.Path, parameter.Name, parameter.Path)...)
+	}
+	return paths
+}
+
+// helmFileParameterSymlinkSelectionPaths returns the repository paths that
+// decide what the local file parameter name with path file reads when that
+// is not the path as written: each symlink on the way and the paths they
+// end at, and the file helm reads after it drops backslashes
+// (render.HelmFileParameterInputPaths). appRel is the directory that a
+// relative file is relative to. It owns nothing more for a plain path, an
+// env-templated path, a URL, or a path that does not resolve. Paths outside
+// root are left out: drydock never reads them.
+func helmFileParameterSymlinkSelectionPaths(root, appRel, name, file string) []string {
+	if strings.TrimSpace(file) == "" || strings.Contains(file, "$") || strings.Contains(file, "://") {
+		return nil
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil
+	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return nil
+	}
+	inputs, err := render.HelmFileParameterInputPaths(name, filepath.Join(absRoot, filepath.FromSlash(appRel)), absRoot, filepath.FromSlash(file))
+	if err != nil || (len(inputs.Symlinks) == 0 && inputs.Written == "") {
+		return nil
+	}
+	var paths []string
+	for _, input := range append(append([]string(nil), inputs.Symlinks...), inputs.Read, inputs.Written) {
+		if input == "" {
+			continue
+		}
+		rel, err := filepath.Rel(realRoot, input)
+		if err != nil {
+			continue
+		}
+		if selectionPath, ok := cleanSelectionRelativePath(filepath.ToSlash(rel)); ok {
 			paths = append(paths, selectionPath)
 		}
 	}
@@ -42,7 +93,13 @@ func helmRefSelectionPaths(tree *selectionTree, application argoappv1.Applicatio
 	}
 	var paths []string
 	for _, sourcePlan := range plan.Sources {
-		if sourcePlan.RefOnly || sourcePlan.Source.Helm == nil {
+		if sourcePlan.RefOnly {
+			continue
+		}
+		if pathSourceRendersFromRoot(tree, sourcePlan.Source) {
+			sourcePlan.Source = selectionSourceWithOverrides(tree.root, application, sourcePlan.Source)
+		}
+		if sourcePlan.Source.Helm == nil {
 			continue
 		}
 		helm := sourcePlan.Source.Helm
@@ -54,6 +111,8 @@ func helmRefSelectionPaths(tree *selectionTree, application argoappv1.Applicatio
 		for _, parameter := range helm.FileParameters {
 			if selectionPath, ok := helmRefInputSelectionPath(tree, plan, sourcePlan, parameter.Path, false); ok {
 				paths = append(paths, selectionPath)
+				_, refPath, _ := splitHelmValueFileRef(parameter.Path)
+				paths = append(paths, helmFileParameterSymlinkSelectionPaths(tree.root, "", parameter.Name, "/"+refPath)...)
 			}
 		}
 	}
@@ -120,4 +179,28 @@ func globStaticPrefix(pattern string) string {
 		}
 	}
 	return pattern
+}
+
+// selectionSourceWithOverrides returns source with the .argocd-source.yaml
+// and .argocd-source-<app>.yaml files of its path under root merged in, as
+// PrepareSource merges them before the render and the persistent cache key
+// reads the merged source. So an Application owns the value files, file
+// parameters, and other inputs that only an override file names. drydock
+// uses the default Argo CD controller namespace for the instance name, as
+// the render does. When the files cannot be read or merged, it returns
+// source: the render then fails, and the Application still owns its path,
+// which holds the override files.
+func selectionSourceWithOverrides(root string, application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.ApplicationSource {
+	if strings.TrimSpace(source.Path) == "" {
+		return source
+	}
+	sourcePath, err := cleanLocalSourcePath(source.Path)
+	if err != nil {
+		return source
+	}
+	merged, err := mergeArgocdSourceOverrides(source, root, filepath.Join(root, sourcePath), application.InstanceName(defaultArgoCDControllerNamespace))
+	if err != nil {
+		return source
+	}
+	return merged
 }

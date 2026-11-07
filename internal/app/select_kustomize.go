@@ -36,7 +36,9 @@ type selectionSide struct {
 // path and Jsonnet libraries reach, and the files that its Jsonnet files
 // import, even outside spec.source.path. Every
 // source also owns the $ref value files and file parameters whose ref root
-// is this tree (selfRepo identifies the repository under diff).
+// is this tree (selfRepo identifies the repository under diff). Each
+// source is read with its .argocd-source*.yaml files merged in, as the
+// render reads it (selectionSourceWithOverrides).
 // It exists for changed-only ownership only: ApplicationSelectionInput.Paths
 // from discovery also key the persistent render cache, so the listed inputs
 // are never mutated. applicationSourcePaths feeds the same key as required
@@ -113,15 +115,18 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		// Not behind the locality gate below: a $ref consumer is usually a
 		// chart-repository source.
 		out[i].Paths = append(out[i].Paths, helmRefSelectionPaths(tree, input.Application)...)
-		for _, source := range applicationSources(input.Application) {
-			if !pathSourceRendersFromRoot(tree, source) {
+		for _, specSource := range applicationSources(input.Application) {
+			if !pathSourceRendersFromRoot(tree, specSource) {
 				continue
 			}
-			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(source)...)
+			// The render reads the source after its override files.
+			source := selectionSourceWithOverrides(root, input.Application, specSource)
+			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(root, source)...)
 			// A directory source reads the files that its symlinks reach
-			// and its Jsonnet files import, also outside its path. The Helm
-			// and Kustomize renderers reject symlinks and evaluate no
-			// Jsonnet.
+			// and its Jsonnet files import, also outside its path. The
+			// Kustomize renderer and Helm charts and value files reject
+			// symlinks, and neither evaluates Jsonnet. Helm file parameters
+			// own their symlinks above.
 			if rendersAsDirectory(root, source) {
 				selection := symlinkInputs(source)
 				out[i].Paths = append(out[i].Paths, selection.paths...)
