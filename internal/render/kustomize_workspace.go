@@ -17,9 +17,13 @@ type kustomizeWorkspace struct {
 	tempRepoRoot     string
 	sourceRoot       string
 	opts             RenderOptions
-	visited          map[string]struct{}
-	nextGraphIndex   int
-	nextPathIndex    int
+	// buildSettings are the flags of the build. All the helmCharts entries
+	// of the build share the slice of their --helm-api-versions values
+	// (configureKustomizeHelmCapabilities).
+	buildSettings  kustomizeBuildSettings
+	visited        map[string]struct{}
+	nextGraphIndex int
+	nextPathIndex  int
 	// ksopsSubstitutedFiles counts sops files substituted by ksops-compat
 	// emulation. Per-write counting equals unique-file counting: the same
 	// sops file referenced by two generators (or twice in one files: list)
@@ -72,6 +76,7 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 		tempRepoRoot:     tempRepoRoot,
 		sourceRoot:       filepath.Clean(tempRoot),
 		opts:             opts,
+		buildSettings:    buildSettings,
 		visited:          make(map[string]struct{}),
 	}
 	if err := workspace.prepareKustomizationDir(ctx, tempRoot, tempRepoRoot, ""); err != nil {
@@ -160,7 +165,7 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		if err != nil {
 			return err
 		}
-		generatedResources, err := renderKustomizeHelmCharts(ctx, w.tempRepoRoot, dir, nodeRelDir, childInheritedHelmNamespace, kustomizationChartHome(kustomization), graphIndex, kustomization.HelmCharts, w.opts)
+		generatedResources, err := renderKustomizeHelmCharts(ctx, w.tempRepoRoot, dir, nodeRelDir, childInheritedHelmNamespace, kustomizationChartHome(kustomization), graphIndex, kustomization.HelmCharts, w.buildSettings, w.opts)
 		if err != nil {
 			return err
 		}

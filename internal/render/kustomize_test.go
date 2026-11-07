@@ -10,7 +10,6 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"sigs.k8s.io/kustomize/api/types"
 )
 
 func TestKustomizeRendererRendersResources(t *testing.T) {
@@ -435,15 +434,5 @@ func TestHasKustomizeSourceMutationsIgnoresMetadataOnlyOptions(t *testing.T) {
 	}
 	if !hasKustomizeSourceMutations(RenderOptions{Kustomize: &argoappv1.ApplicationSourceKustomize{NamePrefix: "demo-"}}) {
 		t.Fatal("namePrefix source kustomize option did not require mutation")
-	}
-}
-
-func TestKustomizeHelmKubeVersionFallsBackToSourceOption(t *testing.T) {
-	opts := RenderOptions{KubeVersion: "1.30.1"}
-	if got := kustomizeHelmKubeVersion(types.HelmChart{}, opts); got != "1.30.1" {
-		t.Fatalf("kustomizeHelmKubeVersion() = %q, want source kube version", got)
-	}
-	if got := kustomizeHelmKubeVersion(types.HelmChart{KubeVersion: "1.29.0"}, opts); got != "1.29.0" {
-		t.Fatalf("kustomizeHelmKubeVersion() = %q, want helm chart kube version", got)
 	}
 }

@@ -325,6 +325,7 @@ func TestKustomizeHelmChartRenderOptionsForwardAcquisitionCollector(t *testing.T
 	opts, err := renderOptionsForKustomizeHelmChart(
 		context.Background(),
 		types.HelmChart{Name: "demo", Version: "1.2.3"},
+		kustomizeHelmCapabilities{},
 		t.TempDir(),
 		t.TempDir(),
 		"charts/demo",

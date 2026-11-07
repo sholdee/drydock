@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"maps"
@@ -107,8 +108,31 @@ func helmCapabilities(opts RenderOptions) (*common.Capabilities, error) {
 		}
 		capabilities.KubeVersion = *kubeVersion
 	}
-	capabilities.APIVersions = append(capabilities.APIVersions, opts.APIVersions...)
+	for _, value := range opts.APIVersions {
+		apiVersions, err := splitHelmAPIVersionsFlag(value)
+		if err != nil {
+			return nil, err
+		}
+		capabilities.APIVersions = append(capabilities.APIVersions, apiVersions...)
+	}
 	return capabilities, nil
+}
+
+// splitHelmAPIVersionsFlag reads one value of the helm template flag
+// --api-versions, which Argo CD and kustomize pass once per API version.
+// It is a pflag string slice flag (pkg/cmd/template.go:219 at helm v4.3.1),
+// so helm reads the value as one line of CSV: commas split it, and double
+// quotes keep a comma in an API version (readAsCSV in
+// github.com/spf13/pflag v1.0.10).
+func splitHelmAPIVersionsFlag(value string) ([]string, error) {
+	if value == "" {
+		return nil, nil
+	}
+	apiVersions, err := csv.NewReader(strings.NewReader(value)).Read()
+	if err != nil {
+		return nil, fmt.Errorf("invalid argument %q for \"-a, --api-versions\" flag: %w", value, err)
+	}
+	return apiVersions, nil
 }
 
 // assembleHelmInputValues resolves the value file and file parameter

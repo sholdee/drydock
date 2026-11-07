@@ -44,6 +44,7 @@ func (p localProvider) renderNativeKustomizePluginSourceWithConfig(ctx context.C
 	nativeOptions := opts
 	nativeOptions.Plugin = nil
 	nativeOptions.BuildOptions = append([]string(nil), buildOptions...)
+	nativeOptions.KustomizeCaller = render.KustomizeCallerCommand
 	manifests, diags, err := (render.KustomizeRenderer{}).Render(ctx, source, nativeOptions)
 	return manifests, diags, err
 }

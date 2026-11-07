@@ -50,12 +50,16 @@ type RenderOptions struct {
 	KubeVersion         string
 	APIVersions         []string
 	BuildOptions        []string
-	Kustomize           *argoappv1.ApplicationSourceKustomize
-	Jsonnet             argoappv1.ApplicationSourceJsonnet
-	ArgoEnv             argoappv1.Env
-	RefRoots            map[string]string
-	RefSources          map[string]ResolvedSource
-	ReleaseName         string
+	// KustomizeCaller says who runs kustomize build, so which flags it
+	// gets (see kustomizeBuildArgs). The zero value is the Argo CD
+	// repo-server without a found argocd-cm.
+	KustomizeCaller KustomizeBuildCaller
+	Kustomize       *argoappv1.ApplicationSourceKustomize
+	Jsonnet         argoappv1.ApplicationSourceJsonnet
+	ArgoEnv         argoappv1.Env
+	RefRoots        map[string]string
+	RefSources      map[string]ResolvedSource
+	ReleaseName     string
 	// HelmSpecError and KustomizeSpecError hold an error in the helm or
 	// kustomize block of the source, such as a kubeVersion that does not
 	// parse. Only the renderer of that tool returns it, so a source that

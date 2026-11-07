@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1026,18 +1027,20 @@ func TestParseKustomizeBuildOptionsSupportsHelmAPIVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseKustomizeBuildOptions() error = %v", err)
 	}
-	want := []string{"example.io/v1/Foo", "example.io/v1/Bar", "other.io/v1/Baz"}
-	if strings.Join(settings.APIVersions, ",") != strings.Join(want, ",") {
-		t.Fatalf("APIVersions = %#v, want %#v", settings.APIVersions, want)
+	// --helm-api-versions is a string array flag: kustomize keeps each
+	// value whole and helm template splits it at commas.
+	want := []string{"example.io/v1/Foo,example.io/v1/Bar", "other.io/v1/Baz"}
+	if !reflect.DeepEqual(settings.HelmAPIVersions, want) {
+		t.Fatalf("HelmAPIVersions = %#v, want %#v", settings.HelmAPIVersions, want)
 	}
 }
 
-func TestParseKustomizeBuildOptionsRejectsUnsupportedOptions(t *testing.T) {
-	_, err := parseKustomizeBuildOptions([]string{"--network"})
+func TestParseKustomizeBuildOptionsRejectsUnknownOptions(t *testing.T) {
+	_, err := parseKustomizeBuildOptions([]string{"--no-such-flag"})
 	if err == nil {
-		t.Fatal("parseKustomizeBuildOptions() error = nil, want unsupported option error")
+		t.Fatal("parseKustomizeBuildOptions() error = nil, want unknown flag error")
 	}
-	if !strings.Contains(err.Error(), "unsupported kustomize build option") {
-		t.Fatalf("parseKustomizeBuildOptions() error = %v, want unsupported option message", err)
+	if !strings.Contains(err.Error(), "unknown flag: --no-such-flag") {
+		t.Fatalf("parseKustomizeBuildOptions() error = %v, want kustomize's unknown flag message", err)
 	}
 }
