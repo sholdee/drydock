@@ -12,6 +12,7 @@ import (
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 // changedOnlyAppRevisionCode identifies a changed-only selection that the
@@ -129,13 +130,17 @@ func applicationReadsAppRevision(root, controllerNamespace string, application a
 // pluginRunsWithBuildEnv reports whether the render of source, a config
 // management plugin source of application on the side that request
 // renders, runs a command that gets the build environment. It asks the
-// same questions as renderPluginSource: an injected PluginRenderer renders
-// every plugin source, and otherwise only a trusted exec or container
-// policy plugin with --enable-plugins runs a command. A native policy
-// engine, the built-in argocd-vault-plugin compatibility and the native
-// Kustomize CMP render in process without the build environment, and a
-// plugin that drydock cannot render fails with plugin.unsupported, so none
-// of them counts.
+// same questions as renderPluginSource, with the same source root: an
+// injected PluginRenderer renders every plugin source. Otherwise only a
+// trusted exec or container policy plugin with --enable-plugins runs a
+// command, and only when every check before the command passes
+// (prepareCommandPluginRender, which the renderer calls too). A native
+// policy engine, the built-in argocd-vault-plugin compatibility and the
+// native Kustomize CMP render in process without the build environment, and
+// a plugin that drydock cannot render fails with plugin.unsupported, so
+// none of them counts. A source that does not render from a local tree
+// (the side root or a --repo-map directory) has the same revision on both
+// sides, so it does not count either.
 func pluginRunsWithBuildEnv(request BuildRequest, injectedPlugins bool, application argoappv1.Application, source argoappv1.ApplicationSource) bool {
 	if source.Plugin == nil {
 		return false
@@ -143,28 +148,51 @@ func pluginRunsWithBuildEnv(request BuildRequest, injectedPlugins bool, applicat
 	if injectedPlugins {
 		return true
 	}
+	provider := localProvider{
+		repoRoot:                request.Path,
+		sourceResolver:          sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
+		pluginPolicy:            request.pluginPolicy,
+		pluginPolicyExecTrusted: request.pluginPolicyExecTrusted,
+	}
+	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
+		provider.selfRepoURLKeys = matcher.urlKeys
+		provider.selfRepoRevisions = matcher.revisions
+	}
+	resolved := render.ResolvedSource{
+		Path:           source.Path,
+		Chart:          source.Chart,
+		RepoURL:        source.RepoURL,
+		TargetRevision: source.TargetRevision,
+	}
+	// The render resolves the root as resolveSourceRootIdentity does:
+	// a --repo-map target first, then the side root.
+	if mapped, ok := provider.sourceResolver.MappedPath(source.RepoURL); ok {
+		abs, err := filepath.Abs(mapped)
+		if err != nil {
+			return false
+		}
+		resolved.RepoRoot = abs
+	} else if provider.sourceResolvesToRepoRoot(resolved) {
+		resolved.RepoRoot = request.Path
+	} else {
+		return false
+	}
 	opts, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		return false
 	}
 	opts.EnablePlugins = request.EnablePlugins
-	provider := localProvider{
-		repoRoot:                request.Path,
-		pluginPolicy:            request.pluginPolicy,
-		pluginPolicyExecTrusted: request.pluginPolicyExecTrusted,
-	}
-	plan, _, handled, err := provider.planPolicyPluginRender(render.ResolvedSource{
-		RepoRoot: request.Path,
-		Path:     source.Path,
-		RepoURL:  source.RepoURL,
-		Chart:    source.Chart,
-	}, opts)
+	plan, _, handled, err := provider.planPolicyPluginRender(resolved, opts)
 	if !handled || err != nil {
 		return false
 	}
 	switch plan.plugin.Engine {
 	case pluginpolicy.EngineExec, pluginpolicy.EngineContainer:
-		return opts.EnablePlugins && provider.pluginPolicyExecTrusted
+		if !plan.opts.EnablePlugins || !provider.pluginPolicyExecTrusted {
+			return false
+		}
+		_, _, err := prepareCommandPluginRender(resolved, plan.opts, plan.name, plan.plugin)
+		return err == nil
 	case pluginpolicy.EngineAVPCompat, pluginpolicy.EngineNativeKustomize:
 		return false
 	default:

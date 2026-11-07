@@ -3,11 +3,15 @@ package app
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pluginexec"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 func appRevisionSelectionApp(name string, source argoappv1.ApplicationSource) argoappv1.Application {
@@ -50,18 +54,36 @@ func TestApplicationReadsAppRevisionCountsPluginSources(t *testing.T) {
 }
 
 // pluginRunsWithBuildEnv asks what renderPluginSource asks: only a trusted
-// exec or container policy plugin with --enable-plugins, or an injected
-// PluginRenderer, runs a command with the build environment.
+// exec or container policy plugin with --enable-plugins, whose checks before
+// the command pass, or an injected PluginRenderer, runs a command with the
+// build environment. Native engines and plugins that drydock cannot render
+// do not.
 func TestPluginRunsWithBuildEnvFollowsTheRenderer(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
-	policy, _ := testExecPluginPolicy(t, "exec-renderer", []string{"renderer"})
-	application := appRevisionSelectionApp("plugin", argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "manifests/plugin", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "exec-renderer"}})
-	unknown := appRevisionSelectionApp("unknown", argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "manifests/plugin", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "no-such-plugin"}})
-	trusted := BuildRequest{Path: root, EnablePlugins: true, pluginPolicy: policy, pluginPolicyExecTrusted: true}
-	disabled := trusted
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "match.txt"), "match")
+	pluginApp := func(name string, plugin argoappv1.ApplicationSourcePlugin) argoappv1.Application {
+		return appRevisionSelectionApp(name, argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "manifests/plugin", Plugin: &plugin})
+	}
+	request := func(policy pluginpolicy.Policy) BuildRequest {
+		return BuildRequest{Path: root, EnablePlugins: true, pluginPolicy: policy, pluginPolicyExecTrusted: true}
+	}
+	execPolicy, _ := testExecPluginPolicy(t, "exec-renderer", []string{"renderer"})
+	containerPolicy, _ := testContainerPluginPolicy(t, "container-renderer")
+	discoveryPolicy, _ := testExecPluginPolicyWithMatch(t, "exec-renderer", []string{"renderer"}, `    match:
+      discover:
+        fileName: match.txt
+`)
+	avpRoot := t.TempDir()
+	writePluginPolicy(t, avpRoot, "avp-renderer", "avp-compat")
+	avpPolicy, _ := readTestPluginPolicy(t, avpRoot)
+	kustomizeRoot := t.TempDir()
+	writeNativeKustomizePluginPolicySeed(t, kustomizeRoot, "kustomize-renderer", `"kustomize"`, `"build", "."`)
+	kustomizePolicy, _ := readTestPluginPolicy(t, kustomizeRoot)
+
+	disabled := request(execPolicy)
 	disabled.EnablePlugins = false
-	untrusted := trusted
+	untrusted := request(execPolicy)
 	untrusted.pluginPolicyExecTrusted = false
 	for _, tc := range []struct {
 		name        string
@@ -70,11 +92,16 @@ func TestPluginRunsWithBuildEnvFollowsTheRenderer(t *testing.T) {
 		injected    bool
 		want        bool
 	}{
-		{name: "trusted exec policy with --enable-plugins", request: trusted, application: application, want: true},
-		{name: "plugins not enabled", request: disabled, application: application, want: false},
-		{name: "untrusted policy", request: untrusted, application: application, want: false},
-		{name: "no policy for the plugin", request: trusted, application: unknown, want: false},
-		{name: "injected plugin renderer", request: disabled, application: unknown, injected: true, want: true},
+		{name: "trusted exec policy with --enable-plugins", request: request(execPolicy), application: pluginApp("exec", argoappv1.ApplicationSourcePlugin{Name: "exec-renderer"}), want: true},
+		{name: "trusted container policy with --enable-plugins", request: request(containerPolicy), application: pluginApp("container", argoappv1.ApplicationSourcePlugin{Name: "container-renderer"}), want: true},
+		{name: "unnamed plugin found by discovery", request: request(discoveryPolicy), application: pluginApp("unnamed", argoappv1.ApplicationSourcePlugin{}), want: true},
+		{name: "avp-compat policy runs no command", request: request(avpPolicy), application: pluginApp("avp", argoappv1.ApplicationSourcePlugin{Name: "avp-renderer"}), want: false},
+		{name: "native-kustomize policy runs no command", request: request(kustomizePolicy), application: pluginApp("kustomize", argoappv1.ApplicationSourcePlugin{Name: "kustomize-renderer"}), want: false},
+		{name: "plugin env not allowed by policy", request: request(execPolicy), application: pluginApp("env", argoappv1.ApplicationSourcePlugin{Name: "exec-renderer", Env: argoappv1.Env{{Name: "SECRET", Value: "x"}}}), want: false},
+		{name: "plugins not enabled", request: disabled, application: pluginApp("disabled", argoappv1.ApplicationSourcePlugin{Name: "exec-renderer"}), want: false},
+		{name: "untrusted policy", request: untrusted, application: pluginApp("untrusted", argoappv1.ApplicationSourcePlugin{Name: "exec-renderer"}), want: false},
+		{name: "no policy for the plugin", request: request(execPolicy), application: pluginApp("unknown", argoappv1.ApplicationSourcePlugin{Name: "no-such-plugin"}), want: false},
+		{name: "injected plugin renderer", request: disabled, application: pluginApp("injected", argoappv1.ApplicationSourcePlugin{Name: "no-such-plugin"}), injected: true, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := pluginRunsWithBuildEnv(tc.request, tc.injected, tc.application, *tc.application.Spec.Source); got != tc.want {
@@ -82,6 +109,71 @@ func TestPluginRunsWithBuildEnvFollowsTheRenderer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Discovery of an unnamed plugin runs against the root that the render
+// uses: a --repo-map directory, not the side root.
+func TestPluginRunsWithBuildEnvUsesTheRenderRoot(t *testing.T) {
+	const mappedURL = "https://git.example.test/mapped/repo.git"
+	root := t.TempDir()
+	mapped := t.TempDir()
+	writeTestFile(t, filepath.Join(mapped, "manifests", "plugin", "match.txt"), "match")
+	policy, _ := testExecPluginPolicyWithMatch(t, "exec-renderer", []string{"renderer"}, `    match:
+      discover:
+        fileName: match.txt
+`)
+	request := BuildRequest{Path: root, EnablePlugins: true, pluginPolicy: policy, pluginPolicyExecTrusted: true}
+	request.RepoMaps = []sourcepkg.RepoMap{{URL: mappedURL, Path: mapped}}
+	application := appRevisionSelectionApp("mapped", argoappv1.ApplicationSource{RepoURL: mappedURL, Path: "manifests/plugin", Plugin: &argoappv1.ApplicationSourcePlugin{}})
+	if !pluginRunsWithBuildEnv(request, false, application, *application.Spec.Source) {
+		t.Fatal("pluginRunsWithBuildEnv() = false, want discovery in the --repo-map directory to match")
+	}
+}
+
+// A trusted exec plugin Application is selected in a changed-only diff when
+// the two sides render different commits, and its command runs on both
+// sides with the commit of each side.
+func TestDiffChangedOnlySelectsTrustedExecPluginApp(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	writePersistentDirectoryCacheApp(t, root, "other")
+	base := gitCommitAll(t, root, "base")
+	writePersistentDirectorySource(t, root, "other", "changed")
+	head := gitCommitAll(t, root, "change other")
+	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", []string{"renderer"})
+	runner := &revisionEchoExecRunner{}
+
+	result, err := (Orchestrator{PluginExecRunner: runner}).DiffApps(context.Background(), DiffRequest{
+		RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base, ChangedOnly: true,
+		PluginOptions: PluginOptions{EnablePlugins: true, pluginPolicyLoaded: true, pluginPolicy: policy, pluginPolicyFingerprint: fingerprint, pluginPolicyExecTrusted: true},
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	var found bool
+	for _, item := range result.Results {
+		if item.Resource.Name == "plugin-revision" {
+			found = strings.Contains(item.Before, base) && strings.Contains(item.After, head)
+		}
+	}
+	if !found {
+		t.Fatalf("Results = %#v, want the plugin ConfigMap at %s and %s", result.Results, base, head)
+	}
+}
+
+// revisionEchoExecRunner renders a ConfigMap that holds the
+// ARGOCD_APP_REVISION the plugin got.
+type revisionEchoExecRunner struct{}
+
+func (revisionEchoExecRunner) Run(_ context.Context, request pluginexec.Request) (pluginexec.Result, error) {
+	var revision string
+	for _, entry := range request.ExtraEnv {
+		if value, ok := strings.CutPrefix(entry, "ARGOCD_APP_REVISION="); ok {
+			revision = value
+		}
+	}
+	return pluginexec.Result{Stdout: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plugin-revision\ndata:\n  revision: \"" + revision + "\"\n")}, nil
 }
 
 // A plugin Application that drydock cannot render, because no trusted policy

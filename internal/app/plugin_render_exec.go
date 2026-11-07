@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -13,38 +12,12 @@ import (
 )
 
 func (p localProvider) renderExecPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions, name string, policyPlugin pluginpolicy.Plugin) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
-	if source.Chart != "" {
-		message := fmt.Sprintf("config management plugin %s uses chart source, which is unsupported by exec policy", pluginDisplayName(name))
-		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
-	}
-	if source.Path == "" {
-		message := fmt.Sprintf("config management plugin %s must define path for exec policy", pluginDisplayName(name))
-		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
-	}
-	if policyPlugin.Exec == nil {
-		message := fmt.Sprintf("config management plugin %s has invalid exec policy", pluginDisplayName(name))
-		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
-	}
-	sourcePath, err := cleanLocalSourcePath(source.Path)
+	prepared, diags, err := prepareCommandPluginRender(source, opts, name, policyPlugin)
 	if err != nil {
-		return nil, nil, true, err
+		return nil, diags, true, err
 	}
-	if err := rejectLocalSymlinkComponents(source.RepoRoot, sourcePath); err != nil {
-		return nil, nil, true, err
-	}
-	sourceDir := filepath.Join(source.RepoRoot, sourcePath)
-	params, message := validateExecPluginParameters(name, policyPlugin, opts.Plugin, source.RepoRoot, sourcePath)
-	if message != "" {
-		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
-	}
-	applicationEnv, message := validateApplicationPluginEnv(name, policyPlugin.Exec.ApplicationEnv.Allow, opts.Plugin.Env, policyPluginBuildEnvEntries(opts))
-	if message != "" {
-		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
-	}
-	execConfig, sensitive, message := expandExecPluginCommandTemplates(*policyPlugin.Exec, params)
-	if message != "" {
-		return nil, unsupportedPluginDiagnostic(fmt.Sprintf("config management plugin %s %s", pluginDisplayName(name), message)), true, unsupportedPolicyPluginError(message)
-	}
+	sourcePath, sourceDir, params, applicationEnv := prepared.sourcePath, prepared.sourceDir, prepared.params, prepared.applicationEnv
+	execConfig, sensitive := prepared.lifecycle, prepared.sensitive
 	extraEnv := composePolicyPluginExtraEnv(opts, applicationEnv, params, p.offline)
 	result, err := p.pluginExecRunner.Run(ctx, pluginexec.Request{
 		SourceDir:       sourceDir,
