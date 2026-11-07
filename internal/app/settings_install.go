@@ -274,9 +274,9 @@ func settingsInstallRenderEnv(provider localProvider, application argoappv1.Appl
 }
 
 // settingsInstallSourceType returns the source type as Argo CD picks it: the
-// explicit type of the source when it sets one, else Kustomize for a
-// directory with a kustomization file, else Helm for a chart. A chart from a
-// chart repository is Helm. An empty result means a directory or a plugin.
+// explicit type of the source when it sets one, else the type that
+// discoverLocalSourceType finds in the directory. A chart from a chart
+// repository is Helm. An empty result means a directory or a plugin.
 func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, local bool) argoappv1.ApplicationSourceType {
 	if sourcePlan.ExplicitType != "" {
 		return sourcePlan.ExplicitType
@@ -288,15 +288,11 @@ func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, l
 	if !local {
 		return ""
 	}
-	dir := filepath.Join(root, filepath.FromSlash(sourcePath))
-	switch {
-	case hasKustomizationFile(dir):
-		return argoappv1.ApplicationSourceTypeKustomize
-	case sourceRootHasLocalChart(dir):
-		return argoappv1.ApplicationSourceTypeHelm
-	default:
+	sourceType, err := discoverLocalSourceType(filepath.Join(root, filepath.FromSlash(sourcePath)))
+	if err != nil {
 		return ""
 	}
+	return sourceType
 }
 
 func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) {

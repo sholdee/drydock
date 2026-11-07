@@ -150,9 +150,15 @@ func pathUnderRoot(pathValue, root string) bool {
 	return pathValue == root || strings.HasPrefix(pathValue, root+"/")
 }
 
+// sourceRootHasLocalChart reports a directory that holds a Chart.yaml or
+// that renders as a Helm chart when its source sets no explicit type
+// (discoverLocalSourceType).
 func sourceRootHasLocalChart(root string) bool {
-	exists, err := localPathExists(filepath.Join(root, "Chart.yaml"))
-	return err == nil && exists
+	if exists, err := localPathExists(filepath.Join(root, "Chart.yaml")); err == nil && exists {
+		return true
+	}
+	sourceType, err := discoverLocalSourceType(root)
+	return err == nil && sourceType == argoappv1.ApplicationSourceTypeHelm
 }
 
 func shouldSkipDiscoveryCandidateDir(name string) bool {
