@@ -168,7 +168,23 @@ type CommandParameterSetting struct {
 }
 
 type ArgoSettings struct {
-	KustomizeBuildOptions        []Value[string]                  `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
+	KustomizeBuildOptions []Value[string] `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
+	// ArgoCDConfigMapFound reports that drydock read an argocd-cm
+	// ConfigMap, or the configs.cm of an argo-cd Helm values file that
+	// creates one. Only then does KustomizeBuildOptions hold all the flags
+	// that the repo-server passes to kustomize build. Without it, drydock
+	// cannot tell them (see EffectiveKustomizeBuildOptions).
+	ArgoCDConfigMapFound bool `json:"argoCDConfigMapFound,omitempty" yaml:"argoCDConfigMapFound,omitempty"`
+	// KustomizeHelmAssumed makes kustomize builds assume --enable-helm
+	// even with a found argocd-cm. drydock sets it only for the renders
+	// that read the Argo CD settings an install creates
+	// (WithKustomizeHelmAssumed).
+	KustomizeHelmAssumed bool `json:"-" yaml:"-"`
+	// KustomizeVersions holds the argocd-cm keys kustomize.version.<name>
+	// and kustomize.path.<name> by name. Argo CD v3.6.1 registers a
+	// kustomize binary for each (GetKustomizeSettings,
+	// util/settings/settings.go:1346-1390).
+	KustomizeVersions            map[string]Value[string]         `json:"kustomizeVersions,omitempty" yaml:"kustomizeVersions,omitempty"`
 	HelmRepositories             map[string]RepositorySettings    `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
 	Clusters                     map[string]ClusterSettings       `json:"clusters,omitempty" yaml:"clusters,omitempty"`
 	HelmValuesFileSchemes        []Value[string]                  `json:"helmValuesFileSchemes,omitempty" yaml:"helmValuesFileSchemes,omitempty"`

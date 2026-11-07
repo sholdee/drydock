@@ -134,6 +134,8 @@ metadata:
   namespace: argocd
 data:
   application.instanceLabelKey: argocd.argoproj.io/instance
+  # kustomize builds the helmCharts of kprobe only with --enable-helm.
+  kustomize.buildOptions: --enable-helm
 ---
 apiVersion: v1
 kind: ServiceAccount

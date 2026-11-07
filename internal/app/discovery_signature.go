@@ -32,7 +32,10 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		}
 	}
 	input := struct {
-		KustomizeBuildOptions    []string                               `json:"kustomizeBuildOptions,omitempty"`
+		KustomizeBuildOptions []string `json:"kustomizeBuildOptions,omitempty"`
+		// KustomizeVersions decides whether a source that names a
+		// kustomize version fails, so it is a render input.
+		KustomizeVersions        []string                               `json:"kustomizeVersions,omitempty"`
 		HelmRepositories         map[string]renderSettingsRepository    `json:"helmRepositories,omitempty"`
 		HelmValuesFileSchemes    []string                               `json:"helmValuesFileSchemes,omitempty"`
 		HelmValuesFileSchemesSet bool                                   `json:"helmValuesFileSchemesSet,omitempty"`
@@ -61,7 +64,11 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		// an install keep their signature.
 		HelmNamespace string `json:"helmNamespace,omitempty"`
 	}{
-		KustomizeBuildOptions:             renderSettingsValues(settings.KustomizeBuildOptions),
+		// The words that reach kustomize build. Without a found argocd-cm
+		// they are "--enable-helm", which renders as a found argocd-cm
+		// with that value renders.
+		KustomizeBuildOptions:             settings.EffectiveKustomizeBuildOptions(),
+		KustomizeVersions:                 settings.KustomizeVersionNames(),
 		HelmRepositories:                  renderSettingsRepositories(settings.HelmRepositories),
 		HelmValuesFileSchemes:             renderSettingsValues(settings.HelmValuesFileSchemes),
 		HelmValuesFileSchemesSet:          settings.HelmValuesFileSchemesSet,

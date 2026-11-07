@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -141,7 +142,36 @@ func renderDiscoveryApplication(ctx context.Context, root string, request BuildR
 	if !applicationMayRenderDiscoveryObjects(root, request, discovered, appFile.Application) {
 		return discovery.Result{}, nil, nil
 	}
+	provider, renderSettings, err := assumeKustomizeHelmForSettingsInstall(ctx, request, provider, renderSettings, appFile.Application)
+	if err != nil {
+		return discovery.Result{}, nil, err
+	}
 	return renderAndScanDiscoveryApplication(ctx, request, provider, renderSettings, renderCache, inputs, appFile, false)
+}
+
+// assumeKustomizeHelmForSettingsInstall renders an Application that
+// installs Argo CD with config.ArgoSettings.WithKustomizeHelmAssumed, as
+// renderSettingsInstalls does: the render reads the settings that the
+// install creates. The final render of the Application uses the found
+// settings, as Argo CD does. When the assumption changes nothing, which is
+// the case for a kustomize.buildOptions with --enable-helm, the provider
+// and the cache key stay the same, so the final render reuses this one.
+func assumeKustomizeHelmForSettingsInstall(ctx context.Context, request BuildRequest, provider localProvider, renderSettings discoveryRenderSettings, application argoappv1.Application) (localProvider, discoveryRenderSettings, error) {
+	assumed := renderSettings.settings.WithKustomizeHelmAssumed()
+	if slices.Equal(settingsBuildOptions(assumed), settingsBuildOptions(renderSettings.settings)) {
+		return provider, renderSettings, nil
+	}
+	if !settingsInstallInCluster(application, renderSettings.settings) || !applicationSettingsInstall(ctx, request, provider, application).installsArgoCD() {
+		return provider, renderSettings, nil
+	}
+	signature, err := renderSettingsSignature(assumed)
+	if err != nil {
+		return provider, renderSettings, err
+	}
+	provider.kustomizeBuildOptions = settingsBuildOptions(assumed)
+	renderSettings.signature = signature
+	renderSettings.settings = assumed
+	return provider, renderSettings, nil
 }
 
 // renderAndScanDiscoveryApplication renders one Application and scans its

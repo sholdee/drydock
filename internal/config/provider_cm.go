@@ -9,6 +9,7 @@ import (
 
 func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePointer string) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
+	settings.ArgoCDConfigMapFound = true
 	if values == nil {
 		return diags
 	}
@@ -28,6 +29,7 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 		settings.HelmValuesFileSchemesSource = provenance
 	}
 	diags = appendVersionedKustomizeDiagnostics(values, path, basePointer, diags)
+	diags = append(diags, applyKustomizeVersionKeys(settings, values, path, basePointer)...)
 	applySourceTypeEnableKeys(settings, values, path, basePointer)
 	if raw := values["application.resourceTrackingMethod"]; raw != "" {
 		settings.TrackingMethod = Value[string]{
@@ -133,7 +135,11 @@ func appendVersionedKustomizeDiagnostics(values map[string]string, path, basePoi
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		message := key + " parsed but not applied: drydock uses embedded Kustomize libraries and does not select external Kustomize versions"
+		// Argo CD v3.6.1 stores the value with the version but never
+		// reads it again: kustomize build gets kustomize.buildOptions,
+		// whichever kustomize version runs (util/kustomize/kustomize.go:
+		// 391-392).
+		message := key + " parsed but not applied: Argo CD v3.6.1 passes only kustomize.buildOptions to kustomize build, whichever kustomize version runs"
 		if isVersionedKustomizePathKey(key) {
 			message = key + " parsed but not applied: drydock uses embedded Kustomize libraries and does not select external Kustomize binary paths"
 		}

@@ -101,6 +101,8 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		pluginExecRunner:                  pluginExecRunner,
 		pluginContainerRunner:             pluginContainerRunner,
 		kustomizeBuildOptions:             settingsBuildOptions(settings),
+		kustomizeCaller:                   settingsKustomizeCaller(settings),
+		kustomizeSettings:                 settings,
 		configManagementPlugins:           settings.ConfigManagementPlugins,
 		cacheEvents:                       recorder,
 	}

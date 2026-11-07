@@ -785,12 +785,36 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 	return result, nil
 }
 
+// settingsBuildOptions returns the kustomize.buildOptions words of a found
+// argocd-cm (config.ArgoSettings.EffectiveKustomizeBuildOptions), and none
+// without one: the renderer then assumes --enable-helm itself
+// (settingsKustomizeCaller).
 func settingsBuildOptions(settings config.ArgoSettings) []string {
-	out := make([]string, 0, len(settings.KustomizeBuildOptions))
-	for _, option := range settings.KustomizeBuildOptions {
-		out = append(out, option.Value)
+	if !settings.ArgoCDConfigMapFound {
+		return nil
 	}
-	return out
+	return settings.EffectiveKustomizeBuildOptions()
+}
+
+// settingsKustomizeCaller says whether settingsBuildOptions holds the
+// kustomize.buildOptions of a found argocd-cm.
+func settingsKustomizeCaller(settings config.ArgoSettings) render.KustomizeBuildCaller {
+	if settings.ArgoCDConfigMapFound {
+		return render.KustomizeCallerArgoCD
+	}
+	return render.KustomizeCallerArgoCDAssumed
+}
+
+// kustomizeVersionError is the error of a Kustomize source whose
+// spec.source.kustomize.version argocd-cm does not register. The Argo CD
+// v3.6.1 repo-server looks the version up before it reads the kube
+// version of the source (GenerateManifests, reposerver/repository/
+// repository.go:1776-1785), so this error comes first.
+func kustomizeVersionError(settings config.ArgoSettings, kustomize *argoappv1.ApplicationSourceKustomize) error {
+	if kustomize == nil || kustomize.Version == "" || settings.KustomizeVersionRegistered(kustomize.Version) {
+		return nil
+	}
+	return fmt.Errorf("error getting kustomize binary path: kustomize version %s is not registered", kustomize.Version)
 }
 
 func settingsHelmValueFileSchemes(settings config.ArgoSettings) []string {

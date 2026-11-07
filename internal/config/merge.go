@@ -34,6 +34,8 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeEnableProgressiveSyncs(&merged, candidate)...)
 		diags = append(diags, mergeIgnoreNormalizerJQTimeout(&merged, candidate)...)
 		merged.CommandParametersFound = merged.CommandParametersFound || candidate.CommandParametersFound
+		merged.ArgoCDConfigMapFound = merged.ArgoCDConfigMapFound || candidate.ArgoCDConfigMapFound
+		diags = append(diags, mergeKustomizeVersions(&merged, candidate)...)
 		if merged.CommandParametersNamespace == "" {
 			merged.CommandParametersNamespace = candidate.CommandParametersNamespace
 		}

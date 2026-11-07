@@ -684,6 +684,8 @@ func TestOrchestratorDiffAppsChangedOnlyRendersAllOnRenderedInstallSettingsChang
 	for side, size := range map[string]string{left: "10M", right: "20M"} {
 		writeKustomizeArgoCDInstall(t, side, []string{"values.yaml"})
 		writeTestFile(t, filepath.Join(side, "argocd", "values.yaml"), `configs:
+  cm:
+    kustomize.buildOptions: --enable-helm
   params:
     reposerver.max.combined.directory.manifests.size: `+size+`
 `)
@@ -762,8 +764,11 @@ func (acquirer perRepoChartAcquirer) Acquire(ctx context.Context, request chart.
 func TestBuildStrictPassesForDefaultArgoCDChartInstall(t *testing.T) {
 	root := t.TempDir()
 	writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
+	// The install renders its chart with helmCharts, which kustomize builds
+	// only with --enable-helm.
 	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
   cm:
+    kustomize.buildOptions: --enable-helm
     timeout.reconciliation: 300s
 `)
 
@@ -1552,7 +1557,7 @@ func TestDiffAppsReportsIgnoreResourceUpdatesAdvisoryOnce(t *testing.T) {
 	right := filepath.Join(root, "right")
 	for _, side := range []string{left, right} {
 		writeKustomizeArgoCDInstall(t, side, []string{"values.yaml"})
-		writeTestFile(t, filepath.Join(side, "argocd", "values.yaml"), "configs:\n  cm:\n    timeout.reconciliation: 300s\n")
+		writeTestFile(t, filepath.Join(side, "argocd", "values.yaml"), "configs:\n  cm:\n    kustomize.buildOptions: --enable-helm\n    timeout.reconciliation: 300s\n")
 	}
 	result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t)}.DiffApps(context.Background(), DiffRequest{
 		LeftPath:    left,
@@ -1798,7 +1803,7 @@ func TestSettingsFromDiscoverKustomizeInstallPathWithApplication(t *testing.T) {
 		t.Run(shape.name, func(t *testing.T) {
 			root := t.TempDir()
 			shape.write(t, root, []string{"values-base.yaml", "values-prod.yaml"})
-			writeTestFile(t, filepath.Join(root, "argocd", "values-base.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: label\n")
+			writeTestFile(t, filepath.Join(root, "argocd", "values-base.yaml"), "configs:\n  cm:\n    kustomize.buildOptions: --enable-helm\n    application.resourceTrackingMethod: label\n")
 			writeTestFile(t, filepath.Join(root, "argocd", "values-prod.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: annotation+label\n")
 
 			result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t)}.Build(context.Background(), BuildRequest{
