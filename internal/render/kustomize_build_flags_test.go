@@ -128,6 +128,24 @@ func TestKustomizeReorderNoneKeepsResourceOrder(t *testing.T) {
 	}
 }
 
+// Without --reorder, kustomize sorts in the legacy order: the Namespace
+// comes first.
+func TestKustomizeDefaultOrderIsLegacy(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "resources: [cm.yaml, ns.yaml]\n")
+	writeFile(t, filepath.Join(root, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n")
+	writeFile(t, filepath.Join(root, "app", "ns.yaml"), "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: n\n")
+	for _, opts := range []RenderOptions{{}, {KustomizeCaller: KustomizeCallerArgoCD, BuildOptions: []string{"--reorder", "legacy"}}} {
+		manifests, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, opts)
+		if err != nil {
+			t.Fatalf("Render() error = %v", err)
+		}
+		if got := kustomizeManifestKinds(manifests); got != "Namespace,ConfigMap" {
+			t.Fatalf("kinds = %s with %q, want the legacy order", got, opts.BuildOptions)
+		}
+	}
+}
+
 func kustomizeManifestKinds(manifests []Manifest) string {
 	kinds := make([]string, 0, len(manifests))
 	for _, manifest := range manifests {

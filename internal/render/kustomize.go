@@ -84,9 +84,10 @@ func renderPlainKustomize(ctx context.Context, source ResolvedSource, root strin
 
 	options := krusty.MakeDefaultOptions()
 	options.LoadRestrictions = settings.LoadRestrictions
-	if settings.Reorder != krusty.ReorderOptionUnspecified {
-		options.Reorder = settings.Reorder
-	}
+	// Without --reorder, the kustomize binary sorts in the legacy order
+	// (getFlagReorderOutput). krusty.MakeDefaultOptions keeps the resource
+	// order instead.
+	options.Reorder = settings.Reorder
 	options.AddManagedbyLabel = settings.AddManagedbyLabel
 	kustomizer := krusty.MakeKustomizer(options)
 	resMap, err := kustomizer.Run(filesys.MakeFsOnDisk(), root)
