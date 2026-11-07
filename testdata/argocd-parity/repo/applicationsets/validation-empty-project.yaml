@@ -1,0 +1,32 @@
+# The second element renders an Application with an empty spec.project.
+# The Argo CD v3.6.1 ApplicationSet controller looks the AppProject up by
+# that empty name, finds nothing, and does not create that Application
+# (applicationset/controllers/applicationset_controller.go:627-631). It
+# still creates the first one.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-validation-empty-project
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - appName: parity-empty-project-kept
+            project: default
+          - appName: parity-empty-project-dropped
+            project: ""
+  template:
+    metadata:
+      name: "{{.appName}}"
+    spec:
+      project: "{{.project}}"
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/validation/empty-name-alpha
+      destination:
+        name: in-cluster
+        namespace: "{{.appName}}"

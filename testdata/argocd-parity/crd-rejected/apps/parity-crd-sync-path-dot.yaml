@@ -1,0 +1,24 @@
+# The Application CRD schema requires spec.sourceHydrator.syncSource.path to
+# match ^.{2,}|[^./]$ (pkg/apis/application/v1alpha1/types.go:510-512 at
+# Argo CD v3.6.1). The API server rejects "." here, so Argo CD never holds
+# this Application. The smoke applies it with --dry-run=server, and drydock
+# must fail it with the same message. It lives outside repo/, so the main
+# inventory never sees it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-crd-sync-path-dot
+  namespace: argocd
+spec:
+  project: default
+  sourceHydrator:
+    drySource:
+      repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: workloads/source-hydrator/dry
+    syncSource:
+      targetBranch: parity-hydrated
+      path: "."
+  destination:
+    name: in-cluster
+    namespace: parity-crd-sync-path-dot

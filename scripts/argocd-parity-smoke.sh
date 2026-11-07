@@ -207,6 +207,12 @@ SOURCE_HYDRATOR_BRANCH_CONFIGMAP="parity-source-hydrator-hydrated-branch"
 NAMESPACE_DISABLED="parity-namespace-disabled"
 NAMESPACE_DISABLED_APPLICATION="parity-namespace-disabled"
 NAMESPACE_DISABLED_APPLICATIONSET="parity-appset-namespace-disabled"
+# An Application that the CRD schema rejects: its
+# spec.sourceHydrator.syncSource.path is ".". It lives outside repo/, so the
+# main inventory never sees it (assert_crd_rejected_application).
+CRD_REJECTED_DIR="${REPO_ROOT}/testdata/argocd-parity/crd-rejected"
+CRD_REJECTED_APPLICATION="parity-crd-sync-path-dot"
+CRD_REJECTED_MESSAGE="Invalid value: \".\": spec.sourceHydrator.syncSource.path in body should match"
 OCI_HOSTS_MARKER="drydock-argocd-parity-smoke"
 HOSTS_ENTRY_ADDED="false"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
@@ -315,6 +321,9 @@ APPLICATIONS=(
   parity-empty-name-alpha
   parity-empty-name-beta
   parity-duplicate-name-unique
+  # parity-empty-project-dropped renders an empty spec.project, which the
+  # ApplicationSet controller cannot find, so only this one exists.
+  parity-empty-project-kept
   # Cluster generator over cluster Secrets with reserved annotations.
   parity-cluster-alpha
   parity-cluster-beta
@@ -1563,6 +1572,25 @@ print_rolling_sync_warnings() {
 # ROLLING_SYNC_CONDITIONS, and for each one drydock must warn with the
 # expected code and the Argo CD condition message. It reads the drydock
 # warnings from the get apps stderr that capture_drydock_applications keeps.
+# assert_crd_rejected_application checks an Application that the API
+# server rejects with the CRD schema, so Argo CD never holds it. drydock
+# must fail it with the same message.
+assert_crd_rejected_application() {
+  local output exit_code=0
+  log_step "Checking an Application that the CRD schema rejects"
+  if output="$(kubectl apply --dry-run=server -f "${CRD_REJECTED_DIR}/apps/${CRD_REJECTED_APPLICATION}.yaml" 2>&1)"; then
+    fail "the API server accepted ${CRD_REJECTED_APPLICATION}; want the CRD schema to reject it"
+  fi
+  [[ "${output}" == *"${CRD_REJECTED_MESSAGE}"* ]] \
+    || fail "the API server rejected ${CRD_REJECTED_APPLICATION} without '${CRD_REJECTED_MESSAGE}': ${output}"
+  output="$(cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${CRD_REJECTED_APPLICATION}" \
+    --path "${CRD_REJECTED_DIR}" --offline 2>&1)" || exit_code="$?"
+  [[ "${exit_code}" != "0" ]] \
+    || fail "drydock rendered ${CRD_REJECTED_APPLICATION}; want the CRD schema failure"
+  [[ "${output}" == *"${CRD_REJECTED_MESSAGE}"* ]] \
+    || fail "drydock failed ${CRD_REJECTED_APPLICATION} without '${CRD_REJECTED_MESSAGE}': ${output}"
+}
+
 compare_rolling_sync_conditions() {
   local stderr_file="${OUT_DIR}/applications/drydock.stderr"
   local entry appset condition_type status reason message code
@@ -2685,6 +2713,7 @@ main() {
   compare_manifests
   compare_applications
   assert_namespace_gate
+  assert_crd_rejected_application
   compare_rolling_sync_conditions
   compare_avp_oracle_manifests
   compare_tracking_manifests
