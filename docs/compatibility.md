@@ -492,10 +492,15 @@ Supported:
     because `ls-remote` matches ref names before it takes a hex revision as
     an abbreviated SHA (`util/git/client.go:991-1022`). A hex name shorter
     than 7 digits that names no ref does not resolve, as in `ls-remote`. An
-    abbreviated SHA must name a single commit or tag, else the source
-    fails as in `git checkout`. drydock looks for the branch under the
-    remote whose URL is the `repoURL` of the source, and under every remote
-    in name order when no remote has that URL.
+    abbreviated SHA must match a single object, of any type, and that
+    object must be a commit or an annotated tag, else the source fails as
+    in `git checkout`, which reports "short object ID ... is ambiguous"
+    when a commit and a tree or blob share the abbreviation. drydock looks
+    for a branch first under the remote-tracking refs of its clone, which
+    every fetch and `--refresh-git` update, and then under the local branch
+    that the clone created. It uses the remote whose URL is the `repoURL` of
+    the source, compared without letter case as Argo CD compares repository
+    URLs, and every remote in name order when no remote has that URL.
   - A source that renders from the `--path` tree (a path that exists there,
     or a repository that drydock maps to the tree) gets the HEAD commit of
     that tree, also when the worktree has uncommitted changes. drydock
@@ -512,10 +517,12 @@ Supported:
     abbreviated SHA gives, for a single-source Application, the commit that
     it names in the local repository (an abbreviated annotated tag object
     gives the commit the tag points to, as `git checkout` does), or the
-    HEAD commit when nothing in the local repository matches. For a
+    HEAD commit when no object in the local repository matches. For a
     multi-source Application it stays as written. An abbreviation that
-    matches more than one commit or tag fails the source, as `git checkout`
-    fails with "short object ID ... is ambiguous" in the repo-server.
+    matches more than one object of any type, or only a tree or blob, fails
+    the source, as `git checkout` fails for it in the repo-server. In a
+    local tree drydock looks up the local branch first, which is what you
+    have checked out, then the remote-tracking refs.
   - The targetRevision comes from the spec. An `.argocd-source` override
     cannot change it: the repo-server keeps the spec `targetRevision` when it
     merges the override (`repository.go:1946-1949`), and so does drydock,
@@ -524,8 +531,8 @@ Supported:
     resolution gives, as Argo CD does. The repo-server passes the
     `ls-remote` result as the revision there and does not read the
     checked-out commit (`repository.go:516-518`, `util/git/client.go:961-1027`).
-    So an abbreviated commit SHA stays as written, and a full SHA also
-    stays as written, in its letter case. HEAD, a branch, a lightweight tag
+    So an abbreviated SHA stays as written, also one of an annotated tag
+    object, and a full SHA also stays as written, in its letter case. HEAD, a branch, a lightweight tag
     and an annotated tag give the commit SHA, because Argo CD's
     `listRemote` peels annotated tags (`util/git/workaround.go:86-96`). A
     single-source Application gets the checked-out commit SHA in all of
@@ -558,6 +565,12 @@ Supported:
   - Known nondeterminism in Argo CD: for a name that is both a branch and
     a tag, `ls-remote` takes the first match in a ref list without a fixed
     order, so Argo CD can resolve either. drydock always takes the branch.
+  - A local tree, a `--repo-map` directory and the repository of a `--ref`
+    snapshot can hold objects that the repo-server never sees: local-only
+    commits, and dangling objects that a fetch or `git gc` would not keep.
+    For such a tree, drydock can resolve an abbreviated SHA pin to a local
+    commit, or find it ambiguous, where the repo-server finds no such
+    commit or a single one.
 - The persistent render cache keys a local source on its input files and not
   on the commit, so a commit that leaves the inputs unchanged keeps the
   cached entry. A source whose spec names one of the `ARGOCD_APP_REVISION`
@@ -578,10 +591,16 @@ Supported:
   after the new commit syncs. `--changed-only` selects every Application
   whose spec reads one of the variables, in its spec or through a merged
   `.argocd-source` override on either side, and every Application with a
-  config management plugin source, whose environment always holds the
-  variables, whenever the two sides render different commits. It also
-  selects the Applications they render, and warns
-  `diff.changed-only-app-revision` with their number. `--strict` does not fail on that warning. When no relevant path
+  config management plugin source that the run renders with a command,
+  whose environment always holds the variables, whenever the two sides
+  render different commits. A plugin source renders with a command only
+  through a trusted exec or container policy with `--enable-plugins`, or
+  an injected plugin renderer. Native policy engines, the built-in
+  argocd-vault-plugin compatibility and the native Kustomize CMP render in
+  process without the variables, and a plugin source that drydock cannot
+  render stays out of the selection, so it does not fail the diff with
+  `plugin.unsupported`. It also selects the Applications they render, and
+  warns `diff.changed-only-app-revision` with their number. `--strict` does not fail on that warning. When no relevant path
   changed at all, the changed-only diff is still skipped before any
   Application is listed, so these Applications are not rendered then.
 - Directory rendering honors `+argocd:skip-file-rendering`, walks hidden

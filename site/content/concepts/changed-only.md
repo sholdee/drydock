@@ -82,8 +82,12 @@ commit, so an Application that reads one renders differently on each commit,
 as in Argo CD. When the two sides render different commits, changed-only
 selects every Application whose spec names one of these variables, also
 through a merged `.argocd-source` override, and every Application with a
-config management plugin source, because a plugin always gets them in its
-environment. The Applications they render are selected too. The selection is
+config management plugin source that runs a command in this diff, because
+a plugin always gets them in its environment. A plugin source runs a
+command only through a trusted exec or container policy with
+`--enable-plugins`. Other plugin sources, including ones that drydock
+cannot render, stay out of this selection. The Applications they render are
+selected too. The selection is
 reported with the strict-exempt warning `diff.changed-only-app-revision`.
 When no relevant path changed at all, the changed-only diff is still skipped
 before any Application is listed, so these Applications are not rendered
