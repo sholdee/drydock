@@ -244,7 +244,8 @@ Fix the spec as Argo CD requires:
 - A `chart` needs `targetRevision`.
 - A `spec.sourceHydrator` needs `drySource.repoURL` and
   `syncSource.targetBranch`, and `hydrateTo.targetBranch` when it sets
-  `hydrateTo`.
+  `hydrateTo`. Its `syncSource.path` must not be empty, `.`, or `/`. The API
+  server rejects such a path, so Argo CD never holds the Application.
 
 Earlier drydock releases rendered nothing for such an Application and passed
 it.
@@ -254,11 +255,14 @@ it.
 An Application with `spec.sourceHydrator` gets this warning. Argo CD compares
 such an Application against its sync source only: `syncSource.path` at
 `syncSource.targetBranch`. It ignores `spec.source` and `spec.sources`.
-drydock renders the same sync source. It cannot run the hydrator offline, so
-a change to the dry source shows in drydock only after the hydrator commits
-it to the sync branch. If the sync branch is not the local checkout, drydock
-reads it from the Git cache or fetches it, and `--offline` fails on a cache
-miss. `--strict` does not fail on the warning.
+drydock renders the same sync source at the same branch. It reads the local
+tree only when the tree holds that branch: the checked-out branch, or the
+`--ref` name of a diff side. A `--repo-map` target that is the top of a Git
+repository gives the branch from a snapshot. Otherwise drydock reads the
+branch from the Git cache or fetches it, and `--offline` fails on a cache
+miss. It cannot run the hydrator offline, so a change to the dry source
+shows in drydock only after the hydrator commits it to the sync branch.
+`--strict` does not fail on the warning.
 
 ## Symptom: `discovery.namespace-not-enabled`, Or An Application Is Missing
 
@@ -271,12 +275,12 @@ drydock skips it. It also skips what the object would create:
 warning discovery.namespace-not-enabled: Application team-b/app is skipped: namespace "team-b" is not enabled for Argo CD, so Argo CD never reconciles it; add the namespace to argocd-cmd-params-cm application.namespaces to enable it (Argo CD namespace argocd)
 ```
 
-To enable the namespace, add it to the list in `argocd-cmd-params-cm`. Each
+drydock applies the lists only when the `argocd-cmd-params-cm` that it reads
+names its `metadata.namespace`, which is the Argo CD namespace. To enable a
+namespace, add it to the list in `argocd-cmd-params-cm`. Each
 entry is a glob, or a regular expression when slashes wrap it, for example
 `/^team-[a-z]+$/`. The AppProject must also list the namespace in
-`sourceNamespaces`. drydock takes the Argo CD namespace from the
-`metadata.namespace` of the ConfigMap, and assumes `argocd` when the
-ConfigMap names none. `--strict` does not fail on the warning.
+`sourceNamespaces`. `--strict` does not fail on the warning.
 
 ## Symptom: A Kustomize Directory Renders As A Helm Chart
 

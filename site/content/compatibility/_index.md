@@ -75,12 +75,14 @@ is the `default` project.
 
 For an Application with `spec.sourceHydrator`, drydock renders the sync
 source (`syncSource.path` at `syncSource.targetBranch`), because that is
-what Argo CD compares. drydock cannot run the hydrator offline, so it warns
+what Argo CD compares. It reads that branch from the local tree only when
+the tree holds the branch, else from a `--repo-map` Git repository, the Git
+cache, or a fetch. drydock cannot run the hydrator offline, so it warns
 `source.hydrator-sync-source`: a change to the dry source shows only after
 the hydrator commits it.
 
-When drydock reads an `argocd-cmd-params-cm`, it applies
-`application.namespaces` and `applicationsetcontroller.namespaces`. Argo CD
+When drydock reads an `argocd-cmd-params-cm` that names its namespace, it
+applies `application.namespaces` and `applicationsetcontroller.namespaces`. Argo CD
 never reconciles an Application or an ApplicationSet outside those
 namespaces and the Argo CD namespace, so drydock skips it with the
 `discovery.namespace-not-enabled` warning.

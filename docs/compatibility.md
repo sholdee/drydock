@@ -110,7 +110,12 @@ Supported:
   metadata of its parent that Argo CD sets. Under label tracking, it has the
   instance label with the parent name and no `argocd.argoproj.io/tracking-id`
   annotation. `-l` selects on these labels. Earlier drydock releases always
-  used annotation tracking for this render.
+  used annotation tracking for this render. The fleet frontier skips a
+  local source whose directory the repository scan already read, because
+  its render adds no object. It still renders such a directory when it
+  holds a `Chart.yaml`, or a file that the source type detection reads as a
+  Helm chart, such as `traefik-HelmChart.yaml`, because chart templates can
+  declare objects that the scan cannot see.
 - Explicit `--discover-kustomize PATH` discovery from rendered local
   Kustomize entrypoints. Explicitly rendered Kustomize objects take precedence
   over committed duplicates because the path is the operator-selected Argo CD
@@ -129,28 +134,54 @@ Supported:
   `InvalidSpecError` condition and skips the comparison, so the Application
   renders nothing. drydock fails the render with the same text. Earlier
   drydock releases rendered nothing for such an Application and passed it.
+  After a failed check, Argo CD also skips the AppProject checks that
+  follow. In a multi-source Application, it still checks the repositories
+  of the sources before the failing one. drydock reports the same project
+  warnings in the same order.
 - `spec.sourceHydrator`. Argo CD compares such an Application against its
   sync source only: `syncSource.path` at `syncSource.targetBranch`, in
   `syncSource.repoURL` or else in the dry source repository
   (`ApplicationSpec.GetSources`). It ignores `spec.source` and
-  `spec.sources`. drydock renders the same sync source through the normal
-  source acquisition. A branch that names the local checkout renders from
-  it, and any other branch comes from the Git cache or a fetch. drydock
-  cannot run the hydrator offline. So a change to the dry source shows only
-  after the hydrator commits it to the sync branch. Each such Application
-  gets the `source.hydrator-sync-source` warning, which `--strict` does not
-  fail on, because the render is the one that Argo CD compares. The hydrator
-  checks of the controller apply: `drySource.repoURL`,
-  `syncSource.targetBranch`, and `hydrateTo.targetBranch` when `hydrateTo` is
-  set. The AppProject must permit the dry source repository, and the sync
-  source repository when it is another one. Earlier drydock releases
-  ignored the hydrator and rendered `spec.source`, or nothing.
+  `spec.sources`. drydock reads the sync source at `syncSource.targetBranch`.
+  It never uses the local tree only because the sync path exists there,
+  because the dry and the sync source often share a path:
+
+  - A `--repo-map` target renders as it is when it has that branch checked
+    out. When it is the top of a Git repository with another branch checked
+    out, drydock renders a snapshot of the branch, or of `origin/<branch>`.
+    Any other target fails, because drydock cannot read the branch from it.
+  - The local repository renders from the local tree only when the tree
+    holds that branch: the checked-out branch, or the `--ref` or
+    `--ref-orig` name of a diff side.
+  - Any other sync source comes from the Git cache or a fetch, and
+    `--offline` fails on a cache miss.
+
+  drydock cannot run the hydrator offline. So a change to the dry source
+  shows only after the hydrator commits it to the sync branch. Each such
+  Application gets the `source.hydrator-sync-source` warning, which
+  `--strict` does not fail on, because the render is the one that Argo CD
+  compares. The hydrator checks of the controller apply:
+  `drySource.repoURL`, `syncSource.targetBranch`, and
+  `hydrateTo.targetBranch` when `hydrateTo` is set. The CRD schema of
+  `syncSource.path` applies too: the API server rejects an empty path, `.`,
+  and `/`, so Argo CD never holds such an Application, and drydock fails it
+  with the API server message. The AppProject must permit the dry source
+  repository, and the sync source repository when it is another one. The
+  repository metadata checks cover both repositories. `get apps` prints the
+  sync source. drydock does not read Argo CD settings values files through
+  a hydrator Application, because its sync branch is usually not the local
+  tree. Earlier drydock releases ignored the hydrator and rendered
+  `spec.source`, or nothing.
 - An empty `spec.project` is the `default` project, as in Argo CD
   (`ApplicationSpec.GetProject`). drydock sets `ARGOCD_APP_PROJECT_NAME` to
   `default`, validates against the `default` AppProject, and prints
   `default` in `get apps` and in the Go API. The Argo CD controller writes
   `default` back into the Application. Earlier drydock releases used the
-  empty string in `ARGOCD_APP_PROJECT_NAME` and in the output.
+  empty string in `ARGOCD_APP_PROJECT_NAME` and in the output. The
+  ApplicationSet controller does not default an empty project. It looks the
+  AppProject up by the empty name, finds nothing, and does not create that
+  Application (`applicationset_controller.go:627-631`). drydock drops it
+  with the `appset.application-validation-failed` warning.
 - `argocd-cmd-params-cm` `application.namespaces` and
   `applicationsetcontroller.namespaces`. The Argo CD v3.6.1 controllers
   reconcile an Application or an ApplicationSet only in the Argo CD
@@ -164,13 +195,18 @@ Supported:
   skips such an object with the `discovery.namespace-not-enabled` warning.
   It also skips the Applications that a skipped ApplicationSet would
   generate, and the Applications and ApplicationSets that a skipped
-  Application would render. `--strict` does not fail on the warning. drydock
-  applies the lists only when it reads an `argocd-cmd-params-cm`, committed
-  or rendered. Without one, it cannot tell how the cluster sets them, and it
-  keeps every object, as earlier releases did. The Argo CD namespace is the
-  `metadata.namespace` of that ConfigMap. When the ConfigMap names none,
-  drydock assumes `argocd`. An object without a namespace is in the Argo CD
-  namespace. drydock does not read the controller Deployments, so it does
+  Application would render. It follows only these links, never the file or
+  the document that an object came from. `--strict` does not fail on the
+  warning. drydock applies the lists only when it reads an
+  `argocd-cmd-params-cm`, committed or rendered, that names its
+  `metadata.namespace`. That namespace is the Argo CD namespace. Without
+  such a ConfigMap, drydock cannot tell how the cluster sets the lists or
+  where the controllers run, and it keeps every object, as earlier releases
+  did. A committed ConfigMap often names no namespace because a
+  kustomization sets it. An object without a namespace is in the Argo CD
+  namespace. Project validation resolves the Argo CD namespace with the
+  same rule: the `argocd-cmd-params-cm` namespace, else the AppProject
+  namespace, else `argocd`. drydock does not read the controller Deployments, so it does
   not see a list that the Argo CD Helm chart sets only through
   `controller.extraArgs`, `applicationSet.extraArgs`, or extra environment
   variables.
