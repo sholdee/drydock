@@ -255,6 +255,8 @@ spec:
   template:
     metadata:
       name: '{{.path.basename}}'
+    spec:
+      project: default
 `)
 
 	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
@@ -296,6 +298,8 @@ spec:
       name: '{{if .name}}{{.name}}{{else}}empty{{end}}-{{.path.filenameNormalized}}'
       annotations:
         source-path: '{{.path.path}}'
+    spec:
+      project: default
 `)
 
 	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
@@ -334,6 +338,8 @@ spec:
         path: '{{path}}'
         basename: '{{path.basename}}'
         seg0: '{{path[0]}}'
+    spec:
+      project: default
 `)
 
 	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
@@ -372,6 +378,8 @@ spec:
   template:
     metadata:
       name: '{{.name}}'
+    spec:
+      project: default
 `)
 
 	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
@@ -413,6 +421,8 @@ spec:
   template:
     metadata:
       name: '{{.name}}'
+    spec:
+      project: default
 `)
 
 	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)

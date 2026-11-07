@@ -138,6 +138,33 @@ func TestGenerateDropsEveryApplicationSharingADuplicateName(t *testing.T) {
 	}
 }
 
+// TestGenerateDropsGeneratedApplicationWithEmptyProject pins a generated
+// Application whose spec.project renders empty. The Argo CD v3.6.1
+// ApplicationSet controller looks the AppProject up by that empty name,
+// finds nothing, and does not create the Application
+// (applicationset_controller.go:627-631). The other Applications still
+// generate.
+func TestGenerateDropsGeneratedApplicationWithEmptyProject(t *testing.T) {
+	data := []byte(strings.Replace(string(listAppSetYAML(`          - name: alpha
+            env: dev
+            project: default
+          - name: beta
+            env: dev
+            project: ""`, `'{{.name}}'`, "")), "\n      project: default\n", "\n      project: '{{.project}}'\n", 1))
+
+	apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha"}) {
+		t.Fatalf("generated names = %#v, want the Application with a project only", got)
+	}
+	want := "application references project  which does not exist"
+	if len(diags) != 1 || diags[0].Code != "appset.application-validation-failed" || !strings.Contains(diags[0].Message, want) {
+		t.Fatalf("diagnostics = %#v, want one validation warning with %q", diags, want)
+	}
+}
+
 func TestGenerateApplicationValidationIsSkippedAfterTemplateRenderFailure(t *testing.T) {
 	data := listAppSetYAML(`          - name: alpha
             env: dev

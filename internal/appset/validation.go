@@ -65,22 +65,32 @@ func appsetGeneratorTemplateRenderDiagnostic(manifestPath string, err error) dia
 // Application is rejected next. Upstream keys errors by QualifiedName and
 // keeps only Applications whose key has no error, so every Application
 // sharing a duplicated name is dropped, not just the later ones. The
-// remaining Applications still generate. Project and destination checks need
+// remaining Applications still generate. An empty spec.project fails the
+// AppProject lookup that follows. Other project and destination checks need
 // live AppProjects and clusters and stay with the project diagnostics.
 func validateGeneratedApplications(manifestPath string, appset argoappv1.ApplicationSet, apps []GeneratedApplication) ([]GeneratedApplication, []diagnostic.Diagnostic) {
-	errorsByApp := map[string]string{}
+	errorsByApp := map[string]generatedApplicationError{}
 	namesSet := map[string]bool{}
 	for i := range apps {
 		app := &apps[i].Application
 		if app.Name == "" {
-			errorsByApp[app.QualifiedName()] = fmt.Sprintf("ApplicationSet %s contains an application with no name; a name must be set in the template's metadata.name or via a templatePatch (generateName is not supported)", appset.Name)
+			errorsByApp[app.QualifiedName()] = generatedApplicationError{fmt.Sprintf("ApplicationSet %s contains an application with no name; a name must be set in the template's metadata.name or via a templatePatch (generateName is not supported)", appset.Name), templateNamePointer}
 			continue
 		}
 		if namesSet[app.Name] {
-			errorsByApp[app.QualifiedName()] = fmt.Sprintf("ApplicationSet %s contains applications with duplicate name: %s", appset.Name, app.Name)
+			errorsByApp[app.QualifiedName()] = generatedApplicationError{fmt.Sprintf("ApplicationSet %s contains applications with duplicate name: %s", appset.Name, app.Name), templateNamePointer}
 			continue
 		}
 		namesSet[app.Name] = true
+		// Upstream then looks the AppProject up by name in the Argo CD
+		// namespace. An empty spec.project names no object, so the
+		// controller-runtime cache reports it as not found
+		// (applicationset_controller.go:627-631), and the Application is
+		// not created. The ApplicationSet controller does not read an empty
+		// project as "default", unlike the application controller.
+		if app.Spec.Project == "" {
+			errorsByApp[app.QualifiedName()] = generatedApplicationError{fmt.Sprintf("application references project %s which does not exist", app.Spec.Project), "spec.template.spec.project"}
+		}
 	}
 	if len(errorsByApp) == 0 {
 		return apps, nil
@@ -103,12 +113,23 @@ func validateGeneratedApplications(manifestPath string, appset argoappv1.Applica
 // generatedApplicationValidationDiagnostic carries the upstream validation
 // message verbatim. The "generated Application validation failed" substring
 // is the stable-code dispatch key (appset.application-validation-failed).
-func generatedApplicationValidationDiagnostic(manifestPath, upstreamMessage string) diagnostic.Diagnostic {
+// templateNamePointer is the pointer of a name validation failure.
+const templateNamePointer = "spec.template.metadata.name"
+
+// generatedApplicationError is one upstream validation failure of a
+// generated Application, with the template field that causes it.
+type generatedApplicationError struct {
+	message string
+	pointer string
+}
+
+func generatedApplicationValidationDiagnostic(manifestPath string, failure generatedApplicationError) diagnostic.Diagnostic {
+	upstreamMessage := failure.message
 	diag := diagnostic.Diagnostic{
 		Severity:   diagnostic.SeverityWarning,
 		Category:   "appset",
 		Message:    fmt.Sprintf("generated Application validation failed: %s; Argo CD reports an ApplicationValidationError condition and does not create or update the affected Applications, so drydock omits them while the ApplicationSet's other Applications still generate", upstreamMessage),
-		Provenance: diagnostic.Provenance{Path: manifestPath, Pointer: "spec.template.metadata.name"},
+		Provenance: diagnostic.Provenance{Path: manifestPath, Pointer: failure.pointer},
 	}
 	diag.Code = diagnostic.StableCode(diag)
 	return diag
