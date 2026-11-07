@@ -64,6 +64,8 @@ func selectLocalRenderer(source render.ResolvedSource) (render.Renderer, error) 
 		return render.HelmRenderer{}, nil
 	case argoappv1.ApplicationSourceTypeKustomize:
 		return render.KustomizeRenderer{}, nil
+	case argoappv1.ApplicationSourceTypeDirectory, argoappv1.ApplicationSourceTypePlugin:
+		return render.DirectoryRenderer{}, nil
 	default:
 		return render.DirectoryRenderer{}, nil
 	}
