@@ -190,8 +190,9 @@ not.
 A Helm source also owns each `helm.valueFiles` and `helm.fileParameters[].path`
 entry it resolves, also an entry that only an `.argocd-source.yaml` or
 `.argocd-source-<app>.yaml` file sets, even when the resolved path escapes `spec.source.path`, bound
-to the repository root. A glob value file owns its static leading directory, not
-the files the glob expands to. Entries that use environment substitution (`$`)
+to the repository root. A glob value file owns its static leading directory,
+and drydock expands the glob on the tree: each match that passes through a
+symlink also owns each symlink on the way and the file where it ends. Entries that use environment substitution (`$`)
 own nothing. A `$ref` value file or file parameter owns its resolved path when
 the ref root is the local tree: a
 [self-repository](/concepts/source-acquisition/#self-repository-sources) ref, a
