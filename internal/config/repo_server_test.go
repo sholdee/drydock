@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -27,26 +28,31 @@ func TestRepoServerHelmNamespace(t *testing.T) {
 		spec            string
 		serviceAccounts []*unstructured.Unstructured
 		want            string
-		wantOK          bool
+		wantNotes       []string
 	}{
-		{name: "token off", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: argocd-repo-server\n", want: "default", wantOK: true},
-		{name: "token on", spec: "      automountServiceAccountToken: true\n      containers:\n        - name: repo-server\n", want: "argocd", wantOK: true},
-		{name: "unset, ServiceAccount off", spec: "      containers:\n        - name: repo-server\n", serviceAccounts: []*unstructured.Unstructured{saOff}, want: "default", wantOK: true},
-		{name: "unset", spec: "      containers:\n        - name: repo-server\n", want: "argocd", wantOK: true},
-		{name: "pod spec wins over ServiceAccount", spec: "      automountServiceAccountToken: true\n      containers:\n        - name: repo-server\n", serviceAccounts: []*unstructured.Unstructured{saOff}, want: "argocd", wantOK: true},
-		{name: "token mounted by hand", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: repo-server\n          volumeMounts:\n            - name: token\n              mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n", want: "argocd", wantOK: true},
-		{name: "HELM_NAMESPACE wins", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: repo-server\n          env:\n            - name: HELM_NAMESPACE\n              value: helm-ns\n", want: "helm-ns", wantOK: true},
-		{name: "POD_NAMESPACE literal", spec: "      containers:\n        - name: repo-server\n          env:\n            - name: POD_NAMESPACE\n              value: pod-ns\n", want: "pod-ns", wantOK: true},
-		{name: "POD_NAMESPACE without a token", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: repo-server\n          env:\n            - name: POD_NAMESPACE\n              value: pod-ns\n", want: "default", wantOK: true},
-		{name: "POD_NAMESPACE from the downward API", spec: "      containers:\n        - name: repo-server\n          env:\n            - name: POD_NAMESPACE\n              valueFrom:\n                fieldRef:\n                  fieldPath: metadata.namespace\n", want: "argocd", wantOK: true},
-		{name: "other container is not the repo-server", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: sidecar\n          env:\n            - name: HELM_NAMESPACE\n              value: wrong\n        - name: repo-server\n", want: "default", wantOK: true},
-		{name: "KUBECONFIG is not known", spec: "      containers:\n        - name: repo-server\n          env:\n            - name: KUBECONFIG\n              value: /kube/config\n", wantOK: false},
+		{name: "token off", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: argocd-repo-server\n", want: "default"},
+		{name: "token on", spec: "      automountServiceAccountToken: true\n      containers:\n        - name: repo-server\n", want: "argocd"},
+		{name: "unset, ServiceAccount off", spec: "      containers:\n        - name: repo-server\n", serviceAccounts: []*unstructured.Unstructured{saOff}, want: "default"},
+		{name: "unset", spec: "      containers:\n        - name: repo-server\n", want: "argocd"},
+		{name: "pod spec wins over ServiceAccount", spec: "      automountServiceAccountToken: true\n      containers:\n        - name: repo-server\n", serviceAccounts: []*unstructured.Unstructured{saOff}, want: "argocd"},
+		{name: "token mounted by hand", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: repo-server\n          volumeMounts:\n            - name: token\n              mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n", want: "argocd"},
+		{name: "HELM_NAMESPACE wins", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: repo-server\n          env:\n            - name: HELM_NAMESPACE\n              value: helm-ns\n", want: "helm-ns"},
+		{name: "POD_NAMESPACE literal", spec: "      containers:\n        - name: repo-server\n          env:\n            - name: POD_NAMESPACE\n              value: pod-ns\n", want: "pod-ns"},
+		{name: "POD_NAMESPACE without a token", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: repo-server\n          env:\n            - name: POD_NAMESPACE\n              value: pod-ns\n", want: "default"},
+		{name: "POD_NAMESPACE from the downward API", spec: "      containers:\n        - name: repo-server\n          env:\n            - name: POD_NAMESPACE\n              valueFrom:\n                fieldRef:\n                  fieldPath: metadata.namespace\n", want: "argocd"},
+		{name: "other container is not the repo-server", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: sidecar\n          env:\n            - name: HELM_NAMESPACE\n              value: wrong\n        - name: repo-server\n", want: "default"},
+		{name: "KUBECONFIG is not known", spec: "      containers:\n        - name: repo-server\n          env:\n            - name: KUBECONFIG\n              value: /kube/config\n", want: "argocd", wantNotes: []string{"KUBECONFIG names a kubeconfig file that drydock cannot read"}},
+		{name: "empty KUBECONFIG is unset", spec: "      containers:\n        - name: repo-server\n          env:\n            - name: KUBECONFIG\n              value: \"\"\n", want: "argocd"},
+		{name: "HELM_NAMESPACE wins over KUBECONFIG", spec: "      containers:\n        - name: repo-server\n          env:\n            - name: KUBECONFIG\n              value: /kube/config\n            - name: HELM_NAMESPACE\n              value: helm-ns\n", want: "helm-ns"},
+		{name: "HELM_NAMESPACE from an unknown source", spec: "      automountServiceAccountToken: false\n      containers:\n        - name: repo-server\n          env:\n            - name: HELM_NAMESPACE\n              drydockUnknownSource: valueFrom configMapKeyRef\n", want: "default", wantNotes: []string{"HELM_NAMESPACE comes from valueFrom configMapKeyRef"}},
+		{name: "POD_NAMESPACE from an unknown source", spec: "      containers:\n        - name: repo-server\n          env:\n            - name: POD_NAMESPACE\n              drydockUnknownSource: a $(VAR) reference\n", want: "argocd", wantNotes: []string{"POD_NAMESPACE comes from a $(VAR) reference"}},
+		{name: "envFrom", spec: "      containers:\n        - name: repo-server\n          drydockEnvFrom: true\n", want: "argocd", wantNotes: []string{"the repo-server container sets envFrom, which can set HELM_NAMESPACE, POD_NAMESPACE, or KUBECONFIG"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			deployment := repoServerTestObject(t, deploymentHead+tc.spec)
-			got, ok := RepoServerHelmNamespace(deployment, tc.serviceAccounts, "argocd")
-			if ok != tc.wantOK || got != tc.want {
-				t.Fatalf("RepoServerHelmNamespace() = %q, %v, want %q, %v", got, ok, tc.want, tc.wantOK)
+			got, notes := RepoServerHelmNamespace(deployment, tc.serviceAccounts, "argocd")
+			if got != tc.want || !slices.Equal(notes, tc.wantNotes) {
+				t.Fatalf("RepoServerHelmNamespace() = %q, %q, want %q, %q", got, notes, tc.want, tc.wantNotes)
 			}
 		})
 	}

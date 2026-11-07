@@ -884,7 +884,10 @@ func TestRepoServerDeploymentCandidateKeepsOnlyNamespaceInputs(t *testing.T) {
 				"env": []any{
 					map[string]any{"name": "SECRET_LOOKING", "value": "never-kept"},
 					map[string]any{"name": "POD_NAMESPACE", "value": "argocd"},
+					map[string]any{"name": "HELM_NAMESPACE", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "hidden-secret", "key": "hidden-key"}}},
+					map[string]any{"name": "KUBECONFIG", "value": "$(HIDDEN_PATH)/config"},
 				},
+				"envFrom":      []any{map[string]any{"configMapRef": map[string]any{"name": "hidden-configmap"}}},
 				"volumeMounts": []any{map[string]any{"name": "tmp", "mountPath": "/tmp"}},
 			}},
 		}}},
@@ -900,12 +903,12 @@ func TestRepoServerDeploymentCandidateKeepsOnlyNamespaceInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, unwanted := range []string{"never-kept", "SECRET_LOOKING", "quay.io"} {
+	for _, unwanted := range []string{"never-kept", "SECRET_LOOKING", "quay.io", "hidden-secret", "hidden-key", "HIDDEN_PATH", "hidden-configmap"} {
 		if strings.Contains(string(kept), unwanted) {
 			t.Fatalf("candidate %s keeps %q", kept, unwanted)
 		}
 	}
-	for _, wanted := range []string{"POD_NAMESPACE", "automountServiceAccountToken", "/tmp"} {
+	for _, wanted := range []string{"POD_NAMESPACE", "automountServiceAccountToken", "/tmp", "valueFrom secretKeyRef", "a $(VAR) reference", "drydockEnvFrom"} {
 		if !strings.Contains(string(kept), wanted) {
 			t.Fatalf("candidate %s drops %q", kept, wanted)
 		}

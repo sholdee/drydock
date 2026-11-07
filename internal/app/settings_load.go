@@ -8,7 +8,6 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func appendDiscoveredProjects(projects []argoappv1.AppProject, discovered discovery.Result) []argoappv1.AppProject {
@@ -49,58 +48,10 @@ func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config
 	}
 	merged, mergeDiags := config.MergeDiscovered(candidates)
 	diags = append(diags, mergeDiags...)
-	namespace, namespaceDiags := repoServerHelmNamespace(discovered.SettingsCandidates)
+	namespace, namespaceDiags := repoServerHelmNamespace(root, discovered, merged)
 	merged.RepoServerHelmNamespace = namespace
 	diags = append(diags, namespaceDiags...)
 	return merged, diags, nil
-}
-
-// repoServerHelmNamespace works out the namespace that helm uses in the
-// repo-server of the rendered Argo CD install (config.RepoServerHelmNamespace)
-// from the rendered repo-server Deployment and ServiceAccounts. Committed
-// files do not count: a committed Deployment is often only a patch, and
-// only a render shows the whole install. It is nil without a rendered
-// repo-server, and two rendered repo-servers that disagree give a warning
-// and the first one's namespace.
-func repoServerHelmNamespace(candidates []discovery.SettingsCandidate) (*config.Value[string], []diagnostic.Diagnostic) {
-	var serviceAccounts []*unstructured.Unstructured
-	for _, candidate := range candidates {
-		if candidate.Kind == discovery.RepoServerServiceAccountKind && candidate.Tier != discovery.SourceTierStatic && candidate.Object != nil {
-			serviceAccounts = append(serviceAccounts, candidate.Object)
-		}
-	}
-	var out *config.Value[string]
-	var diags []diagnostic.Diagnostic
-	for _, candidate := range candidates {
-		if candidate.Kind != discovery.RepoServerDeploymentKind || candidate.Tier == discovery.SourceTierStatic || candidate.Object == nil {
-			continue
-		}
-		podNamespace := candidate.Object.GetNamespace()
-		var sameNamespace []*unstructured.Unstructured
-		for _, serviceAccount := range serviceAccounts {
-			if serviceAccount.GetNamespace() == podNamespace {
-				sameNamespace = append(sameNamespace, serviceAccount)
-			}
-		}
-		namespace, ok := config.RepoServerHelmNamespace(candidate.Object, sameNamespace, podNamespace)
-		if !ok {
-			continue
-		}
-		provenance := diagnostic.Provenance{Path: filepath.ToSlash(candidate.Path)}
-		if out == nil {
-			out = &config.Value[string]{Value: namespace, Provenance: provenance}
-			continue
-		}
-		if out.Value != namespace {
-			diags = append(diags, diagnostic.Diagnostic{
-				Severity:   diagnostic.SeverityWarning,
-				Category:   "settings",
-				Message:    fmt.Sprintf("conflicting Argo CD repo-server Helm namespaces %q and %q; drydock uses %q for Helm sources without a namespace", out.Value, namespace, out.Value),
-				Provenance: provenance,
-			})
-		}
-	}
-	return out, diags
 }
 
 func loadSettingsCandidate(root string, candidate discovery.SettingsCandidate) (config.ArgoSettings, []diagnostic.Diagnostic, bool, error) {

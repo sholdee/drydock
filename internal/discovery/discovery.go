@@ -92,6 +92,9 @@ type SettingsCandidate struct {
 	// replaced by it. Only rendered candidates set them.
 	RenderValuesFiles []string
 	RenderFiles       []string
+	// Origin is the key of the Application whose render produced the
+	// candidate. It is empty for a committed file.
+	Origin string
 }
 
 // IsSettingsConfigMapKind reports whether kind is the candidate kind of an
@@ -340,7 +343,9 @@ func settingsCandidate(rel string, documentIndex int, kind string, obj *unstruct
 	candidate.APIVersion = obj.GetAPIVersion()
 	candidate.Namespace = obj.GetNamespace()
 	candidate.Name = obj.GetName()
-	if includeObject {
+	// A repo-server object is kept also from a committed file: drydock has
+	// no loader that reads it back by path, and the sanitized copy is small.
+	if includeObject || IsRepoServerKind(kind) {
 		candidate.Object = settingsCandidateObject(kind, obj)
 	}
 	return candidate
@@ -618,11 +623,14 @@ func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured
 			}
 			name, _ := entry["name"].(string)
 			if _, ok := repoServerNamespaceEnv[name]; ok {
-				env = append(env, entry)
+				env = append(env, sanitizedRepoServerEnv(name, entry))
 			}
 		}
 		if len(env) > 0 {
 			kept["env"] = env
+		}
+		if envFrom, ok := container["envFrom"].([]any); ok && len(envFrom) > 0 {
+			kept[config.RepoServerEnvFromKey] = true
 		}
 		var mounts []any
 		mountItems, _ := container["volumeMounts"].([]any)
@@ -639,4 +647,33 @@ func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured
 	keptSpec["containers"] = keptContainers
 	_ = unstructured.SetNestedMap(out.Object, map[string]any{"spec": keptSpec}, "spec", "template")
 	return out
+}
+
+// sanitizedRepoServerEnv keeps an env entry that decides the namespace only
+// when drydock knows its value: a literal value without a $(VAR) reference,
+// or the pod namespace through the downward API. For any other source it
+// keeps only the kind of the source (config.RepoServerUnknownSourceKey),
+// never the value or the name of the object that holds it.
+func sanitizedRepoServerEnv(name string, entry map[string]any) map[string]any {
+	if value, ok := entry["value"].(string); ok {
+		if strings.Contains(value, "$(") {
+			return map[string]any{"name": name, config.RepoServerUnknownSourceKey: "a $(VAR) reference"}
+		}
+		return map[string]any{"name": name, "value": value}
+	}
+	valueFrom, ok := entry["valueFrom"].(map[string]any)
+	if !ok {
+		return map[string]any{"name": name}
+	}
+	if fieldPath, _, _ := unstructured.NestedString(valueFrom, "fieldRef", "fieldPath"); fieldPath == "metadata.namespace" {
+		return map[string]any{"name": name, "valueFrom": map[string]any{"fieldRef": map[string]any{"fieldPath": "metadata.namespace"}}}
+	}
+	source := "valueFrom"
+	for _, kind := range []string{"configMapKeyRef", "secretKeyRef", "fieldRef", "resourceFieldRef", "fileKeyRef"} {
+		if _, ok := valueFrom[kind]; ok {
+			source = "valueFrom " + kind
+			break
+		}
+	}
+	return map[string]any{"name": name, config.RepoServerUnknownSourceKey: source}
 }
