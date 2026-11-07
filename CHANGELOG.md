@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.3.9](https://github.com/sholdee/drydock/compare/v0.3.8...v0.3.9) (2026-11-07)
+
+
+### Features
+
+* **appset:** support the Argo CD 3.6 OCI ApplicationSet generator ([186e45f](https://github.com/sholdee/drydock/commit/186e45f015e37302ca66ee61c5933467db5bea3d))
+* **chart:** add opt-in --chart-cache-max-age for cached Helm charts ([462eee6](https://github.com/sholdee/drydock/commit/462eee6c28d8c52da1fb00148a4a1608a51217d2))
+* **diff:** honor argocd.argoproj.io/ignore-differences resource annotation ([15c7946](https://github.com/sholdee/drydock/commit/15c79460464a756d08490807d098990b07556cfa))
+* **project:** cover AppProject destinations in the parity smoke and hint at live in-cluster Secrets ([#471](https://github.com/sholdee/drydock/issues/471)) ([d2543a3](https://github.com/sholdee/drydock/commit/d2543a39a49baa04175e9bd01c903b0e842a85e6))
+* **render:** match Argo CD v3.6.1 directory selection and ignoreMissingComponents ([beccab1](https://github.com/sholdee/drydock/commit/beccab11ac0b363c2139fce9854e552d608f2151))
+* **settings:** parse argocd-cm resource.selectors and warn on mismatches ([510983f](https://github.com/sholdee/drydock/commit/510983fac1838f0ce81e670be736d93827627dc5))
+
+
+### Bug Fixes
+
+* **app:** read Argo CD settings from the rendered Argo CD install ([#487](https://github.com/sholdee/drydock/issues/487)) ([788acd7](https://github.com/sholdee/drydock/commit/788acd73649dc59ce693a1adc547a7fdff8867cd))
+* **appset:** follow progressive syncs for RollingSync and compare its conditions in the parity smoke ([#489](https://github.com/sholdee/drydock/issues/489)) ([dc65768](https://github.com/sholdee/drydock/commit/dc65768284d55b3c279395a44e19f71114afccdd))
+* **appset:** mirror Argo CD 3.6.1 generated-app validation and rollout lint ([349cd10](https://github.com/sholdee/drydock/commit/349cd1013072b25a85e68e0e69c7e78e55e0c990))
+* **appset:** pass Argo CD v3.6.1 Go types to generator templates ([#473](https://github.com/sholdee/drydock/issues/473)) ([ef087d1](https://github.com/sholdee/drydock/commit/ef087d1fea02b18f6892237bf74aedc4dc664f32))
+* **cli:** make -l/--selector filter every command that accepts it ([#495](https://github.com/sholdee/drydock/issues/495)) ([381217f](https://github.com/sholdee/drydock/commit/381217f20595c1f960692b106240fe7aafda7aff))
+* **config:** classify argocd-cmd-params-cm keys added in Argo CD 3.6 ([79ed960](https://github.com/sholdee/drydock/commit/79ed96030f6a22341476ccd83d14bfc90a83b3bd))
+* **config:** match Argo CD v3.6.1 resource.exclusions and resource.inclusions handling ([#476](https://github.com/sholdee/drydock/issues/476)) ([1bce6bb](https://github.com/sholdee/drydock/commit/1bce6bb324bc780be6c556b392a001d6710015e5))
+* **config:** read resource.customizations and Helm configs.cm like Argo CD v3.6.1 ([#481](https://github.com/sholdee/drydock/issues/481)) ([a938d99](https://github.com/sholdee/drydock/commit/a938d9941e4510d8301d11c6c3a7e59c0028f3a3))
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.6.1 ([0ce8df0](https://github.com/sholdee/drydock/commit/0ce8df0ea615b233b6bee634051c64e640ac980d))
+* **deps:** update module github.com/bmatcuk/doublestar/v4 to v4.10.4 ([#455](https://github.com/sholdee/drydock/issues/455)) ([512b580](https://github.com/sholdee/drydock/commit/512b580cd7bf69696222fbe119f326404a17643b))
+* **deps:** update module github.com/itchyny/gojq to v0.12.20 ([#467](https://github.com/sholdee/drydock/issues/467)) ([fc9344e](https://github.com/sholdee/drydock/commit/fc9344eb50dcb1fe507d07fc38e2209b7697a7a9))
+* **deps:** update module go.yaml.in/yaml/v2 to v2.4.5 ([#484](https://github.com/sholdee/drydock/issues/484)) ([79f75c9](https://github.com/sholdee/drydock/commit/79f75c906239728e8e54d4274b30ca61f4c01822))
+* **deps:** update module go.yaml.in/yaml/v3 to v3.0.6 ([#466](https://github.com/sholdee/drydock/issues/466)) ([e2dddc7](https://github.com/sholdee/drydock/commit/e2dddc7b990be934e07eb057c47e0ebd9ebc2cd0))
+* **deps:** update module k8s.io/api to v0.37.2 ([#469](https://github.com/sholdee/drydock/issues/469)) ([291a630](https://github.com/sholdee/drydock/commit/291a6300937a6339a3966aee2247fe5acd4e8788))
+* **deps:** update module k8s.io/apimachinery to v0.37.2 ([#462](https://github.com/sholdee/drydock/issues/462)) ([462fb20](https://github.com/sholdee/drydock/commit/462fb209d1772ef213956e7b94a1734480e20756))
+* **deps:** update module k8s.io/client-go to v0.37.2 ([#477](https://github.com/sholdee/drydock/issues/477)) ([965da90](https://github.com/sholdee/drydock/commit/965da90b05c240502420ba75373f43d7fcadad38))
+* **diff:** match Argo CD diff normalization and check it against live sync status ([#490](https://github.com/sholdee/drydock/issues/490)) ([0564a3b](https://github.com/sholdee/drydock/commit/0564a3bb69327569e7e5f7729a3d3ab72243d1e5))
+* **diff:** match Argo CD v3.6.1 ignore-differences normalization ([#475](https://github.com/sholdee/drydock/issues/475)) ([405b8c8](https://github.com/sholdee/drydock/commit/405b8c88c13bc009e57e0244a6f72b91210c6a92))
+* **diff:** pass the repository root to mergeArgocdSourceOverrides ([#494](https://github.com/sholdee/drydock/issues/494)) ([12a7e93](https://github.com/sholdee/drydock/commit/12a7e934e126afe3f24b93d58759597d1c0f2a17))
+* **manifest:** add Kubernetes 1.37 built-in kinds to the scope tables ([0306307](https://github.com/sholdee/drydock/commit/0306307d6777b9cd5fc28df283dd0e261d021701))
+* **project:** match Argo CD 3.6.1 AppProject destination policy ([917b26e](https://github.com/sholdee/drydock/commit/917b26eb3cc2171a5ea5cda147a627134d06b038))
+* **project:** select in-cluster name destinations on in-cluster Secret changes ([caa87a7](https://github.com/sholdee/drydock/commit/caa87a7f81eb51db2178e6dcfde56123a238bc1e))
+* **render:** check and read Application specs like Argo CD ([#496](https://github.com/sholdee/drydock/issues/496)) ([c82a835](https://github.com/sholdee/drydock/commit/c82a8354975ed829effba37c2828df1966f24f52))
+* **render:** decode directory sources in Argo CD v3.6.1 stage order ([#482](https://github.com/sholdee/drydock/issues/482)) ([84b0a2a](https://github.com/sholdee/drydock/commit/84b0a2a61dff702a4ea2c9bfd9a6b57856ee6d43))
+* **render:** decode Helm, Kustomize and plugin output like Argo CD v3.6.1 ([#486](https://github.com/sholdee/drydock/issues/486)) ([f06c15d](https://github.com/sholdee/drydock/commit/f06c15d2c73d1d70478dc35f4c65230b63b2e73f))
+* **render:** fail directory sources on JSON objects and list items without a kind ([#474](https://github.com/sholdee/drydock/issues/474)) ([c178bd6](https://github.com/sholdee/drydock/commit/c178bd628617e75c388231350b9fd54707a954ed))
+* **render:** follow directory symlinks and check out-of-bounds symlinks like Argo CD ([#488](https://github.com/sholdee/drydock/issues/488)) ([5014faf](https://github.com/sholdee/drydock/commit/5014faf34092ceaa81c11a8bf878d69498f8837b))
+* **render:** keep directory.extension-filter-disabled advisory under --strict ([5e71dcc](https://github.com/sholdee/drydock/commit/5e71dcc96c212337f3f89f3b448db0e3e1ba389e))
+* **render:** read Helm value files, version ranges and dependencies like Argo CD ([#499](https://github.com/sholdee/drydock/issues/499)) ([ad4ddfc](https://github.com/sholdee/drydock/commit/ad4ddfc58e9dbfa8156c65faf0a58efc85b05843))
+* **render:** render Helm releases and helmCharts like Argo CD and read the source type gates ([#497](https://github.com/sholdee/drydock/issues/497)) ([14343a2](https://github.com/sholdee/drydock/commit/14343a28e21ca2cd16863699511254fd97b9e852))
+* **render:** resolve ARGOCD_APP_REVISION like the Argo CD repo-server ([#493](https://github.com/sholdee/drydock/issues/493)) ([b59a38d](https://github.com/sholdee/drydock/commit/b59a38d9960449be4896cd387aba9e13164132b0))
+* **render:** resolve Helm fileParameters symlinks like Argo CD ([#492](https://github.com/sholdee/drydock/issues/492)) ([6c41644](https://github.com/sholdee/drydock/commit/6c41644f07244ae384ab4693c97c91ba2ac0cc5a))
+* **render:** select Applications when an absolute component's file changes ([#479](https://github.com/sholdee/drydock/issues/479)) ([f499216](https://github.com/sholdee/drydock/commit/f499216ffcd4674fb4a650456d7e8da4748fe679))
+* **settings:** resolve resource.selectors destinations through project policy ([c28f3df](https://github.com/sholdee/drydock/commit/c28f3dfeba6372f0901adb09592fa7612ad624d3))
+* tab-leading YAML strings and Helm values discovery keys ([#483](https://github.com/sholdee/drydock/issues/483)) ([3ccc690](https://github.com/sholdee/drydock/commit/3ccc6901d0073a969e1ffa9a1f6ce731ad1e8759))
+
+
+### Documentation
+
+* **design:** describe the OCI generator and scoped generator template errors ([5babeae](https://github.com/sholdee/drydock/commit/5babeae2f252a6fd205181063067abdfb4a48a8d))
+* finish re-baselining compatibility notes on Argo CD v3.6.1 ([6418898](https://github.com/sholdee/drydock/commit/641889823c05bcebaa8aaad39fee6361c7e377f1))
+* **ociartifact:** refresh vendored OCI client citations for Argo CD v3.6.1 ([dfd91e0](https://github.com/sholdee/drydock/commit/dfd91e01cfadfb4ab26ec67b18f2a7ef1add1f3b))
+
+
+### Miscellaneous Chores
+
+* **deps:** mark k8s.io/api as a direct dependency ([4ca500e](https://github.com/sholdee/drydock/commit/4ca500e0799a83c0167fe3041b76614df4252370))
+* **deps:** update dependency hugo to v0.169.0 ([#459](https://github.com/sholdee/drydock/issues/459)) ([d9817ae](https://github.com/sholdee/drydock/commit/d9817ae11a1d0b99a3862c61c0e6547a5c9bb3b9))
+* **deps:** update dependency oras to v1.3.6 ([#457](https://github.com/sholdee/drydock/issues/457)) ([ead3c44](https://github.com/sholdee/drydock/commit/ead3c44f9b2c103f6dfc1cd0ab9114c2cdf936f5))
+* **deps:** update dependency zizmor to v1.32.0 ([#480](https://github.com/sholdee/drydock/issues/480)) ([e1f62c5](https://github.com/sholdee/drydock/commit/e1f62c52b8054ede5c819e1787b6c2c5020361bb))
+* **deps:** update golang:1.27.3 docker digest to 2920bb1 ([#464](https://github.com/sholdee/drydock/issues/464)) ([838f358](https://github.com/sholdee/drydock/commit/838f3585a7976c557b97fa36c51b5c80e3547ab2))
+* **deps:** update module golang.org/x/net to v0.62.0 ([#460](https://github.com/sholdee/drydock/issues/460)) ([85f8947](https://github.com/sholdee/drydock/commit/85f8947a70e8f7d0f2f77493936a2f1e003a2865))
+
 ## [0.3.8](https://github.com/sholdee/drydock/compare/v0.3.7...v0.3.8) (2026-10-23)
 
 
