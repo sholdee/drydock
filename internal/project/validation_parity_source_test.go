@@ -209,3 +209,20 @@ func TestValidateApplicationsHydratorSourceRepositories(t *testing.T) {
 		})
 	}
 }
+
+// TestRepositoryMetadataChecksHydratorDrySource pins that the repository
+// metadata check covers the dry source repository of a source hydrator.
+func TestRepositoryMetadataChecksHydratorDrySource(t *testing.T) {
+	const dry = "https://github.com/example/config"
+	app := sourceParityApplication(nil)
+	app.Spec.SourceHydrator = &argoappv1.SourceHydrator{
+		DrySource:  argoappv1.DrySource{RepoURL: dry, Path: "app", TargetRevision: "main"},
+		SyncSource: argoappv1.SyncSource{RepoURL: "https://github.com/example/deployments", TargetBranch: "env/prod", Path: "app"},
+	}
+	settings := config.DefaultSettings()
+	settings.HelmRepositories[dry] = config.RepositorySettings{URL: dry, Project: "other"}
+	diags := repositoryMetadataDiagnostics(app, settings)
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "github.com/example/config") {
+		t.Fatalf("repository metadata diagnostics = %#v, want one for the dry source repository", diags)
+	}
+}

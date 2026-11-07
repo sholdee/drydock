@@ -63,3 +63,22 @@ func TestRepositoryMatchReaches(t *testing.T) {
 		})
 	}
 }
+
+// TestRepositoryMatchReachesHydratorDrySource pins that a repository entry
+// for the dry source repository of a source hydrator reaches the
+// Application: Argo CD checks that repository (ValidatePermissions,
+// util/argo/argo.go:705-717 at v3.6.1), though it renders only the sync
+// source. The sync source repository reaches it too.
+func TestRepositoryMatchReachesHydratorDrySource(t *testing.T) {
+	const dry = "https://github.com/example/config"
+	const sync = "https://github.com/example/deployments"
+	app := argoappv1.Application{Spec: argoappv1.ApplicationSpec{SourceHydrator: &argoappv1.SourceHydrator{
+		DrySource:  argoappv1.DrySource{RepoURL: dry, Path: "app", TargetRevision: "main"},
+		SyncSource: argoappv1.SyncSource{RepoURL: sync, TargetBranch: "env/prod", Path: "app"},
+	}}}
+	for _, repoURL := range []string{dry, sync} {
+		if !NewRepositoryMatch(repoURL, config.RepositorySettings{URL: repoURL}).Reaches(app) {
+			t.Fatalf("repository %s does not reach the hydrator Application", repoURL)
+		}
+	}
+}

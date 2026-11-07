@@ -950,3 +950,20 @@ func TestCombineStatusesNeverRaisesReadinessForInfo(t *testing.T) {
 		})
 	}
 }
+
+// TestApplicationSourcesUseHydratorSyncSource pins that plugin onboarding
+// reads the sources drydock renders: the sync source of a source hydrator,
+// not a plugin source in spec.source, which Argo CD ignores.
+func TestApplicationSourcesUseHydratorSyncSource(t *testing.T) {
+	app := argoappv1.Application{Spec: argoappv1.ApplicationSpec{
+		Source: &argoappv1.ApplicationSource{RepoURL: "https://example.test/repo.git", Path: "ignored", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "pkl"}},
+		SourceHydrator: &argoappv1.SourceHydrator{
+			DrySource:  argoappv1.DrySource{RepoURL: "https://example.test/repo.git", Path: "dry"},
+			SyncSource: argoappv1.SyncSource{TargetBranch: "env/prod", Path: "hydrated"},
+		},
+	}}
+	sources := applicationSources(app)
+	if len(sources) != 1 || sources[0].Plugin != nil || sources[0].Path != "hydrated" {
+		t.Fatalf("applicationSources() = %#v, want only the sync source", sources)
+	}
+}

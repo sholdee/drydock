@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 )
 
 // argocdApplicationList is trimmed `kubectl get applications -o json`
@@ -179,5 +181,21 @@ func TestCompareApplicationsRejectsTrailingDrydockData(t *testing.T) {
 		if _, _, err := compareApplicationLists(t, argocdApplicationList, drydockApplicationList+"\n"+trailing); err == nil || !strings.Contains(err.Error(), "unexpected data after the Application list") {
 			t.Fatalf("CompareApplications() with trailing %q error = %v, want a trailing data error", trailing, err)
 		}
+	}
+}
+
+// TestProjectArgoCDApplicationUsesHydratorSyncSource pins the Argo CD side
+// projection of an Application with spec.sourceHydrator: the sync source,
+// as `drydock get apps` prints it.
+func TestProjectArgoCDApplicationUsesHydratorSyncSource(t *testing.T) {
+	projection := projectArgoCDApplication(argoappv1.Application{Spec: argoappv1.ApplicationSpec{
+		Source: &argoappv1.ApplicationSource{RepoURL: "https://example.test/repo.git", Path: "ignored"},
+		SourceHydrator: &argoappv1.SourceHydrator{
+			DrySource:  argoappv1.DrySource{RepoURL: "https://example.test/repo.git", Path: "dry"},
+			SyncSource: argoappv1.SyncSource{TargetBranch: "env/prod", Path: "hydrated"},
+		},
+	}})
+	if len(projection.Sources) != 1 || projection.Sources[0]["path"] != "hydrated" || projection.Sources[0]["targetRevision"] != "env/prod" {
+		t.Fatalf("projection sources = %#v, want the sync source", projection.Sources)
 	}
 }

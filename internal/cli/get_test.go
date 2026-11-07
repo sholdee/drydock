@@ -563,3 +563,20 @@ func TestGetAppsProjectsDefaultEmptyProject(t *testing.T) {
 		t.Fatalf("project = %#v, want %q", got, argoappv1.DefaultAppProjectName)
 	}
 }
+
+// TestGetAppsSourcesShowHydratorSyncSource pins the sources that `get apps`
+// prints for an Application with spec.sourceHydrator: the sync source that
+// Argo CD compares (ApplicationSpec.GetSources), not spec.source.
+func TestGetAppsSourcesShowHydratorSyncSource(t *testing.T) {
+	application := argoappv1.Application{Name: "demo", Namespace: "argocd", Spec: argoappv1.ApplicationSpec{
+		Source: &argoappv1.ApplicationSource{RepoURL: "https://example.test/repo.git", Path: "ignored"},
+		SourceHydrator: &argoappv1.SourceHydrator{
+			DrySource:  argoappv1.DrySource{RepoURL: "https://example.test/repo.git", Path: "dry", TargetRevision: "main"},
+			SyncSource: argoappv1.SyncSource{TargetBranch: "env/prod", Path: "hydrated"},
+		},
+	}}
+	sources := applicationSources(application)
+	if len(sources) != 1 || sources[0].Path != "hydrated" || sources[0].TargetRevision != "env/prod" || sources[0].RepoURL != "https://example.test/repo.git" {
+		t.Fatalf("applicationSources() = %#v, want the sync source", sources)
+	}
+}

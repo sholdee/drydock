@@ -431,7 +431,7 @@ func rbacMetadataDiagnostics(proj argoappv1.AppProject) []diagnostic.Diagnostic 
 func repositoryMetadataDiagnostics(app argoappv1.Application, settings config.ArgoSettings) []diagnostic.Diagnostic {
 	diags := make([]diagnostic.Diagnostic, 0)
 	projectName := applicationProject(app)
-	for _, source := range app.Spec.GetSources() {
+	for _, source := range projectCheckedSources(app.Spec) {
 		repoURL := strings.TrimSpace(source.RepoURL)
 		if repoURL == "" {
 			continue
