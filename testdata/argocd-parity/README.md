@@ -1581,11 +1581,12 @@ Both Argo CD and drydock must render this `data`:
 | `parity-kustomize-helm-defaults-defaults` | `hasFlagAPI` | `false` |
 
 Keep the `helmCharts` entry the only one in that kustomization. kustomize
-v5.8.3 copies the flag values into each entry without their backing array,
-so the `apiVersions` of one entry overwrite the flag values that the other
-entries of the build see. drydock does not copy that defect, so a second
-entry without `apiVersions` would differ. `parity-kustomize-helm-capabilities`
-pins an entry without `apiVersions`, which keeps the flag values.
+v5.8.3 gives each entry the flag values without a copy, so the
+`apiVersions` of one entry overwrite the flag values that the other entries
+of the build see. The
+[shared API versions fixture](#kustomize-helmcharts-shared-api-versions-fixture)
+pins that defect. `parity-kustomize-helm-capabilities` pins an entry without
+`apiVersions`, which keeps the flag values.
 
 ## Source type gate phase
 
@@ -1777,3 +1778,67 @@ depend on the diff mode.
 - A `resource.customizations` jq expression that does not parse. Argo CD
   builds those patches for every Application, so it would fail every
   Application in the cluster. Unit tests in `internal/app` cover it.
+
+## Kustomize helmCharts shared API versions fixture
+
+`applications/kustomize-helm-shared-api-versions.yaml`
+(`parity-kustomize-helm-shared-api-versions`) renders
+`workloads/kustomize-helm-shared-api-versions` in the main comparison, with
+the `--enable-helm` of the smoke `argocd-cm`. The Application sets two
+`kustomize.apiVersions`, and Argo CD passes each as one
+`--helm-api-versions` flag. The kustomization has two `helmCharts` entries
+of one chart. The first entry, `own`, sets
+`apiVersions: [entry.parity.example.com/v1]`. The second entry, `flags`,
+sets none.
+
+kustomize v5.8.3 gives each entry the slice of flag values itself and
+decodes the `apiVersions` of the entry into it. So `own` writes its API
+version over the first flag value, and `flags` sees
+`entry.parity.example.com/v1` and `flag.parity.example.com/two`. Both
+sides must render this `data`:
+
+| ConfigMap | `hasEntryAPI` | `hasFlagOneAPI` | `hasFlagTwoAPI` |
+| --- | --- | --- | --- |
+| `parity-kustomize-helm-shared-api-versions-own` | `true` | `false` | `false` |
+| `parity-kustomize-helm-shared-api-versions-flags` | `true` | `false` | `true` |
+
+## Kustomize build options phases
+
+`kustomize-build-options/` holds three more fixture repos, one for each
+phase that runs after the source type gate phase. Each phase repo has
+`kbuild-<phase>/argocd-cm.yaml` and `kbuild-<phase>/applications.yaml`. The
+smoke copies the repos into the Git repository that it serves, as it copies
+the source type gate repo.
+
+For each phase, `run_kustomize_build_options_phase` merges the
+`argocd-cm.yaml` of the phase into the live `argocd-cm` with `kubectl patch
+--type merge`, so `kustomize.buildOptions` changes and the other keys stay.
+Then it applies the Applications and reads `<phase>/expected.psv`. Each line
+of that file is one Application:
+
+1. A `render` line names the text that the Argo CD capture must hold and
+   the text that it must not hold. The API server reads `argocd-cm` through
+   an informer, so the smoke captures with a hard refresh until the capture
+   shows the value of the phase. Then the smoke compares the manifests of
+   the two sides in `compare-kustomize-build-options-<phase>/`.
+2. A `fail` line names the text of the Argo CD `ComparisonError` and the
+   text of the drydock error. The smoke waits for that condition, with a
+   hard refresh, and requires `drydock build app` to fail with that text.
+
+drydock renders each phase with `--path` and `--repo-map` set to the phase
+repo, so it reads the `argocd-cm.yaml` of the phase. At the end, the smoke
+deletes the Applications and sets `kustomize.buildOptions` back to
+`--enable-helm`, the value of the fixture install. Each run also sets that
+value right after it logs in, in case a failed `--keep-cluster` run left
+another value. `TestKustomizeBuildOptionsSmokeFixture` in `internal/app`
+renders the three phases offline.
+
+| Phase | `kustomize.buildOptions` | What it pins |
+| --- | --- | --- |
+| `alpha` | `--enable-alpha-plugins --helm-kube-version 1.29.0 --helm-api-versions parity.example.com/v1/FromBuildOptions --enable-managedby-label --reorder none --load-restrictor=` and the flags that change nothing | Without the text `--enable-helm`, Argo CD adds no kube or API versions, so `helmCharts` get `v1.29.0` and not the `kustomize.kubeVersion` or `kustomize.apiVersions` of the Application. Alpha plugins turn Helm on. The shared API versions defect without Argo CD flags. The managed-by label `kustomize-v5.8.3` on every resource |
+| `no-helm` | `--enable-helm=false --load-restrictor LoadRestrictionsRootOnly` | A plain source renders. `helmCharts` fail with `must specify --enable-helm`. A `kustomize.version: v9.9.9` that `argocd-cm` does not register fails with `kustomize version v9.9.9 is not registered` |
+| `unknown-flag` | `--enable-helm --no-such-flag` | Every Kustomize source fails with `unknown flag: --no-such-flag` |
+
+The `alpha` phase cannot show the order of the output: the comparison sorts
+resources by identity. `TestKustomizeReorderNoneKeepsResourceOrder` and
+`TestKustomizeDefaultOrderIsLegacy` in `internal/render` pin the order.

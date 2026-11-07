@@ -1,0 +1,10 @@
+# The smoke merges this file into the live argocd-cm with kubectl patch
+# --type merge before it applies applications.yaml, and drydock reads it
+# from this repo. The value holds the text --enable-helm, so Argo CD adds the kube and API versions, but kustomize keeps Helm off.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  kustomize.buildOptions: --enable-helm=false --load-restrictor LoadRestrictionsRootOnly

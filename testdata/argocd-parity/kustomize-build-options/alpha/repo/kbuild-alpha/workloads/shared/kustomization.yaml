@@ -1,0 +1,12 @@
+# kustomize 5.8.3 decodes the apiVersions of the first entry into the slice
+# of --helm-api-versions values, so the second entry sees FromEntry in
+# place of FromBuildOptions.
+helmCharts:
+  - name: probe
+    releaseName: parity-kbuild-alpha-shared-own
+    namespace: parity-kbuild-alpha
+    apiVersions:
+      - parity.example.com/v1/FromEntry
+  - name: probe
+    releaseName: parity-kbuild-alpha-shared-flags
+    namespace: parity-kbuild-alpha

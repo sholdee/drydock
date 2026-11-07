@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# kustomize 5.8.3 gives each entry the slice of --helm-api-versions values
+# itself, and decodes the apiVersions of an entry into it. So the entry
+# "own" overwrites the first flag value, and the entry "flags" then sees
+# entry.parity.example.com/v1 and flag.parity.example.com/two.
+helmCharts:
+  - name: shared-probe
+    releaseName: own
+    namespace: parity-kustomize-helm-shared-api-versions
+    apiVersions:
+      - entry.parity.example.com/v1
+  - name: shared-probe
+    releaseName: flags
+    namespace: parity-kustomize-helm-shared-api-versions

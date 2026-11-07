@@ -1,0 +1,10 @@
+# The smoke merges this file into the live argocd-cm with kubectl patch
+# --type merge before it applies applications.yaml, and drydock reads it
+# from this repo. The value names no --enable-helm, so Argo CD adds no --helm-kube-version or --helm-api-versions.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  kustomize.buildOptions: --enable-alpha-plugins --helm-kube-version 1.29.0 --helm-api-versions parity.example.com/v1/FromBuildOptions --enable-managedby-label --reorder none --load-restrictor= --helm-debug --helm-command=helm --network --network-name host -e PARITY=1 --mount type=bind,source=/tmp,target=/tmp --as-current-user --stack-trace
