@@ -1650,9 +1650,15 @@ Supported:
   them. drydock lists directories for the globs only inside the
   repository. A directory outside it, or a path whose text enters `.git`,
   adds no matches. The globs resolve each path element in order, as the OS
-  does, so a `..` after a symlink goes up from the symlink's target. A
-  symlink that leads out of the repository or into `.git` fails with
-  drydock's symlink error before drydock lists or reads anything there.
+  does. A `..` after a symlink goes up from the symlink's target, and a
+  `..` after a missing element or a file finds no match. An entry without
+  a match is then loaded as a folder after kustomize cleans its text, so
+  `file.yaml/../a` names the folder `a`, as in kustomize. One difference
+  from the OS: an absolute symlink target must start with the repository
+  root, as written or with its symlinks resolved. Any other absolute target
+  counts as outside the repository. A symlink that leads out of the
+  repository or into `.git` fails with drydock's symlink error before
+  drydock lists or reads anything there.
   Any other symlink is followed. When it leads to no match, such as a
   folder without the wanted entry or a file, it adds nothing, as in Argo
   CD. When a match passes through it, the render fails with the symlink
