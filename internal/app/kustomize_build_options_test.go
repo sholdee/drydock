@@ -208,12 +208,15 @@ func TestKustomizeManagedByLabelNamesArgoCDKustomize(t *testing.T) {
 		{name: "flag", kustomization: "resources: [cm.yaml]\n", data: "  kustomize.buildOptions: --enable-managedby-label\n", want: "kustomize-v5.8.3"},
 		{name: "build metadata", kustomization: "resources: [cm.yaml]\nbuildMetadata: [managedByLabel]\n", want: "kustomize-v5.8.3"},
 		{name: "flag with helmCharts", kustomization: "resources: [cm.yaml]\nhelmCharts:\n  - name: probe\n    releaseName: probe\n", data: "  kustomize.buildOptions: --enable-helm --enable-managedby-label\n", want: "kustomize-v5.8.3"},
+		// Without the option, a label of the source stays.
+		{name: "label of the source", kustomization: "resources: [labeled.yaml]\n", data: "  kustomize.buildOptions: --enable-helm\n", want: "someone-else"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeKustomizeBuildOptionsSource(t, root)
 			writeTestFile(t, filepath.Join(root, "kbuild", "kustomization.yaml"), tc.kustomization)
 			writeTestFile(t, filepath.Join(root, "kbuild", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+			writeTestFile(t, filepath.Join(root, "kbuild", "labeled.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: labeled\n  labels:\n    app.kubernetes.io/managed-by: someone-else\n")
 			writeReviewApplication(t, root, "kbuild", "kbuild", "", "demo")
 			if tc.data != "" {
 				writeReviewArgoCDConfigMap(t, root, tc.data)

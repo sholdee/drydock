@@ -72,8 +72,17 @@ func TestKustomizeBuildOptionsSmokeFixture(t *testing.T) {
 					data[item.Manifest.Object.GetName()] = values
 				}
 			}
+			// The status of each Application, by its exact name: one name
+			// can be a prefix of another, as parity-kbuild-alpha-shared is.
+			statuses := map[string]ApplicationStatus{}
+			for _, status := range result.Statuses {
+				statuses[status.Name] = status
+			}
+			if err != nil && len(statuses) == 0 {
+				t.Fatalf("Build() error = %v", err)
+			}
 			for _, tc := range cases {
-				checkKustomizeBuildOptionsSmokeCase(t, tc, rendered, err)
+				checkKustomizeBuildOptionsSmokeCase(t, tc, rendered, statuses[tc.app])
 			}
 		})
 	}
@@ -98,25 +107,25 @@ func TestKustomizeBuildOptionsSmokeFixture(t *testing.T) {
 	}
 }
 
-func checkKustomizeBuildOptionsSmokeCase(t *testing.T, tc kustomizeBuildOptionsSmokeCase, rendered map[string]string, buildErr error) {
+func checkKustomizeBuildOptionsSmokeCase(t *testing.T, tc kustomizeBuildOptionsSmokeCase, rendered map[string]string, status ApplicationStatus) {
 	t.Helper()
 	text, ok := rendered[tc.app]
 	if tc.kind == "fail" {
 		if ok {
 			t.Errorf("%s rendered, want it to fail", tc.app)
 		}
-		if buildErr == nil || !strings.Contains(buildErr.Error(), tc.app) || !strings.Contains(buildErr.Error(), tc.second) {
-			t.Errorf("Build() error = %v, want %s to fail with %q", buildErr, tc.app, tc.second)
+		if status.Status != ApplicationStatusFail || !strings.Contains(status.Message, tc.second) {
+			t.Errorf("%s status = %#v, want it to fail with %q", tc.app, status, tc.second)
 		}
 		return
 	}
-	if buildErr != nil && strings.Contains(buildErr.Error(), tc.app) {
-		t.Errorf("Build() error = %v, want %s to render", buildErr, tc.app)
+	if status.Status != ApplicationStatusPass {
+		t.Errorf("%s status = %#v, want it to render", tc.app, status)
 		return
 	}
 	// An empty present text allows an empty render.
 	if !ok && tc.first != "" {
-		t.Errorf("%s did not render; Build() error = %v", tc.app, buildErr)
+		t.Errorf("%s did not render", tc.app)
 		return
 	}
 	if !strings.Contains(text, tc.first) {
