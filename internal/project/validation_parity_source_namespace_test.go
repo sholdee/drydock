@@ -160,11 +160,10 @@ func TestValidateApplicationsSourceNamespaceUsesSharedControllerNamespace(t *tes
 			Destination: argoappv1.ApplicationDestination{Server: "https://kubernetes.default.svc", Namespace: "demo"},
 		},
 	}
-	proj := argoappv1.AppProject{Spec: argoappv1.AppProjectSpec{
+	proj := argoappv1.AppProject{ObjectMeta: objectMeta("platform"), Spec: argoappv1.AppProjectSpec{
 		SourceRepos:  []string{"*"},
 		Destinations: []argoappv1.ApplicationDestination{{Server: "*", Namespace: "*"}},
 	}}
-	proj.Name = "platform"
 	denied := func(settings config.ArgoSettings) bool {
 		for _, diag := range ValidateApplications([]argoappv1.Application{app}, []argoappv1.AppProject{proj}, settings) {
 			if diag.Code == diagnostic.CodeProjectSourceNamespaceDenied || strings.Contains(diag.Message, "source namespace") {

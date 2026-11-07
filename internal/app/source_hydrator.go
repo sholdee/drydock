@@ -146,7 +146,10 @@ func (p localProvider) hydratorBranchSnapshot(ctx context.Context, repo, branch 
 		memo = &sync.Map{}
 	}
 	value, _ := memo.LoadOrStore(repo+"\x00"+branch, &hydratorSnapshot{})
-	snapshot := value.(*hydratorSnapshot)
+	snapshot, ok := value.(*hydratorSnapshot)
+	if !ok {
+		return &hydratorSnapshot{err: fmt.Errorf("snapshot memo holds %T", value)}
+	}
 	snapshot.once.Do(func() {
 		root := strings.TrimSpace(p.acquisition.SnapshotRoot)
 		if root == "" {
@@ -208,8 +211,8 @@ func (p localProvider) hydratorSnapshotRevision(source render.ResolvedSource, ro
 	if !ok {
 		return "", false
 	}
-	snapshot := value.(*hydratorSnapshot)
-	if snapshot.err != nil || snapshot.path != root {
+	snapshot, ok := value.(*hydratorSnapshot)
+	if !ok || snapshot.err != nil || snapshot.path != root {
 		return "", false
 	}
 	return snapshot.revision, true

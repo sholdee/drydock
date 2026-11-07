@@ -43,11 +43,10 @@ func TestValidateApplicationsStopsAfterFailedSpecChecks(t *testing.T) {
 			SyncSource: argoappv1.SyncSource{RepoURL: allowed, TargetBranch: "env/prod", Path: "hydrated"},
 		}}, wantSources: 1, wantDestination: true},
 	}
-	proj := argoappv1.AppProject{Spec: argoappv1.AppProjectSpec{
+	proj := argoappv1.AppProject{ObjectMeta: objectMeta("platform"), Spec: argoappv1.AppProjectSpec{
 		SourceRepos:  []string{allowed},
 		Destinations: []argoappv1.ApplicationDestination{{Server: "https://kubernetes.default.svc", Namespace: "allowed"}},
 	}}
-	proj.Name = "platform"
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			upstreamSpec := testCase.spec
