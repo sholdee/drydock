@@ -153,3 +153,38 @@ func TestVersionListUseIsSkippedWhileLocked(t *testing.T) {
 		t.Fatal("version list written while another writer held the lock")
 	}
 }
+
+// TestLoadHelmIndexDecodesYAMLStrictly pins that a YAML index decodes as
+// helm decodes it (jsonOrYamlUnmarshal, helm v4.3.1
+// pkg/repo/v1/index.go:410-415): a field that helm does not know fails a
+// YAML index, while the fields of helm's types, also the deprecated ones,
+// load. A JSON index decodes leniently, as in helm.
+func TestLoadHelmIndexDecodesYAMLStrictly(t *testing.T) {
+	known := `apiVersion: v1
+generated: "2026-01-01T00:00:00Z"
+serverInfo: {contextPath: /charts}
+annotations: {team: a}
+entries:
+  demo:
+    - name: demo
+      version: 1.2.0
+      urls: [demo-1.2.0.tgz]
+      created: "2026-01-01T00:00:00Z"
+      digest: abc
+      checksum: def
+      engine: gotpl
+      tillerVersion: ">=2.0.0"
+      url: demo-1.2.0.tgz
+`
+	if loaded, err := loadHelmIndex([]byte(known)); err != nil || len(loaded["demo"]) != 1 {
+		t.Fatalf("loadHelmIndex(known fields) = %v, %v, want one entry", loaded, err)
+	}
+	unknown := strings.Replace(known, "      digest: abc\n", "      digest: abc\n      mirror: yes\n", 1)
+	if _, err := loadHelmIndex([]byte(unknown)); err == nil || !strings.Contains(err.Error(), `unknown field "mirror"`) {
+		t.Fatalf("loadHelmIndex(unknown field) error = %v, want helm's strict decode error", err)
+	}
+	jsonIndex := `{"apiVersion":"v1","entries":{"demo":[{"name":"demo","version":"1.2.0","urls":["a.tgz"],"mirror":"yes"}]}}`
+	if loaded, err := loadHelmIndex([]byte(jsonIndex)); err != nil || len(loaded["demo"]) != 1 {
+		t.Fatalf("loadHelmIndex(JSON) = %v, %v, want one entry", loaded, err)
+	}
+}

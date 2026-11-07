@@ -6,24 +6,37 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 	"sigs.k8s.io/yaml"
 )
 
-// helmIndexFile is the part of repo.IndexFile (helm v4.3.1
-// pkg/repo/v1/index.go:82-93) that loading an index reads.
+// helmIndexFile is repo.IndexFile (helm v4.3.1 pkg/repo/v1/index.go:81-93).
+// It has every field of helm's type, because helm decodes a YAML index
+// strictly and fails on a field it does not know.
 type helmIndexFile struct {
-	APIVersion string                       `json:"apiVersion"`
-	Entries    map[string]helmChartVersions `json:"entries"`
+	ServerInfo  map[string]any               `json:"serverInfo,omitempty"`
+	APIVersion  string                       `json:"apiVersion"`
+	Generated   time.Time                    `json:"generated"`
+	Entries     map[string]helmChartVersions `json:"entries"`
+	PublicKeys  []string                     `json:"publicKeys,omitempty"`
+	Annotations map[string]string            `json:"annotations,omitempty"`
 }
 
-// helmChartVersion is the part of repo.ChartVersion (helm v4.3.1
-// pkg/repo/v1/index.go:286-301) that drydock reads.
+// helmChartVersion is repo.ChartVersion (helm v4.3.1
+// pkg/repo/v1/index.go:285-311), with every field of helm's type.
 type helmChartVersion struct {
 	*chartv2.Metadata
-	URLs []string `json:"urls"`
+	URLs                    []string  `json:"urls"`
+	Created                 time.Time `json:"created"`
+	Removed                 bool      `json:"removed,omitempty"`
+	Digest                  string    `json:"digest,omitempty"`
+	ChecksumDeprecated      string    `json:"checksum,omitempty"`
+	EngineDeprecated        string    `json:"engine,omitempty"`
+	TillerVersionDeprecated string    `json:"tillerVersion,omitempty"`
+	URLDeprecated           string    `json:"url,omitempty"`
 }
 
 // helmChartVersions is repo.ChartVersions (helm v4.3.1
@@ -54,14 +67,15 @@ var (
 	errHelmEmptyIndex   = errors.New("empty index.yaml file")
 )
 
-// loadHelmIndex reads an index as helm loads it (loadIndex, helm v4.3.1
-// pkg/repo/v1/index.go:359-399): it drops each entry that fails
-// Metadata.Validate, such as one whose version is not semver, sorts each
-// chart's entries with the same unstable sort.Sort(sort.Reverse(...)) call
-// on the same input order, and fails an index without an apiVersion. So
-// drydock picks the same entry as helm among semver-equal versions such as
-// 1.2.0, v1.2.0, and 1.2.0+a. drydock decodes the index leniently, where
-// helm rejects a YAML index with unknown fields.
+// loadHelmIndex reads an index as helm loads it (loadIndex and
+// jsonOrYamlUnmarshal, helm v4.3.1 pkg/repo/v1/index.go:359-415): it
+// decodes a JSON index leniently and a YAML index strictly, so a YAML
+// index with a field that helm does not know fails, drops each entry that
+// fails Metadata.Validate, such as one whose version is not semver, sorts
+// each chart's entries with the same unstable sort.Sort(sort.Reverse(...))
+// call on the same input order, and fails an index without an apiVersion.
+// So drydock picks the same entry as helm among semver-equal versions such
+// as 1.2.0, v1.2.0, and 1.2.0+a.
 func loadHelmIndex(data []byte) (map[string][]repositoryChartVersion, error) {
 	if len(data) == 0 {
 		return nil, errHelmEmptyIndex
@@ -71,7 +85,7 @@ func loadHelmIndex(data []byte) (map[string][]repositoryChartVersion, error) {
 	if json.Valid(data) {
 		err = json.Unmarshal(data, &index)
 	} else {
-		err = yaml.Unmarshal(data, &index)
+		err = yaml.UnmarshalStrict(data, &index)
 	}
 	if err != nil {
 		return nil, err
