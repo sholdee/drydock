@@ -121,7 +121,7 @@ inputs:
     description: Kubernetes version of the destination cluster for rendering capabilities. A per-app kubeVersion wins over it.
     required: false
   api-versions:
-    description: Newline-delimited additional Kubernetes API versions for capability-gated rendering, unioned with per-app apiVersions. Accepts group/version or group/version/Kind form.
+    description: Newline-delimited Kubernetes API versions of the destination cluster for capability-gated rendering. Per-app apiVersions replace them, as in Argo CD. Accepts group/version or group/version/Kind form.
     required: false
   parallelism:
     description: Maximum number of Applications to render concurrently.

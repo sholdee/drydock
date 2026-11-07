@@ -491,14 +491,15 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 }
 
 // applyCapabilityOptions applies the global capability options onto render
-// opts. --kube-version stands for the kube version of the destination
-// cluster, so a per-app kubeVersion wins over it, as
-// ApplicationSource.GetKubeVersionOrDefault picks it in Argo CD v3.6.1
-// (pkg/apis/application/v1alpha1/types.go:385-398). APIVersions are unioned
-// (deduped, sorted).
+// opts. --kube-version and --api-versions stand for the destination
+// cluster, so a per-app kubeVersion or apiVersions wins over them, as
+// ApplicationSource.GetKubeVersionOrDefault and GetAPIVersionsOrDefault pick
+// them in Argo CD v3.6.1 (pkg/apis/application/v1alpha1/types.go:385-412):
+// per-app apiVersions replace the cluster API versions, in their order.
+// The --api-versions values are deduped and sorted.
 func applyCapabilityOptions(opts render.RenderOptions, capabilities CapabilityOptions) (render.RenderOptions, error) {
-	if len(capabilities.APIVersions) != 0 {
-		opts.APIVersions = dedupeSortedStrings(append(opts.APIVersions, capabilities.APIVersions...))
+	if len(capabilities.APIVersions) != 0 && len(opts.APIVersions) == 0 {
+		opts.APIVersions = dedupeSortedStrings(capabilities.APIVersions)
 	}
 	if capabilities.KubeVersion != "" && opts.KubeVersion == "" {
 		normalized, err := parseKubeVersion(capabilities.KubeVersion)

@@ -508,7 +508,7 @@ extra-diff-args: |
 | `discover-manifest` | unset | Newline-delimited Argo CD `Application` or `ApplicationSet` YAML files outside the repository to add to discovery. Paths are absolute or relative to the workspace; `..` components are rejected. Applies to test, diff, and image diff steps. |
 | `repo-map` | unset | Newline-delimited repository URL mappings in `URL=PATH` form. |
 | `kube-version` | unset | Kubernetes version of the destination cluster for rendering capabilities. A per-app `kubeVersion` wins over it. |
-| `api-versions` | unset | Newline-delimited additional Kubernetes API versions for capability-gated rendering, unioned with per-app `apiVersions`. Accepts `group/version` or `group/version/Kind` form. |
+| `api-versions` | unset | Newline-delimited Kubernetes API versions of the destination cluster for capability-gated rendering. Per-app `apiVersions` replace them, as in Argo CD. Accepts `group/version` or `group/version/Kind` form. |
 | `parallelism` | unset | Maximum number of Applications to render concurrently. |
 | `max-discovery-depth` | unset | Maximum recursive rendered Application discovery depth. |
 | `enable-avp-compat` | `false` | Force argocd-vault-plugin placeholder redaction for native-rendered sources. |

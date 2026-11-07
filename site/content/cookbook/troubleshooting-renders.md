@@ -64,9 +64,10 @@ capabilities:
   A per-app `kubeVersion` wins over it, as in Argo CD. With an explicit
   version, a chart `kubeVersion` constraint that the version does not meet
   fails the source. Without one, drydock skips that check.
-- `--api-versions` adds Kubernetes API versions for capability-gated rendering.
-  The flag is repeatable, and the values are unioned (deduped and sorted) with
-  each app's per-app `apiVersions` rather than replacing them. Accept either the
+- `--api-versions` sets the Kubernetes API versions of the destination
+  cluster for capability-gated rendering. The flag is repeatable, and the
+  values are deduped and sorted. An app with per-app `apiVersions` uses only
+  those, as Argo CD does. Accept either the
   `group/version` form (`monitoring.coreos.com/v1`) or the full
   `group/version/Kind` form (`monitoring.coreos.com/v1/ServiceMonitor`). Many
   charts check the full `group/version/Kind` form against

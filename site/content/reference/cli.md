@@ -269,9 +269,10 @@ tracks a real cluster version. Use `--kube-version` to set the version of
 the destination cluster. A per-app `kubeVersion` wins over it, as in Argo CD.
 drydock checks a chart `kubeVersion` constraint only against an explicit
 version. Use repeatable
-`--api-versions` to add API versions for capability-gated rendering, unioned
-(deduped and sorted) with each app's per-app `apiVersions` rather than replacing
-them. Values accept the `group/version` form (`monitoring.coreos.com/v1`) or the
+`--api-versions` to give the API versions of the destination cluster for
+capability-gated rendering. The values are deduped and sorted. An app with
+per-app `apiVersions` uses only those, as Argo CD does
+(`GetAPIVersionsOrDefault`). Values accept the `group/version` form (`monitoring.coreos.com/v1`) or the
 full `group/version/Kind` form (`monitoring.coreos.com/v1/ServiceMonitor`); many
 charts check the `group/version/Kind` form against `.Capabilities.APIVersions`,
 so pass that form when a gated resource still does not render. Both flags are
