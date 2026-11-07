@@ -156,10 +156,14 @@ func refreshGitRepository(ctx context.Context, repo *git.Repository, worktree *g
 }
 
 func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL string, auth transport.AuthMethod, credentials GitCredentials) error {
+	// Prune drops the remote-tracking refs of branches that the remote
+	// deleted, so a deleted branch stops resolving after a refresh, as
+	// ls-remote in the Argo CD repo-server no longer finds it.
 	err := repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: "origin",
 		Auth:       auth,
 		Tags:       git.AllTags,
+		Prune:      true,
 	})
 	if err == nil || errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return nil
@@ -237,11 +241,18 @@ func resolveGitRevision(repo *git.Repository, revision string) (*plumbing.Hash, 
 	return nil, lastErr
 }
 
+// gitRevisionCandidates lists the refs that a remote Kustomize Git ref
+// resolves through, in order. A branch resolves from the remote-tracking ref
+// of the clone first: a fetch with --refresh-remote-resources updates
+// refs/remotes/origin/<branch>, but never the local branch that the clone
+// created for the default branch, which would stay at the commit of clone
+// time. kustomize fetches the ref from the remote, which gives the remote's
+// current commit.
 func gitRevisionCandidates(revision string) []plumbing.Revision {
 	if branch, ok := strings.CutPrefix(revision, "refs/heads/"); ok {
 		return []plumbing.Revision{
-			plumbing.Revision(revision),
 			plumbing.Revision("refs/remotes/origin/" + branch),
+			plumbing.Revision(revision),
 		}
 	}
 	if tag, ok := strings.CutPrefix(revision, "refs/tags/"); ok {
@@ -251,10 +262,10 @@ func gitRevisionCandidates(revision string) []plumbing.Revision {
 		}
 	}
 	return []plumbing.Revision{
-		plumbing.Revision(revision),
-		plumbing.Revision("refs/heads/" + revision),
 		plumbing.Revision("refs/remotes/origin/" + revision),
+		plumbing.Revision("refs/heads/" + revision),
 		plumbing.Revision("refs/tags/" + revision),
+		plumbing.Revision(revision),
 	}
 }
 

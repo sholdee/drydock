@@ -131,56 +131,59 @@ func TestPinnedRevision(t *testing.T) {
 }
 
 // git checkout gives an abbreviated SHA no type hint, so every object type
-// counts: an abbreviation that a commit and a tree or blob share is
-// ambiguous, and one that only a tree or blob matches names no commit.
-// Seven hex digits cannot be made to collide in a test, so this uses a
-// one-digit prefix.
+// counts: an abbreviation that a commit and a blob share is ambiguous, and
+// one that only a tree matches names no commit. The test writes blobs until
+// one shares the first two hex digits of the commit. The contents are fixed,
+// so the same blob matches on every run.
 func TestResolveAbbreviatedCommitCountsEveryObjectType(t *testing.T) {
 	fixture := createGitFixture(t)
-	commits := make([]plumbing.Hash, 0, 32)
-	isCommit := map[plumbing.Hash]bool{}
-	for i := range 32 {
-		hash := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", fmt.Sprintf("version: %d\n", i))
-		commits = append(commits, hash)
-		isCommit[hash] = true
+	commit := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", "version: one\n")
+	prefix := commit.String()[:2]
+	blob := blobWithPrefix(t, fixture.repo, prefix)
+	if _, _, err := resolveAbbreviatedCommit(fixture.repo, prefix); err == nil || !strings.Contains(err.Error(), "is ambiguous") {
+		t.Fatalf("resolveAbbreviatedCommit(%q) error = %v, want ambiguous for commit %s and blob %s", prefix, err, commit, blob)
 	}
-	digit := commitAndOtherObjectDigit(fixture.repo, isCommit)
-	if digit == "" {
-		t.Skip("no first digit is shared by exactly one commit and another object")
-	}
-	if _, _, err := resolveAbbreviatedCommit(fixture.repo, digit); err == nil || !strings.Contains(err.Error(), "is ambiguous") {
-		t.Fatalf("resolveAbbreviatedCommit(%q) error = %v, want ambiguous for one commit and a tree or blob", digit, err)
-	}
-	commit, err := fixture.repo.CommitObject(commits[0])
+	commitObject, err := fixture.repo.CommitObject(commit)
 	if err != nil {
 		t.Fatalf("CommitObject() error = %v", err)
 	}
-	if _, _, err := resolveAbbreviatedCommit(fixture.repo, commit.TreeHash.String()[:12]); err == nil || !strings.Contains(err.Error(), "does not name a commit") {
+	if _, _, err := resolveAbbreviatedCommit(fixture.repo, commitObject.TreeHash.String()[:12]); err == nil || !strings.Contains(err.Error(), "does not name a commit") {
 		t.Fatalf("resolveAbbreviatedCommit(tree) error = %v, want no commit", err)
 	}
-	hash, found, err := resolveAbbreviatedCommit(fixture.repo, commits[0].String()[:12])
-	if err != nil || !found || hash != commits[0] {
-		t.Fatalf("resolveAbbreviatedCommit(unique) = %s, %t, %v; want %s", hash, found, err, commits[0])
+	hash, found, err := resolveAbbreviatedCommit(fixture.repo, commit.String()[:12])
+	if err != nil || !found || hash != commit {
+		t.Fatalf("resolveAbbreviatedCommit(unique) = %s, %t, %v; want %s", hash, found, err, commit)
 	}
 }
 
-// commitAndOtherObjectDigit returns a first hex digit that exactly one
-// commit and at least one tree or blob of repo share, or "".
-func commitAndOtherObjectDigit(repo *git.Repository, isCommit map[plumbing.Hash]bool) string {
-	for _, candidate := range "0123456789abcdef" {
-		var commitsWith, othersWith int
-		for _, hash := range hashesWithPrefix(repo, string(candidate)) {
-			if isCommit[hash] {
-				commitsWith++
-			} else {
-				othersWith++
-			}
+// blobWithPrefix stores blobs with fixed contents in repo until one has a
+// SHA that starts with prefix, and returns that SHA.
+func blobWithPrefix(t *testing.T, repo *git.Repository, prefix string) plumbing.Hash {
+	t.Helper()
+	for i := range 1 << 16 {
+		object := repo.Storer.NewEncodedObject()
+		object.SetType(plumbing.BlobObject)
+		writer, err := object.Writer()
+		if err != nil {
+			t.Fatalf("Writer() error = %v", err)
 		}
-		if commitsWith == 1 && othersWith > 0 {
-			return string(candidate)
+		if _, err := fmt.Fprintf(writer, "blob %d\n", i); err != nil {
+			t.Fatalf("write blob error = %v", err)
 		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("close blob error = %v", err)
+		}
+		if !strings.HasPrefix(object.Hash().String(), prefix) {
+			continue
+		}
+		hash, err := repo.Storer.SetEncodedObject(object)
+		if err != nil {
+			t.Fatalf("SetEncodedObject() error = %v", err)
+		}
+		return hash
 	}
-	return ""
+	t.Fatalf("no blob SHA starts with %s", prefix)
+	return plumbing.ZeroHash
 }
 
 // A non-hex branch name resolves from the refs first, and a branch wins over
@@ -297,7 +300,7 @@ func TestLsRemoteRefCommitPicksTheRemoteOfTheRepoURL(t *testing.T) {
 		hash      plumbing.Hash
 	}{
 		{name: "aaa", url: "https://example.invalid/other.git", hash: older},
-		{name: "zzz", url: "git@example.invalid:org/app.git", hash: newer},
+		{name: "zzz", url: "git@example.invalid:Org/App.GIT", hash: newer},
 	} {
 		if _, err := fixture.repo.CreateRemote(&config.RemoteConfig{Name: remote.name, URLs: []string{remote.url}}); err != nil {
 			t.Fatalf("CreateRemote(%s) error = %v", remote.name, err)
@@ -306,7 +309,7 @@ func TestLsRemoteRefCommitPicksTheRemoteOfTheRepoURL(t *testing.T) {
 			t.Fatalf("SetReference(%s/deadbeef1) error = %v", remote.name, err)
 		}
 	}
-	if hash, ok := lsRemoteRefCommit(fixture.repo, "deadbeef1", "https://EXAMPLE.invalid/Org/App", false); !ok || hash != newer {
+	if hash, ok := lsRemoteRefCommit(fixture.repo, "deadbeef1", "https://example.invalid/org/app", false); !ok || hash != newer {
 		t.Fatalf("lsRemoteRefCommit(matching URL) = %s, %t; want %s", hash, ok, newer)
 	}
 	if hash, ok := lsRemoteRefCommit(fixture.repo, "deadbeef1", "https://example.invalid/unknown.git", false); !ok || hash != older {
@@ -358,5 +361,83 @@ func TestDefaultGitAcquirerPrefersHexBranchOverCommitPrefix(t *testing.T) {
 	}
 	if result.Revision != newer.String() || result.LsRemoteRevision != newer.String() {
 		t.Fatalf("Revision, LsRemoteRevision = %s, %s; want the branch commit %s", result.Revision, result.LsRemoteRevision, newer)
+	}
+}
+
+// After a refresh, a later acquire through the cache, with network or
+// offline, keeps rendering the refreshed commit of the default branch.
+func TestDefaultGitAcquirerKeepsTheRefreshedDefaultBranch(t *testing.T) {
+	remote := createGitFixture(t)
+	commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: one\n")
+	head, err := remote.repo.Head()
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	request := GitRequest{URL: "file://" + filepath.ToSlash(remote.path), Revision: head.Name().Short()}
+	cacheDir := t.TempDir()
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir}); err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	pushed := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: two\n")
+	for _, options := range []GitOptions{
+		{AllowNetwork: true, CacheDir: cacheDir, Refresh: true},
+		{AllowNetwork: true, CacheDir: cacheDir},
+		{CacheDir: cacheDir},
+	} {
+		result, err := DefaultGitAcquirer{}.Acquire(context.Background(), request, options)
+		if err != nil {
+			t.Fatalf("Acquire(network %t, refresh %t) error = %v", options.AllowNetwork, options.Refresh, err)
+		}
+		if result.Revision != pushed.String() {
+			t.Fatalf("Acquire(network %t, refresh %t) Revision = %s, want the refreshed commit %s", options.AllowNetwork, options.Refresh, result.Revision, pushed)
+		}
+	}
+}
+
+// A branch that the remote deleted stops resolving after --refresh-git, as
+// ls-remote in the repo-server no longer finds it.
+func TestDefaultGitAcquirerRefreshPrunesDeletedBranches(t *testing.T) {
+	remote := createGitFixture(t)
+	commit := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: one\n")
+	branch := plumbing.NewBranchReferenceName("feature")
+	if err := remote.repo.Storer.SetReference(plumbing.NewHashReference(branch, commit)); err != nil {
+		t.Fatalf("SetReference(feature) error = %v", err)
+	}
+	request := GitRequest{URL: "file://" + filepath.ToSlash(remote.path), Revision: "feature"}
+	cacheDir := t.TempDir()
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir}); err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	if err := remote.repo.Storer.RemoveReference(branch); err != nil {
+		t.Fatalf("RemoveReference(feature) error = %v", err)
+	}
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir, Refresh: true}); err == nil {
+		t.Fatal("refresh Acquire() of a deleted branch error = nil, want it to fail")
+	}
+}
+
+// In a local tree the local branch is what the user has, so a hex branch
+// name that a local branch and a remote-tracking branch hold at different
+// commits resolves to the local one.
+func TestPinnedRevisionPrefersTheLocalBranch(t *testing.T) {
+	fixture := createGitFixture(t)
+	local := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", "version: local\n")
+	remoteCommit := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", "version: remote\n")
+	if _, err := fixture.repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.invalid/org/app.git"}}); err != nil {
+		t.Fatalf("CreateRemote(origin) error = %v", err)
+	}
+	const name = "deadbeef1"
+	if err := fixture.repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName(name), local)); err != nil {
+		t.Fatalf("SetReference(local) error = %v", err)
+	}
+	if err := fixture.repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewRemoteReferenceName("origin", name), remoteCommit)); err != nil {
+		t.Fatalf("SetReference(remote) error = %v", err)
+	}
+	single, multi, ok, err := PinnedRevision(fixture.repo, name, "https://example.invalid/org/app.git")
+	if err != nil || !ok || single != local.String() || multi != local.String() {
+		t.Fatalf("PinnedRevision() = %q, %q, %t, %v; want the local branch commit %s", single, multi, ok, err, local)
+	}
+	if hash, ok := lsRemoteRefCommit(fixture.repo, name, "https://example.invalid/org/app.git", true); !ok || hash != remoteCommit {
+		t.Fatalf("lsRemoteRefCommit(cache clone) = %s, %t; want the remote-tracking commit %s", hash, ok, remoteCommit)
 	}
 }

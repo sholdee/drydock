@@ -555,3 +555,57 @@ func assertVerifiesHostKeys(t *testing.T, auth transport.AuthMethod) {
 		t.Fatal("HostKeyAlgorithms is empty, want algorithms from known_hosts")
 	}
 }
+
+// A remote Kustomize Git ref at the default branch name renders the remote's
+// current commit after --refresh-remote-resources, also through the cache
+// and offline afterwards. The clone's local branch for the default branch
+// never moves on fetch, so the remote-tracking ref must win.
+func TestDefaultAcquirerRefreshesTheDefaultBranchByName(t *testing.T) {
+	remote := createRemoteGitFixture(t)
+	commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: first\n")
+	head, err := remote.repo.Head()
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	cacheDir := t.TempDir()
+	request := Request{Kind: RequestGitRepo, RepoURL: "file://" + filepath.ToSlash(remote.path), Revision: head.Name().Short()}
+	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{CacheDir: cacheDir}); err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	pushed := commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: second\n")
+	for _, options := range []Options{
+		{CacheDir: cacheDir, Refresh: true},
+		{CacheDir: cacheDir},
+		{CacheDir: cacheDir, Offline: true},
+	} {
+		result, err := DefaultAcquirer{}.Acquire(context.Background(), request, options)
+		if err != nil {
+			t.Fatalf("Acquire(refresh %t, offline %t) error = %v", options.Refresh, options.Offline, err)
+		}
+		if result.Revision != pushed.String() {
+			t.Fatalf("Acquire(refresh %t, offline %t) Revision = %s, want the pushed commit %s", options.Refresh, options.Offline, result.Revision, pushed)
+		}
+	}
+}
+
+// A branch that the remote deleted stops resolving after a refresh, as
+// kustomize no longer finds it on the remote.
+func TestDefaultAcquirerRefreshPrunesDeletedBranches(t *testing.T) {
+	remote := createRemoteGitFixture(t)
+	commit := commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: first\n")
+	branch := plumbing.NewBranchReferenceName("feature")
+	if err := remote.repo.Storer.SetReference(plumbing.NewHashReference(branch, commit)); err != nil {
+		t.Fatalf("SetReference(feature) error = %v", err)
+	}
+	cacheDir := t.TempDir()
+	request := Request{Kind: RequestGitRepo, RepoURL: "file://" + filepath.ToSlash(remote.path), Revision: "feature"}
+	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{CacheDir: cacheDir}); err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	if err := remote.repo.Storer.RemoveReference(branch); err != nil {
+		t.Fatalf("RemoveReference(feature) error = %v", err)
+	}
+	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{CacheDir: cacheDir, Refresh: true}); err == nil {
+		t.Fatal("refresh Acquire() of a deleted branch error = nil, want it to fail")
+	}
+}

@@ -221,10 +221,14 @@ func checkoutAcquiredGitRepository(ctx context.Context, repo *git.Repository, wo
 }
 
 func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL string, auth transport.AuthMethod, credentials GitCredentials) error {
+	// Prune drops the remote-tracking refs of branches that the remote
+	// deleted, so a deleted branch stops resolving after a refresh, as
+	// ls-remote in the Argo CD repo-server no longer finds it.
 	err := repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: "origin",
 		Auth:       auth,
 		Tags:       git.AllTags,
+		Prune:      true,
 	})
 	if err == nil || errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return nil
@@ -533,6 +537,13 @@ func lsRemoteBranchRefNames(repo *git.Repository, branch, repoURL string, prefer
 	return append([]plumbing.ReferenceName{local}, remote...)
 }
 
+// remoteURLKey is the key that lsRemoteRemoteNames compares remote URLs
+// by: CanonicalGitURLKey of the URL in lower case. Lowering first also
+// strips a `.GIT` suffix, as NormalizeGitURL does (util/git/git.go:74-91).
+func remoteURLKey(url string) string {
+	return CanonicalGitURLKey(strings.ToLower(url))
+}
+
 // lsRemoteRemoteNames returns the remote of repo whose URL is repoURL, or
 // every remote in name order when none is.
 func lsRemoteRemoteNames(repo *git.Repository, repoURL string) []string {
@@ -544,7 +555,7 @@ func lsRemoteRemoteNames(repo *git.Repository, repoURL string) []string {
 	// (NormalizeGitURL lowercases the whole URL, util/git/git.go:74-91).
 	// The scheme and user are dropped too, because a local remote may use
 	// SSH where the Application uses HTTPS.
-	want := CanonicalGitURLKey(repoURL)
+	want := remoteURLKey(repoURL)
 	var all []string
 	for _, remote := range remotes {
 		config := remote.Config()
@@ -553,7 +564,7 @@ func lsRemoteRemoteNames(repo *git.Repository, repoURL string) []string {
 			continue
 		}
 		for _, url := range config.URLs {
-			if strings.EqualFold(CanonicalGitURLKey(url), want) {
+			if remoteURLKey(url) == want {
 				return []string{config.Name}
 			}
 		}
