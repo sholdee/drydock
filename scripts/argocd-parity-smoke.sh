@@ -91,6 +91,26 @@ LIVE_DIFF_WORK=""
 # Set to "true" while the live diff Applications and argocd-cm keys exist.
 # The cleanup trap reads it.
 LIVE_DIFF_STATE_CHANGED="false"
+# The source type gate phase turns Helm, Kustomize, and Jsonnet off in the
+# live argocd-cm and compares the Applications of its fixture repo, which
+# render as plain directories then. drydock reads the same keys from the
+# argocd-cm.yaml in that repo. The smoke serves the repo from the main Git
+# repository, and the phase runs last because the keys change how Argo CD
+# renders every Application.
+SOURCE_TYPE_GATES_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/source-type-gates/repo"
+SOURCE_TYPE_GATES_MANIFESTS="${SOURCE_TYPE_GATES_REPO_PATH}/source-type-gates"
+SOURCE_TYPE_GATES_SETTINGS='{"data":{"helm.enable":"false","kustomize.enable":"True","jsonnet.enable":"no"}}'
+SOURCE_TYPE_GATES_RESET='{"data":{"helm.enable":null,"kustomize.enable":null,"jsonnet.enable":null}}'
+SOURCE_TYPE_GATES_APPLICATIONS=(
+  parity-gates-helm-discovered
+  parity-gates-helm-explicit
+  parity-gates-kustomize-discovered
+  parity-gates-kustomize-explicit
+  parity-gates-jsonnet
+)
+# Set to "true" while the live argocd-cm turns the tools off. The cleanup
+# trap reads it.
+SOURCE_TYPE_GATES_STATE_CHANGED="false"
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_APPSET_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-appset-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
@@ -234,6 +254,7 @@ APPLICATIONS=(
   parity-directory
   parity-directory-edges
   parity-helm-release-namespace
+  parity-helm-default-namespace
   parity-helm-capabilities
   parity-helm-file-parameters
   parity-helm-parameters
@@ -287,6 +308,7 @@ APPLICATIONS=(
   parity-kustomize-generators
   parity-kustomize-helm-capabilities
   parity-kustomize-helm-cross-namespace
+  parity-kustomize-helm-defaults
   parity-ft-alpha
   parity-ft-beta
   parity-fn-gamma-one
@@ -627,6 +649,7 @@ done
 [[ -d "${OOB_SYMLINK_FIXTURE_PATH}" ]] || fail "out-of-bounds symlink fixture repo not found: ${OOB_SYMLINK_FIXTURE_PATH}"
 [[ -f "${LIVE_DIFF_EXPECTED}" ]] || fail "live diff expected file not found: ${LIVE_DIFF_EXPECTED}"
 [[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
+[[ -f "${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml" ]] || fail "source type gate Applications not found: ${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml"
 
 OUT_DIR="$(mkdir -p "${OUT_DIR}" && cd "${OUT_DIR}" && pwd)"
 # Each run has its own kubeconfig. kind create cluster and kind export
@@ -696,6 +719,11 @@ cleanup() {
   # for inspection.
   if [[ "${LIVE_DIFF_STATE_CHANGED}" == "true" && "${CREATE_CLUSTER}" != "true" && "${KEEP_CLUSTER}" != "true" ]]; then
     remove_live_diff_state >/dev/null 2>&1 || true
+  fi
+  # The same for the source type gate phase: on an existing cluster, turn
+  # the tools on again unless --keep-cluster keeps the state.
+  if [[ "${SOURCE_TYPE_GATES_STATE_CHANGED}" == "true" && "${CREATE_CLUSTER}" != "true" && "${KEEP_CLUSTER}" != "true" ]]; then
+    remove_source_type_gates_state >/dev/null 2>&1 || true
   fi
   rm -rf "${WORK_DIR}"
   if [[ "${CREATE_CLUSTER}" == "true" && "${KEEP_CLUSTER}" != "true" ]]; then
@@ -835,6 +863,7 @@ prepare_fixture_git_image() {
   cp -R "${PROJECT_POLICY_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
   cp -R "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}/repo/." "${FIXTURE_GIT_WORK}/"
   cp -R "${PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR}/repo/." "${FIXTURE_GIT_WORK}/"
+  cp -R "${SOURCE_TYPE_GATES_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
   pin_container_policy_image "${FIXTURE_GIT_WORK}/.drydock/plugins.yaml"
   git -C "${FIXTURE_GIT_WORK}" init --initial-branch=main >/dev/null
   git -C "${FIXTURE_GIT_WORK}" config user.email "drydock@example.invalid"
@@ -2634,6 +2663,70 @@ run_live_diff_smoke() {
   LIVE_DIFF_STATE_CHANGED="false"
 }
 
+# remove_source_type_gates_state deletes the source type gate Applications
+# and removes the argocd-cm keys that turn the tools off. The Applications
+# have no resources finalizer, so the delete does not wait for a prune.
+remove_source_type_gates_state() {
+  kubectl --request-timeout=30s -n argocd delete -f "${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml" --ignore-not-found >/dev/null
+  kubectl --request-timeout=30s -n argocd patch configmap argocd-cm --type merge -p "${SOURCE_TYPE_GATES_RESET}" >/dev/null
+}
+
+# assert_source_type_gates_capture fails when the Argo CD capture of a
+# source type gate Application is not the plain directory render: it must
+# hold the ConfigMap named like the Application and nothing that Kustomize
+# or Jsonnet would add. Without this check, both sides rendering with the
+# tools on would pass the comparison.
+assert_source_type_gates_capture() {
+  local app="$1"
+  local capture="$2"
+  grep -qF "name: ${app}" "${capture}" \
+    || fail "Argo CD did not render the ConfigMap ${app} for ${app} with the tools off; see ${capture}"
+  if grep -qE "name: (kustomized-|parity-gates-jsonnet-evaluated)" "${capture}"; then
+    fail "Argo CD rendered ${app} with Kustomize or Jsonnet on; see ${capture}"
+  fi
+}
+
+run_source_type_gates_smoke() {
+  local app argocd_dir drydock_dir stderr_file
+  log_step "Turning Helm, Kustomize, and Jsonnet off in argocd-cm"
+  SOURCE_TYPE_GATES_STATE_CHANGED="true"
+  kubectl -n argocd patch configmap argocd-cm --type merge -p "${SOURCE_TYPE_GATES_SETTINGS}" >/dev/null
+  # The controller reads argocd-cm through an informer. Give it time to see
+  # the keys before it reconciles the new Applications.
+  sleep 5
+  log_step "Applying the source type gate Applications"
+  kubectl -n argocd apply -f "${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml" >/dev/null
+  for app in "${SOURCE_TYPE_GATES_APPLICATIONS[@]}"; do
+    wait_for_application argocd "${app}"
+  done
+  log_step "Capturing the source type gate manifests"
+  argocd_dir="$(artifact_dir source-type-gates/argocd-manifests)"
+  drydock_dir="$(artifact_dir source-type-gates/drydock-manifests)"
+  for app in "${SOURCE_TYPE_GATES_APPLICATIONS[@]}"; do
+    capture_argocd_manifest "${app}" "${app}" "${argocd_dir}"
+    assert_source_type_gates_capture "${app}" "${argocd_dir}/${app}.yaml"
+    stderr_file="${OUT_DIR}/drydock-${app}.stderr"
+    if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${app}" \
+      --path "${SOURCE_TYPE_GATES_REPO_PATH}" \
+      --repo-map "${FIXTURE_REPO_URL}=${SOURCE_TYPE_GATES_REPO_PATH}" \
+      --offline > "${drydock_dir}/${app}.yaml" 2> "${stderr_file}"); then
+      echo "argocd render parity smoke: drydock capture of ${app} failed; its stderr follows" >&2
+      cat "${stderr_file}" >&2 || true
+      fail "drydock capture of ${app} failed; see ${stderr_file}"
+    fi
+    rm -f "${stderr_file}"
+  done
+  log_step "Comparing the source type gate manifests"
+  (cd "${REPO_ROOT}" && go run ./scripts/argocd-parity-compare \
+    --argocd-dir "${argocd_dir}" \
+    --drydock-dir "${drydock_dir}" \
+    --out-dir "${OUT_DIR}/compare-source-type-gates" \
+    --ignore-file "${IGNORE_FILE}")
+  log_step "Turning Helm, Kustomize, and Jsonnet on again"
+  remove_source_type_gates_state
+  SOURCE_TYPE_GATES_STATE_CHANGED="false"
+}
+
 main() {
   local argocd_version
   argocd_version="$(resolve_argocd_version)"
@@ -2724,6 +2817,7 @@ main() {
   else
     log_step "Skipping project-policy smoke"
   fi
+  run_source_type_gates_smoke
   echo "Argo CD render parity smoke complete: ${OUT_DIR}" >&2
 }
 

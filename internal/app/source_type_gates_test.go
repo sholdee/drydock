@@ -2,13 +2,16 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/app/discovery"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/render"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 // upstreamGatedSourceType is how the Argo CD v3.6.1 repo-server picks the
@@ -124,5 +127,56 @@ func TestRenderSettingsSignatureSignsSourceTypeGates(t *testing.T) {
 			}
 		}
 		seen[key] = got
+	}
+}
+
+// TestSourceTypeGatesSmokeFixture builds the Applications of the source
+// type gate phase of the Argo CD render parity smoke offline. Its
+// argocd-cm turns Helm, Kustomize, and Jsonnet off, so every source renders
+// as a plain directory. Without the argocd-cm, the same sources render
+// with their tools.
+func TestSourceTypeGatesSmokeFixture(t *testing.T) {
+	fixture := filepath.Join("..", "..", "testdata", "argocd-parity", "source-type-gates", "repo")
+	const repoURL = "git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git"
+	build := func(t *testing.T, root string) map[string][]string {
+		t.Helper()
+		result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+			Path:     root,
+			RepoMaps: []sourcepkg.RepoMap{{URL: repoURL, Path: root}},
+			Offline:  true,
+		})
+		names := map[string][]string{}
+		for _, item := range result.ApplicationManifests {
+			names[item.Application.Name] = append(names[item.Application.Name], item.Manifest.Object.GetName())
+		}
+		if err != nil {
+			names["error"] = []string{err.Error()}
+		}
+		return names
+	}
+	gated := build(t, fixture)
+	for _, app := range []string{"parity-gates-helm-discovered", "parity-gates-helm-explicit", "parity-gates-kustomize-discovered", "parity-gates-kustomize-explicit", "parity-gates-jsonnet"} {
+		if got := gated[app]; !slices.Equal(got, []string{app}) {
+			t.Errorf("gated %s renders %v, want only the ConfigMap %s", app, got, app)
+		}
+	}
+	if err, ok := gated["error"]; ok {
+		t.Fatalf("gated Build() error = %v", err)
+	}
+
+	// The same sources without the argocd-cm.
+	open := t.TempDir()
+	if err := os.CopyFS(open, os.DirFS(fixture)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(open, "source-type-gates", "argocd-cm.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	ungated := build(t, open)
+	if got := ungated["parity-gates-kustomize-discovered"]; !slices.Equal(got, []string{"kustomized-parity-gates-kustomize-discovered"}) {
+		t.Errorf("ungated kustomize-discovered renders %v, want the namePrefix", got)
+	}
+	if got := ungated["parity-gates-jsonnet"]; !slices.Contains(got, "parity-gates-jsonnet-evaluated") {
+		t.Errorf("ungated jsonnet renders %v, want the Jsonnet ConfigMap too", got)
 	}
 }

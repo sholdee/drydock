@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-helm-default-namespace
+  # The Application has no destination namespace, so the ConfigMap names
+  # its own.
+  namespace: parity-helm-default-namespace
+data:
+  releaseName: {{ .Release.Name | quote }}
+  releaseNamespace: {{ .Release.Namespace | quote }}

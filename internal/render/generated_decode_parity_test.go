@@ -397,6 +397,13 @@ func readParityDecodeCases(t *testing.T, directory bool) []parityDecodeCase {
 		if tc.Repository != "" || tc.Source == "spec" {
 			continue
 		}
+		// helm and kustomize fail a render case and a Kustomize
+		// helmCharts case themselves, so there is no offline upstream
+		// oracle. TestHelmRenderParityDecodeFixtures checks drydock, and
+		// the smoke checks Argo CD.
+		if tc.Source == "render" || parityCaseHasHelmCharts(t, tc) {
+			continue
+		}
 		if (tc.Source == "" || tc.Source == "directory") == directory {
 			out = append(out, tc)
 		}
@@ -477,6 +484,38 @@ func renderGeneratedParityCase(t *testing.T, tc parityDecodeCase) (drydockErr, u
 		t.Fatalf("unknown source %q", tc.Source)
 	}
 	return drydockErr, upstreamErr
+}
+
+// parityCaseHasHelmCharts reports a Kustomize case whose kustomization has
+// helmCharts.
+func parityCaseHasHelmCharts(t *testing.T, tc parityDecodeCase) bool {
+	t.Helper()
+	if tc.Source != "kustomize" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "argocd-parity", "repo", "workloads", "directory-decode", strings.TrimPrefix(tc.Name, "parity-decode-"), "kustomization.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	return strings.Contains(string(data), "\nhelmCharts:\n")
+}
+
+// readParityApplicationSource returns the single source of the Application
+// in the file at path.
+func readParityApplicationSource(t *testing.T, path string) v1alpha1.ApplicationSource {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var application v1alpha1.Application
+	if err := yaml.Unmarshal(data, &application); err != nil {
+		t.Fatalf("parse Application %s: %v", path, err)
+	}
+	if application.Spec.Source == nil {
+		t.Fatalf("Application %s has no single source", path)
+	}
+	return *application.Spec.Source
 }
 
 // readParityFileParameters returns the helm.fileParameters of the single

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-gates-kustomize-discovered
+  namespace: parity-source-type-gates
+data:
+  note: rendered as a plain directory

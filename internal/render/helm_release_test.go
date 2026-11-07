@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	chartv2util "helm.sh/helm/v4/pkg/chart/v2/util"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // releaseProbeTemplate renders what helm template sets for the release and
@@ -272,4 +273,65 @@ func TestHelmRendererRejectsChartsHelmCannotInstall(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid chart apiVersion") {
 		t.Fatalf("Render() of an apiVersion v3 chart error = %v, want invalid chart apiVersion", err)
 	}
+}
+
+// TestHelmRenderParityDecodeFixtures renders the render cases and the
+// Kustomize helmCharts cases of the Argo CD render parity smoke
+// (testdata/argocd-parity) offline. drydock must fail with the
+// drydockMessage that the smoke expects. helm and kustomize produce the
+// Argo CD side, so the smoke checks that side against Argo CD itself.
+func TestHelmRenderParityDecodeFixtures(t *testing.T) {
+	repoRoot := filepath.Join("..", "..", "testdata", "argocd-parity", "repo")
+	var checked int
+	for _, tc := range readParityDecodeCasesForSource(t) {
+		if tc.Source != "render" && !parityCaseHasHelmCharts(t, tc) {
+			continue
+		}
+		checked++
+		t.Run(tc.Name, func(t *testing.T) {
+			caseDir := strings.TrimPrefix(tc.Name, "parity-decode-")
+			source := readParityApplicationSource(t, filepath.Join(repoRoot, "directory-decode-applications", caseDir+".yaml"))
+			opts := RenderOptions{AppName: tc.Name, Namespace: "parity-directory-decode-workloads"}
+			if source.Helm != nil {
+				opts.ReleaseName = source.Helm.ReleaseName
+				opts.HelmVersion = source.Helm.Version
+				opts.KubeVersion = source.Helm.KubeVersion
+			}
+			resolved := ResolvedSource{RepoRoot: repoRoot, Path: source.Path}
+			var renderer Renderer = HelmRenderer{}
+			if _, err := os.Stat(filepath.Join(repoRoot, source.Path, "kustomization.yaml")); err == nil {
+				renderer = KustomizeRenderer{}
+			}
+			_, _, err := renderer.Render(context.Background(), resolved, opts)
+			if err == nil || !strings.Contains(err.Error(), tc.DrydockMessage) {
+				t.Fatalf("drydock error = %v, want %q", err, tc.DrydockMessage)
+			}
+		})
+	}
+	if checked == 0 {
+		t.Fatal("the expected file has no render or Kustomize helmCharts case")
+	}
+}
+
+// readParityDecodeCasesForSource reads every case of the expected file that
+// renders a source in the main fixture repository.
+func readParityDecodeCasesForSource(t *testing.T) []parityDecodeCase {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "argocd-parity", "directory-decode-expected.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var expected struct {
+		Cases []parityDecodeCase `json:"cases"`
+	}
+	if err := sigsyaml.Unmarshal(data, &expected); err != nil {
+		t.Fatalf("parse expected file: %v", err)
+	}
+	var out []parityDecodeCase
+	for _, tc := range expected.Cases {
+		if tc.Repository == "" && tc.Source != "spec" {
+			out = append(out, tc)
+		}
+	}
+	return out
 }

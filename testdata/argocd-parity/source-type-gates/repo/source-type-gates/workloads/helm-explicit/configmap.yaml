@@ -1,0 +1,9 @@
+# The Application names Helm. With Helm off it renders as a plain
+# directory, and the helm settings have no effect.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-gates-helm-explicit
+  namespace: parity-source-type-gates
+data:
+  note: rendered as a plain directory

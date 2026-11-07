@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# kustomize rejects a release name that helm would read as a flag.
+helmCharts:
+  - name: dashname
+    releaseName: -bad

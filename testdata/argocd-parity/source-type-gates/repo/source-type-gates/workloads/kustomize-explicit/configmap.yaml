@@ -1,0 +1,9 @@
+# The Application names Kustomize with a namePrefix. With Kustomize off
+# it renders as a plain directory without the prefix.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-gates-kustomize-explicit
+  namespace: parity-source-type-gates
+data:
+  note: rendered as a plain directory

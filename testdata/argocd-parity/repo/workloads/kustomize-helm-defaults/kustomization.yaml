@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  # No releaseName and no namespace: kustomize passes --generate-name, so
+  # helm template renders the release "release-name" in the namespace
+  # "default". The apiVersions of the entry replace the
+  # --helm-api-versions values. The entry is the only one in the build:
+  # kustomize 5.8.3 writes the apiVersions of an entry over the flag values
+  # that the other entries of the build see.
+  - name: defaults-probe
+    apiVersions:
+      - chart.parity.example.com/v1

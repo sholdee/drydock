@@ -1,0 +1,82 @@
+# Applied only while argocd-cm turns Helm, Kustomize, and Jsonnet off.
+# Each source renders as a plain directory.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-gates-helm-discovered
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: source-type-gates/workloads/helm-discovered
+  destination:
+    name: in-cluster
+    namespace: parity-source-type-gates
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-gates-helm-explicit
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: source-type-gates/workloads/helm-explicit
+    helm:
+      releaseName: gated
+      valuesObject:
+        ignored: true
+  destination:
+    name: in-cluster
+    namespace: parity-source-type-gates
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-gates-kustomize-discovered
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: source-type-gates/workloads/kustomize-discovered
+  destination:
+    name: in-cluster
+    namespace: parity-source-type-gates
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-gates-kustomize-explicit
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: source-type-gates/workloads/kustomize-explicit
+    kustomize:
+      namePrefix: kustomized-
+  destination:
+    name: in-cluster
+    namespace: parity-source-type-gates
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-gates-jsonnet
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: source-type-gates/workloads/jsonnet
+  destination:
+    name: in-cluster
+    namespace: parity-source-type-gates

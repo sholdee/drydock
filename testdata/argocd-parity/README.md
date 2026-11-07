@@ -1357,6 +1357,112 @@ file, so only the unit tests cover them. `TestGeneratedParityDecodeFixtures`
 in `internal/render` runs these cases with drydock and with the upstream
 resolver.
 
+### Helm and Kustomize helmCharts renders that fail
+
+Nine more cases fail inside `helm template` or kustomize, not on the
+decode of the output. Their messages are Helm and kustomize texts, so
+`TestGeneratedParityDecodeFixtures` has no offline upstream oracle for
+them. `TestHelmRenderParityDecodeFixtures` in `internal/render` renders
+them with drydock and requires `drydockMessage`. The smoke checks the Argo
+CD side. The maintainer who added them also ran each one with the helm
+v4.3.1 and kustomize v5.8.3 binaries that Argo CD v3.6.1 ships.
+
+Two cases set `source: kustomize` and `fileMissing: true`. The failing
+file is missing on purpose, and the smoke tool test requires that the
+fixture does not hold it. Argo CD names the file by its full path, so
+`argocdMessage` starts at the part that the two sides share.
+
+| Application | failing file | why it fails |
+| --- | --- | --- |
+| `parity-decode-kustomize-helm-no-values` | `charts/novalues/values.yaml` | the entry sets no `valuesFile`, so kustomize loads the `values.yaml` of the chart, and the chart has none |
+| `parity-decode-kustomize-helm-values-glob` | `values-*.yaml` | kustomize loads `valuesFile` as a file name, not as a glob, and no file has that name. `values-a.yaml` exists, so a glob would match |
+
+The other cases set `source: render` and name no file. Argo CD must report
+a `ComparisonError` that contains `argocdMessage`.
+
+| Application | why it fails |
+| --- | --- |
+| `parity-decode-kustomize-helm-release-name-dash` | kustomize rejects the `releaseName` `-bad`, which helm would read as a flag |
+| `parity-decode-helm-release-name-long` | `helm.releaseName` has 54 characters, and helm allows 53 |
+| `parity-decode-helm-release-name-template` | Argo CD passes the release name as `--name-template`, and `{{ .Missing.Field }` does not parse as a Go template |
+| `parity-decode-helm-version` | Argo CD v3.6.1 accepts `helm.version` empty, `v3`, or `v4`, not `v2` |
+| `parity-decode-helm-library` | the chart has `type: library`, and helm template renders only application charts |
+| `parity-decode-helm-kube-version` | the chart needs `kubeVersion: '>=99.0.0-0'`, and the Application sets `helm.kubeVersion: 1.30.0`, so both sides check the same version |
+| `parity-decode-helm-chart-v3` | helm v4.3.1 loads a chart of `apiVersion: v3`, but helm template renders only `v1` and `v2` charts |
+
+## Helm release defaults fixture
+
+Two Applications in the main comparison pin the release name and namespace
+that helm uses when the spec leaves them out.
+
+`applications/helm-default-namespace.yaml` (`parity-helm-default-namespace`)
+renders `charts/default-namespace` without a destination namespace and
+without `helm.namespace`. Argo CD then passes no `--namespace`, and helm
+uses `default`. The ConfigMap names its own namespace, so the controller
+can compare it.
+
+`applications/kustomize-helm-defaults.yaml`
+(`parity-kustomize-helm-defaults`) renders
+`workloads/kustomize-helm-defaults`, whose one `helmCharts` entry has no
+`releaseName` and no namespace, and no kustomization sets a namespace. The
+Application sets `kustomize.kubeVersion` and `kustomize.apiVersions`, which
+Argo CD passes to kustomize as `--helm-kube-version` and
+`--helm-api-versions`. The entry sets its own `apiVersions`, which replace
+the flag values.
+
+Both Argo CD and drydock must render this `data`:
+
+| ConfigMap | key | value |
+| --- | --- | --- |
+| `parity-helm-default-namespace` | `releaseName` | `parity-helm-default-namespace` |
+| `parity-helm-default-namespace` | `releaseNamespace` | `default` |
+| `parity-kustomize-helm-defaults-defaults` | `releaseName` | `release-name` |
+| `parity-kustomize-helm-defaults-defaults` | `releaseNamespace` | `default` |
+| `parity-kustomize-helm-defaults-defaults` | `kubeVersion` | `v1.31.0` |
+| `parity-kustomize-helm-defaults-defaults` | `hasChartAPI` | `true` |
+| `parity-kustomize-helm-defaults-defaults` | `hasFlagAPI` | `false` |
+
+Keep the `helmCharts` entry the only one in that kustomization. kustomize
+v5.8.3 copies the flag values into each entry without their backing array,
+so the `apiVersions` of one entry overwrite the flag values that the other
+entries of the build see. drydock does not copy that defect, so a second
+entry without `apiVersions` would differ. `parity-kustomize-helm-capabilities`
+pins an entry without `apiVersions`, which keeps the flag values.
+
+## Source type gate phase
+
+`source-type-gates/repo/` is a second fixture repo for the last phase of the
+smoke. The smoke copies it into the Git repository that it serves, as it
+copies the project-policy repos, so its sources live under
+`source-type-gates/workloads/`. drydock renders the phase with `--path` and
+`--repo-map` set to this repo, so it reads
+`source-type-gates/argocd-cm.yaml`. The main comparison never sees it.
+
+`run_source_type_gates_smoke` sets `helm.enable: "false"`,
+`kustomize.enable: "True"`, and `jsonnet.enable: "no"` on the live
+`argocd-cm`, the same keys as the `argocd-cm.yaml` of the repo. Argo CD
+keeps a tool on only for the exact value `true`, so all three tools are off.
+Then the smoke applies `source-type-gates/applications.yaml`, captures
+each Application on both sides, and compares them in
+`compare-source-type-gates/`. At the end it deletes the Applications and
+removes the keys. The phase runs last because the keys change how Argo CD
+renders every Application.
+
+| Application | source | rendered as |
+| --- | --- | --- |
+| `parity-gates-helm-discovered` | `parity-HelmChart.yaml`, a ConfigMap whose file name ends in `Chart.yaml` | a plain directory, not a Helm chart |
+| `parity-gates-helm-explicit` | a `helm` block and no `Chart.yaml` | a plain directory. With Helm on, the source fails |
+| `parity-gates-kustomize-discovered` | a `Kustomization` file with `namePrefix: kustomized-` | a plain directory. The file has no extension, so the directory render skips it |
+| `parity-gates-kustomize-explicit` | a `kustomize` block with `namePrefix: kustomized-` | a plain directory without the prefix |
+| `parity-gates-jsonnet` | `configmap.yaml` and `skipped.jsonnet` | only `configmap.yaml`. With Jsonnet on, the Jsonnet file adds `parity-gates-jsonnet-evaluated` |
+
+Each source renders exactly one ConfigMap named like its Application.
+Before the comparison, `assert_source_type_gates_capture` makes sure that
+each Argo CD capture holds that ConfigMap and nothing that Kustomize or
+Jsonnet adds, so both sides rendering with the tools on cannot pass.
+`TestSourceTypeGatesSmokeFixture` in `internal/app` renders the phase
+offline with and without the `argocd-cm.yaml`.
+
 ## Live diff fixture
 
 This fixture compares drydock's diff normalization with the sync status of

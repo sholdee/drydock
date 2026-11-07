@@ -1,0 +1,15 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-default-namespace
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/default-namespace
+  # No destination namespace and no helm.namespace: helm renders the
+  # release in the namespace "default".
+  destination:
+    name: in-cluster
