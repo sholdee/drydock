@@ -1105,6 +1105,9 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // The source hydrator advisory is the same kind: drydock renders the sync
 // source that the Argo CD controller compares, so the output matches Argo CD
 // whether or not the advisory fires.
+// The namespace-not-enabled warning is the same kind: Argo CD never
+// reconciles an Application or ApplicationSet outside the enabled
+// namespaces and reports nothing, and drydock skips it the same way.
 // The known-type-skipped advisory is the same kind: Argo CD only logs a
 // knownTypeFields error and compares the field as written, and drydock does
 // the same, so the diff matches Argo CD whether or not the advisory fires.
@@ -1127,7 +1130,7 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // fail a run that the user narrowed on purpose.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode, SelectorNoMatchCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, namespaceNotEnabledCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode, SelectorNoMatchCode:
 		return true
 	}
 	return false

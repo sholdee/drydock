@@ -56,6 +56,12 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	"ResourceCustomizations": settingsRenderAll,
 	// The jq timeout of every jq ignore rule.
 	"IgnoreNormalizerJQTimeout": settingsRenderAll,
+	// Which Applications and ApplicationSets Argo CD reconciles at all
+	// (namespaceGate).
+	"CommandParametersFound":     settingsRenderAll,
+	"CommandParametersNamespace": settingsRenderAll,
+	"ApplicationNamespaces":      settingsRenderAll,
+	"ApplicationSetNamespaces":   settingsRenderAll,
 	// Project validation of the Applications that use the entry; the OCI
 	// repository set it implies is render-all (renderAllSettingsSignature).
 	"HelmRepositories": settingsScoped,

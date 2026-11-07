@@ -133,6 +133,11 @@ func renderParallelDiscoveryApplication(ctx context.Context, root string, reques
 }
 
 func renderDiscoveryApplication(ctx context.Context, root string, request BuildRequest, provider localProvider, renderSettings discoveryRenderSettings, renderCache *applicationRenderCache, inputs map[string]applicationInputPaths, discovered discovery.Result, appFile discovery.ApplicationFile) (discovery.Result, []diagnostic.Diagnostic, error) {
+	// Argo CD never reconciles an Application outside the enabled
+	// namespaces, so nothing it renders exists (pruneNotEnabledNamespaces).
+	if !namespaceGateFromSettings(renderSettings.settings).applicationAllowed(appFile.Application.Namespace) {
+		return discovery.Result{}, nil, nil
+	}
 	if !applicationMayRenderDiscoveryObjects(root, request, discovered, appFile.Application) {
 		return discovery.Result{}, nil, nil
 	}

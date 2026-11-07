@@ -15,7 +15,18 @@ import (
 func expandApplicationSetDiscovery(root string, request BuildRequest, discovered discovery.Result, appsetOptions appset.Options) (discovery.Result, []diagnostic.Diagnostic, error) {
 	var generated discovery.Result
 	var allDiags []diagnostic.Diagnostic
+	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	if err != nil {
+		return discovered, nil, err
+	}
+	gate := namespaceGateFromSettings(settings)
 	for _, appSetFile := range discovered.ApplicationSets {
+		// Argo CD never reconciles an ApplicationSet outside the enabled
+		// namespaces, so it generates nothing (pruneNotEnabledNamespaces
+		// reports it).
+		if !gate.applicationSetAllowed(appSetFile.ApplicationSet.Namespace) {
+			continue
+		}
 		apps, diags, err := generateApplicationSetCached(request.appsetGenerationMemo, root, appSetFile, appsetOptions)
 		if err != nil {
 			if errors.Is(err, appset.ErrUnsupportedGenerator) && len(diags) > 0 {

@@ -32,6 +32,12 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeAllowOutOfBoundsSymlinks(&merged, candidate)...)
 		diags = append(diags, mergeEnableProgressiveSyncs(&merged, candidate)...)
 		diags = append(diags, mergeIgnoreNormalizerJQTimeout(&merged, candidate)...)
+		merged.CommandParametersFound = merged.CommandParametersFound || candidate.CommandParametersFound
+		if merged.CommandParametersNamespace == "" {
+			merged.CommandParametersNamespace = candidate.CommandParametersNamespace
+		}
+		diags = append(diags, mergeNamespaceList(&merged.ApplicationNamespaces, candidate.ApplicationNamespaces, applicationNamespacesKey)...)
+		diags = append(diags, mergeNamespaceList(&merged.ApplicationSetNamespaces, candidate.ApplicationSetNamespaces, applicationSetNamespacesKey)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
 		merged.ResourceSelectors = append(merged.ResourceSelectors, candidate.ResourceSelectors...)
@@ -387,6 +393,23 @@ func mergeConfigManagementPlugins(merged *ArgoSettings, candidate ArgoSettings) 
 		merged.ConfigManagementPlugins[name] = plugin
 	}
 	return diags
+}
+
+// mergeNamespaceList merges one application.namespaces or
+// applicationsetcontroller.namespaces value. Spellings that the controller
+// splits into the same list do not conflict.
+func mergeNamespaceList(merged *Value[string], candidate Value[string], key string) []diagnostic.Diagnostic {
+	if !hasProvenance(candidate) {
+		return nil
+	}
+	if hasProvenance(*merged) && !reflect.DeepEqual(ParseNamespaceList(merged.Value), ParseNamespaceList(candidate.Value)) {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting %s values %q and %q", key, merged.Value, candidate.Value),
+			candidate.Provenance,
+		)}
+	}
+	*merged = candidate
+	return nil
 }
 
 func mergeCommandParameters(merged *ArgoSettings, candidate ArgoSettings) {

@@ -200,6 +200,26 @@ type ArgoSettings struct {
 	// controller.ignore.normalizer.jq.timeout, as written. It limits how long
 	// one jq ignore-rule deletion may run. See ParseIgnoreNormalizerJQTimeout.
 	IgnoreNormalizerJQTimeout Value[string] `json:"ignoreNormalizerJQTimeout,omitempty" yaml:"ignoreNormalizerJQTimeout,omitempty"`
+	// CommandParametersFound reports that drydock read an
+	// argocd-cmd-params-cm ConfigMap. Only then do ApplicationNamespaces and
+	// ApplicationSetNamespaces decide which Applications and
+	// ApplicationSets Argo CD reconciles: without the ConfigMap, drydock
+	// cannot tell how the cluster sets them.
+	CommandParametersFound bool `json:"commandParametersFound,omitempty" yaml:"commandParametersFound,omitempty"`
+	// CommandParametersNamespace is the metadata.namespace of the
+	// argocd-cmd-params-cm ConfigMap, when it names one. The ConfigMap lives
+	// in the Argo CD namespace, which the controllers always reconcile.
+	CommandParametersNamespace string `json:"commandParametersNamespace,omitempty" yaml:"commandParametersNamespace,omitempty"`
+	// ApplicationNamespaces is the argocd-cmd-params-cm key
+	// application.namespaces, as written. The application controller
+	// reconciles an Application only in its own namespace or in a namespace
+	// that this list matches. See ParseNamespaceList.
+	ApplicationNamespaces Value[string] `json:"applicationNamespaces,omitempty" yaml:"applicationNamespaces,omitempty"`
+	// ApplicationSetNamespaces is the argocd-cmd-params-cm key
+	// applicationsetcontroller.namespaces, as written. The ApplicationSet
+	// controller reconciles an ApplicationSet only in its own namespace or in
+	// a namespace that this list matches.
+	ApplicationSetNamespaces Value[string] `json:"applicationSetNamespaces,omitempty" yaml:"applicationSetNamespaces,omitempty"`
 }
 
 func DefaultSettings() ArgoSettings {
