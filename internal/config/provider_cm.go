@@ -129,7 +129,7 @@ func applySourceTypeEnableKeys(settings *ArgoSettings, values map[string]string,
 func appendVersionedKustomizeDiagnostics(values map[string]string, path, basePointer string, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 	keys := make([]string, 0)
 	for key := range values {
-		if isVersionedKustomizeBuildOptionsKey(key) || isVersionedKustomizePathKey(key) {
+		if isVersionedKustomizeBuildOptionsKey(key) || isVersionedKustomizePathKey(key) || isVersionedKustomizeVersionKey(key) {
 			keys = append(keys, key)
 		}
 	}
@@ -140,7 +140,8 @@ func appendVersionedKustomizeDiagnostics(values map[string]string, path, basePoi
 		// whichever kustomize version runs (util/kustomize/kustomize.go:
 		// 391-392).
 		message := key + " parsed but not applied: Argo CD v3.6.1 passes only kustomize.buildOptions to kustomize build, whichever kustomize version runs"
-		if isVersionedKustomizePathKey(key) {
+		// Argo CD registers a kustomize binary for both key forms.
+		if isVersionedKustomizePathKey(key) || isVersionedKustomizeVersionKey(key) {
 			message = key + " parsed but not applied: drydock uses embedded Kustomize libraries and does not select external Kustomize binary paths"
 		}
 		diags = append(diags, diagnostic.Diagnostic{
@@ -158,6 +159,10 @@ func appendVersionedKustomizeDiagnostics(values map[string]string, path, basePoi
 
 func isVersionedKustomizeBuildOptionsKey(key string) bool {
 	return strings.HasPrefix(key, "kustomize.buildOptions.") && strings.TrimPrefix(key, "kustomize.buildOptions.") != ""
+}
+
+func isVersionedKustomizeVersionKey(key string) bool {
+	return strings.HasPrefix(key, "kustomize.version.") && strings.TrimPrefix(key, "kustomize.version.") != ""
 }
 
 func isVersionedKustomizePathKey(key string) bool {
