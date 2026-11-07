@@ -1664,8 +1664,14 @@ Supported:
   CD. When a match passes through it, the render fails with the symlink
   error, because drydock rejects component paths that pass through a
   symlink. A component path is checked before drydock reads any file
-  under it. So drydock never lists or reads `.git` through a symlink.
-  Argo CD follows such a symlink.
+  under it. So drydock never lists or reads `.git` through a symlink in
+  a checkout that does not change while drydock runs. Argo CD follows such
+  a symlink. Before drydock lists a folder, it makes sure that the folder
+  it opened is the one it resolved, which catches a swap of the last path
+  element for a symlink. It does not catch a swap of a middle element. A
+  process that rewrites the checkout while drydock runs is outside
+  drydock's protection, but drydock still never reads outside the
+  repository.
 - Argo CD passes most option values to these commands without `--` in
   front. So kustomize reads an image, a replica name, a label or
   annotation key, or a component that starts with `-` as a flag. An unknown
@@ -1683,7 +1689,10 @@ Supported:
   that it lists, as a path prefix: the leading path elements without a
   glob character. So a change that removes a match there selects the
   source. A glob that lists the repository root owns nothing more than its
-  matches, as for a Helm value file glob.
+  matches, as for a Helm value file glob. Each path element just before a
+  `..`, such as `mid` in `../../mid/../components/*`, is owned too: the
+  glob finds no match when that element is missing or a file, so a change
+  that adds or deletes it selects the source.
 - Recorded divergence from Argo CD v3.6.1: Argo CD fails a Kustomize
   source whose `kustomize.version` is not registered in `argocd-cm` with
   `kustomize.version.<version>` or `kustomize.path.<version>` (`kustomize
