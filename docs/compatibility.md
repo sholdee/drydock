@@ -1643,12 +1643,18 @@ Supported:
   kustomize. An empty entry fails with `new root cannot be empty`. An
   absolute entry fails with `new root '...' cannot be absolute`, because
   drydock never reads absolute paths. Under `ignoreMissingComponents`, the
-  first valid component goes through the same command. drydock lists
-  directories for the globs only inside the repository. A directory outside
-  it, or a path whose text enters `.git`, adds no matches. A symlink in the
-  repository to `.git` is followed, as Argo CD follows it, so its entries
-  can match. drydock then fails the match, because it passes through a
-  symlink, before kustomize reads any file in it.
+  first valid component goes through the same command. Argo CD checks the
+  entry as written, so a folder named `[a]` with a kustomization file is
+  kept, and the glob then adds the folder `a`. The kustomization files of
+  the kept folder are render cache inputs, and changed-only selection owns
+  them. drydock lists directories for the globs only inside the
+  repository. A directory outside it, or a path whose text enters `.git`,
+  adds no matches. A glob that must list or look up a path through a
+  symlink in the repository fails with drydock's symlink error before it
+  reads that path, and a component path that passes through a symlink
+  fails before drydock reads any file under it. drydock rejects such
+  component paths in the render anyway. So drydock never lists or reads
+  `.git` through a symlink. Argo CD follows such a symlink.
 - Argo CD passes most option values to these commands without `--` in
   front. So kustomize reads an image, a replica name, a label or
   annotation key, or a component that starts with `-` as a flag. An unknown
