@@ -28,6 +28,8 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 	rightBuildRequest := request.buildRequest(request.RightPath, forbiddenRoots)
 	leftBuildRequest.rootRevision = request.leftPathRevision
 	rightBuildRequest.rootRevision = request.rightPathRevision
+	leftBuildRequest.rootRepo = request.Repo
+	rightBuildRequest.rootRepo = request.Repo
 	parallelism, err := normalizeParallelism(request.Parallelism)
 	if err != nil {
 		return BuildResult{}, BuildResult{}, nil, err
@@ -69,7 +71,7 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
 		rightBuildRequest.discovered = rightList.result.discovered
 
-		leftApplications, rightApplications, selectionDiags, err := changedOnlyApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList.result, rightList.result, changedPaths)
+		leftApplications, rightApplications, selectionDiags, err := changedOnlyApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList.result, rightList.result, changedPaths, o.pluginRenderer(leftBuildRequest) != nil)
 		diagnostics = append(diagnostics, selectionDiags...)
 		if err != nil {
 			return BuildResult{}, BuildResult{}, diagnostics, err
@@ -231,7 +233,7 @@ func changedOnlySymlinksRenderAll(ctx context.Context, memo *symlinkBoundsMemo, 
 // render-affecting Argo CD setting changed, either side declares no
 // AppProject while the other does, or a changed path is owned by no
 // Application (an error under --strict-changed-only or --strict).
-func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuildRequest, rightBuildRequest BuildRequest, leftList, rightList BuildResult, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []diagnostic.Diagnostic, error) {
+func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuildRequest, rightBuildRequest BuildRequest, leftList, rightList BuildResult, changedPaths []string, injectedPlugins bool) ([]argoappv1.Application, []argoappv1.Application, []diagnostic.Diagnostic, error) {
 	// A render-affecting settings change reaches every render, whichever
 	// Application owns the file that carries it (a self-managed argocd
 	// Application, a sibling's Kustomize graph): selecting only that owner
@@ -283,10 +285,14 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	}
 	if len(unowned) == 0 {
 		leftSelected, rightSelected, reached := withSettingsSelection(leftSide, rightSide, leftSelected, rightSelected, settings)
-		if reached == 0 {
-			return leftSelected, rightSelected, scanDiags, nil
+		if reached > 0 {
+			scanDiags = append(scanDiags, changedOnlySettingsScopedDiagnostic(reached))
 		}
-		return leftSelected, rightSelected, append(scanDiags, changedOnlySettingsScopedDiagnostic(reached)), nil
+		leftSelected, rightSelected, readers := withAppRevisionSelection(leftBuildRequest, rightBuildRequest, leftSide, rightSide, leftList.Settings, rightList.Settings, leftSelected, rightSelected, injectedPlugins)
+		if readers > 0 {
+			scanDiags = append(scanDiags, changedOnlyAppRevisionDiagnostic(readers))
+		}
+		return leftSelected, rightSelected, scanDiags, nil
 	}
 	diag := diagnostic.Diagnostic{
 		Severity: diagnostic.SeverityWarning,

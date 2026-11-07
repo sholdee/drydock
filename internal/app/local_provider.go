@@ -84,6 +84,20 @@ type localProvider struct {
 	inputVerifier *renderInputVerifier
 	rootIdentity  SourceIdentity
 	rootInputMode rootInputMode
+	// rootAppRevision is the commit SHA of the tree at repoRoot: the
+	// snapshot revision of a diff side that renders a Git ref, else the
+	// HEAD commit when repoRoot is the top of a Git repository, else "".
+	// It is the ARGOCD_APP_REVISION of every source that renders from
+	// repoRoot (see sourceAppRevision).
+	rootAppRevision string
+	// rootGitRepo is the Git repository that holds rootAppRevision: the
+	// repository a diff side snapshot came from, else repoRoot. Its refs
+	// give the ls-remote form of the revision for multi-source
+	// Applications (sourceAppRevision).
+	rootGitRepo string
+	// mappedAppRevisions memoizes the HEAD commit of each --repo-map target
+	// directory for the run, keyed by absolute path. nil computes every time.
+	mappedAppRevisions *sync.Map
 	// rootDirtyPaths is the sorted complete dirty-path enumeration for the
 	// repo root when rootInputMode is dirty; empty otherwise. Per-path-set
 	// keying uses it to keep committed keys for untouched applications. An

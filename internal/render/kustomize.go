@@ -346,15 +346,19 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 	}
 
 	return RenderOptions{
-		AppName:                      helmChart.Name,
-		ReleaseName:                  helmChart.ReleaseName,
-		Namespace:                    namespace,
-		KubeVersion:                  kustomizeHelmKubeVersion(helmChart, opts),
-		APIVersions:                  append(append([]string(nil), opts.APIVersions...), helmChart.ApiVersions...),
-		ValueFiles:                   valueFiles,
-		ValueFilesBaseDir:            valueFilesBaseDir,
-		ValueFilesBoundaryRoot:       ".",
-		ArgoEnv:                      append(opts.ArgoEnv[:0:0], opts.ArgoEnv...),
+		AppName:                helmChart.Name,
+		ReleaseName:            helmChart.ReleaseName,
+		Namespace:              namespace,
+		KubeVersion:            kustomizeHelmKubeVersion(helmChart, opts),
+		APIVersions:            append(append([]string(nil), opts.APIVersions...), helmChart.ApiVersions...),
+		ValueFiles:             valueFiles,
+		ValueFilesBaseDir:      valueFilesBaseDir,
+		ValueFilesBoundaryRoot: ".",
+		// kustomize loads valuesFile and additionalValuesFiles as written
+		// (HelmChartInflationGenerator), and Argo CD does not substitute
+		// the build environment into a kustomization, so the inner Helm
+		// render gets no build environment.
+		LiteralValueFilePaths:        true,
 		ValuesObject:                 valuesObject,
 		ValuesMergeMode:              valuesMergeMode,
 		HelmValueFileSchemes:         append([]string(nil), opts.HelmValueFileSchemes...),
@@ -394,6 +398,11 @@ func kustomizeHelmKubeVersion(helmChart types.HelmChart, opts RenderOptions) str
 }
 
 func writeKustomizeHelmGeneratedValuesFile(ctx context.Context, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName string, helmChart types.HelmChart, opts RenderOptions) (string, error) {
+	// kustomize reads valuesFile as written here too
+	// (HelmChartInflationGeneratorPlugin.replaceValuesInline), so the
+	// Argo CD build environment of the source never reaches the path.
+	opts.ArgoEnv = nil
+	opts.LiteralValueFilePaths = true
 	primaryValues := map[string]any{}
 	loadPrimaryValues, err := shouldLoadHelmValueFiles(helmChart.ValuesMerge, helmChart.ValuesInline)
 	if err != nil {

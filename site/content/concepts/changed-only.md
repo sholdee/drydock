@@ -76,6 +76,23 @@ its budget or fails, changed-only renders the source on every change, with the
 strict-exempt warning `diff.changed-only-jsonnet-scan`. A changed path that no
 Application owns still renders all Applications.
 
+The build environment variables `ARGOCD_APP_REVISION`,
+`ARGOCD_APP_REVISION_SHORT`, and `ARGOCD_APP_REVISION_SHORT_8` carry the
+commit, so an Application that reads one renders differently on each commit,
+as in Argo CD. When the two sides render different commits, changed-only
+selects every Application whose spec names one of these variables, also
+through a merged `.argocd-source` override, and every Application with a
+config management plugin source that runs a command in this diff, because
+a plugin always gets them in its environment. A plugin source runs a
+command only through a trusted exec or container policy with
+`--enable-plugins`. Other plugin sources, including ones that drydock
+cannot render, stay out of this selection. The Applications they render are
+selected too. The selection is
+reported with the strict-exempt warning `diff.changed-only-app-revision`.
+When no relevant path changed at all, the changed-only diff is still skipped
+before any Application is listed, so these Applications are not rendered
+then.
+
 ## Commands
 
 Use the default behavior:

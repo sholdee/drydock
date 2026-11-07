@@ -110,6 +110,9 @@ func renderSourcePlan(ctx context.Context, application argoappv1.Application, pr
 	if err != nil {
 		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 	}
+	if sourcePlan.AppRevision != "" {
+		opts.ArgoEnv = argoRenderEnvAt(application, sourcePlan.Source, sourcePlan.AppRevision, normalizeTrackingOptions(trackingOpts).ControllerNamespace)
+	}
 	opts.EnableAVPCompat = pluginOpts.EnableAVPCompat
 	opts.EnableKSOPSCompat = pluginOpts.EnableKSOPSCompat
 	opts.EnablePlugins = pluginOpts.EnablePlugins
@@ -498,29 +501,39 @@ func parseKubeVersion(kubeVersion string) (string, error) {
 // Application instance name (<namespace>_<name> outside the controller
 // namespace, bare name otherwise) and ARGOCD_APP_NAMESPACE is the
 // destination namespace, exactly as the application controller fills the
-// ManifestRequest. ARGOCD_APP_REVISION* carry the spec targetRevision because
-// drydock does not resolve a commit SHA at render time.
+// ManifestRequest. ARGOCD_APP_REVISION* carry the spec targetRevision here;
+// renderSourcePlan replaces them with the resolved revision through
+// argoRenderEnvAt when PrepareSource resolved one.
 func argoRenderEnv(application argoappv1.Application, source argoappv1.ApplicationSource, controllerNamespace string) argoappv1.Env {
-	revision := source.TargetRevision
-	shortRevision := revision
-	if len(shortRevision) > 7 {
-		shortRevision = shortRevision[:7]
-	}
-	shortRevision8 := revision
-	if len(shortRevision8) > 8 {
-		shortRevision8 = shortRevision8[:8]
-	}
+	return argoRenderEnvAt(application, source, source.TargetRevision, controllerNamespace)
+}
+
+// argoRenderEnvAt is argoRenderEnv with revision as ARGOCD_APP_REVISION.
+// The repo-server cuts the two short forms from the first 7 and 8 bytes of
+// whatever revision it has, a chart version or an OCI digest included
+// (shortenRevision, repository.go:1880-1885), so a digest gives "sha256:"
+// and "sha256:x".
+func argoRenderEnvAt(application argoappv1.Application, source argoappv1.ApplicationSource, revision, controllerNamespace string) argoappv1.Env {
 	return argoappv1.Env{
 		{Name: "ARGOCD_APP_NAME", Value: application.InstanceName(controllerNamespace)},
 		{Name: "ARGOCD_APP_NAMESPACE", Value: application.Spec.Destination.Namespace},
 		{Name: "ARGOCD_APP_PROJECT_NAME", Value: application.Spec.Project},
 		{Name: "ARGOCD_APP_REVISION", Value: revision},
-		{Name: "ARGOCD_APP_REVISION_SHORT", Value: shortRevision},
-		{Name: "ARGOCD_APP_REVISION_SHORT_8", Value: shortRevision8},
+		{Name: "ARGOCD_APP_REVISION_SHORT", Value: shortenRevision(revision, 7)},
+		{Name: "ARGOCD_APP_REVISION_SHORT_8", Value: shortenRevision(revision, 8)},
 		{Name: "ARGOCD_APP_SOURCE_REPO_URL", Value: source.RepoURL},
 		{Name: "ARGOCD_APP_SOURCE_PATH", Value: source.Path},
 		{Name: "ARGOCD_APP_SOURCE_TARGET_REVISION", Value: source.TargetRevision},
 	}
+}
+
+// shortenRevision mirrors the repo-server helper of the same name: the first
+// length bytes of revision, or all of it when it is shorter.
+func shortenRevision(revision string, length int) string {
+	if len(revision) > length {
+		return revision[:length]
+	}
+	return revision
 }
 
 func applyAVPCompatToManifest(manifest *render.Manifest, opts render.RenderOptions) bool {

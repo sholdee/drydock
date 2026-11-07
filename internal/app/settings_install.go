@@ -157,7 +157,7 @@ func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localPr
 	source := sourcePlan.Source
 	sourceType := settingsInstallSourceType(sourcePlan, b.root, sourcePath, local)
 	if sourceType == argoappv1.ApplicationSourceTypeKustomize && local {
-		b.addKustomize(ctx, sourcePath, source.Kustomize, settingsInstallRenderEnv(provider, application, source))
+		b.addKustomize(ctx, sourcePath, source.Kustomize)
 	}
 	if sourceType != argoappv1.ApplicationSourceTypeHelm {
 		return
@@ -221,6 +221,7 @@ func settingsInstallHelmValueFiles(provider localProvider, application argoappv1
 	if err != nil {
 		return nil
 	}
+	opts.ArgoEnv = settingsInstallRenderEnv(provider, application, sourcePlan.Source)
 	refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, helmRefInputPaths(opts))
 	if err != nil {
 		return nil
@@ -254,9 +255,22 @@ func settingsInstallTracking(provider localProvider) TrackingOptions {
 }
 
 // settingsInstallRenderEnv is the Argo CD build environment of a source, as
-// the render passes it to the Helm value file loader.
+// the render passes it to the Helm value file loader. A source that renders
+// a local tree gets the ARGOCD_APP_REVISION that the render gives it
+// (localSourceAppRevision): the commit of the tree, the ls-remote form for
+// a multi-source Application, and the HEAD commit of a --repo-map target.
+// Any other source keeps the spec targetRevision, because drydock finds
+// these files without acquiring anything. source is merged with its
+// .argocd-source overrides, but the merge keeps the spec targetRevision, as
+// the repo-server's does (mergeSourceParameters,
+// reposerver/repository/repository.go:1946-1949), so the revision resolves
+// from the spec targetRevision as in the render (PrepareSource).
 func settingsInstallRenderEnv(provider localProvider, application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.Env {
-	return argoRenderEnv(application, source, settingsInstallTracking(provider).ControllerNamespace)
+	controllerNamespace := settingsInstallTracking(provider).ControllerNamespace
+	if revision := provider.localSourceAppRevision(source, application.Spec.HasMultipleSources()); revision != "" {
+		return argoRenderEnvAt(application, source, revision, controllerNamespace)
+	}
+	return argoRenderEnv(application, source, controllerNamespace)
 }
 
 // settingsInstallSourceType returns the source type as Argo CD picks it: the
@@ -285,8 +299,8 @@ func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, l
 	}
 }
 
-func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize, env argoappv1.Env) {
-	values, err := render.KustomizeHelmValues(ctx, b.root, sourcePath, kustomize, env)
+func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) {
+	values, err := render.KustomizeHelmValues(ctx, b.root, sourcePath, kustomize)
 	if err != nil {
 		return
 	}

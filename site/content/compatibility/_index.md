@@ -76,6 +76,20 @@ Go paths. It can fetch declared Git, HTTP(S) Helm, OCI Helm, OCI artifact,
 and remote Kustomize resources into explicit caches. `--offline` turns those
 source network fetches into cache/local-only requirements.
 
+The build environment variables `ARGOCD_APP_REVISION`,
+`ARGOCD_APP_REVISION_SHORT`, and `ARGOCD_APP_REVISION_SHORT_8` carry the
+revision that the Argo CD repo-server resolves. A Git source gets the commit
+SHA of the tree that drydock renders: the fetched commit, the HEAD commit of
+the `--path` tree or of a `--repo-map` directory, or the snapshot commit of
+each side of a `--ref` diff. In a multi-source Application a Git source gets
+the `git ls-remote` form, as in Argo CD: an abbreviated SHA stays as written,
+and a tag gives the commit SHA. An OCI artifact source gets the
+manifest digest, and a chart from a Helm repository gets the chart version. When the tree is
+not the top of a Git repository, drydock cannot tell the commit and keeps
+the spec `targetRevision`. A source that renders the local tree reports the
+local commit, which differs from the commit that Argo CD sees after a push
+or a merge.
+
 Rendering intentionally does not call live Argo CD, Kubernetes, `kubectl`,
 `argocd`, Helm CLI, or Kustomize CLI. That keeps local and CI analysis fast,
 portable, and reproducible.

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: app-revision
+description: Local Helm chart that echoes the ARGOCD_APP_REVISION variables from Helm parameters.
+type: application
+version: 0.1.0

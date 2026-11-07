@@ -33,6 +33,18 @@ type SourceIdentity struct {
 	Locator  string `json:"locator,omitempty"`
 	Revision string `json:"revision,omitempty"`
 	Digest   string `json:"digest,omitempty"`
+	// AppRevision is the ARGOCD_APP_REVISION of a source whose spec names
+	// one of the ARGOCD_APP_REVISION variables, when the key does not hold
+	// that value otherwise (see withKeyAppRevision), or empty. The local
+	// input kinds key on file digests and drop Revision, so without this
+	// field such a source would keep its key across commits while its
+	// output changes. Every other source leaves it empty, so its key stays
+	// the same across commits that do not touch its inputs.
+	AppRevision string `json:"appRevision,omitempty"`
+	// LsRemoteRevision carries the GitResult.LsRemoteRevision of a fetched
+	// Git source from resolveSourceRootIdentity to PrepareSource. It is not
+	// a key input.
+	LsRemoteRevision string `json:"-"`
 	// OutOfBoundsSymlink is the first out-of-bounds symlink of the provider
 	// root for a source that renders from it, or empty. Such a symlink
 	// anywhere in the tree fails every source that renders from it, so it
@@ -532,18 +544,62 @@ func sourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, p
 		if strings.TrimSpace(identity.Revision) == "" {
 			return identity, "", false
 		}
-		return identity, "", true
+		return withKeyAppRevision(identity, sourcePlan), "", true
 	}
 	rootIdentity, reason, ok := rootSourceIdentityForPlan(ctx, handle, provider, plan, sourcePlan, identity)
 	if !ok {
 		return rootIdentity, reason, ok
 	}
+	rootIdentity = withKeyAppRevision(rootIdentity, sourcePlan)
 	file, err := provider.rootOutOfBoundsSymlink(ctx)
 	if err != nil {
 		return SourceIdentity{}, renderCacheReasonInputDigest, false
 	}
 	rootIdentity.OutOfBoundsSymlink = file
 	return rootIdentity, "", true
+}
+
+// withKeyAppRevision puts the ARGOCD_APP_REVISION of sourcePlan into the
+// identity when the source reads it and the key does not hold that value
+// yet. The local input kinds drop Revision, so they always need it. The
+// other kinds hold the commit, digest, or chart version in Revision, which
+// is the value unless a multi-source Application reports an abbreviated
+// SHA instead. Sources that do not read the variables
+// keep their identity, so their keys do not change.
+func withKeyAppRevision(identity SourceIdentity, sourcePlan SourcePlan) SourceIdentity {
+	if sourcePlan.AppRevision == "" || !sourceReadsAppRevision(sourcePlan.Source) {
+		return identity
+	}
+	switch identity.Kind {
+	case sourceIdentityKindLocalInputs, sourceIdentityKindWorktreeInputs:
+		identity.AppRevision = sourcePlan.AppRevision
+	default:
+		if sourcePlan.AppRevision != identity.Revision {
+			identity.AppRevision = sourcePlan.AppRevision
+		}
+	}
+	return identity
+}
+
+// appRevisionVariable is the common prefix of ARGOCD_APP_REVISION,
+// ARGOCD_APP_REVISION_SHORT, and ARGOCD_APP_REVISION_SHORT_8.
+const appRevisionVariable = "ARGOCD_APP_REVISION"
+
+// sourceReadsAppRevision reports whether a render of source can read one of
+// the ARGOCD_APP_REVISION variables. The build environment reaches a
+// cacheable render only through env substitution of spec fields (Helm
+// parameters, value file paths and file parameter paths, Kustomize images,
+// commonLabels and commonAnnotations, Jsonnet extVars and TLAs), and a
+// substitution names the variable literally. A plugin source can read the
+// process environment, but plugin sources never persist. The check covers
+// the whole spec, so a name in a field that is not substituted (such as
+// helm.valuesObject) only costs a cache miss on each new commit.
+func sourceReadsAppRevision(source argoappv1.ApplicationSource) bool {
+	data, err := json.Marshal(source)
+	if err != nil {
+		return true
+	}
+	return strings.Contains(string(data), appRevisionVariable)
 }
 
 func rootSourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, provider localProvider, plan PlanResult, sourcePlan SourcePlan, identity SourceIdentity) (SourceIdentity, string, bool) {

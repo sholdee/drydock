@@ -18,6 +18,12 @@ type SourcePlan struct {
 	SourceRoot   string
 	RefOnly      bool
 	ExplicitType argoappv1.ApplicationSourceType
+	// AppRevision is the revision the Argo CD repo-server would report for
+	// this source as ARGOCD_APP_REVISION: a commit SHA for a Git source, a
+	// manifest digest for an OCI source. PrepareSource sets it. Empty means
+	// drydock could not resolve one, and the build environment keeps the
+	// spec targetRevision.
+	AppRevision string
 }
 
 type PlanResult struct {

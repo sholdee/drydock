@@ -1,0 +1,21 @@
+# The revision variables of an OCI artifact source: the manifest digest, cut
+# to "sha256:" and "sha256:<hex>" for the short forms.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-app-revision-oci
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/nested/parity-nested-chart
+    targetRevision: 1.0.0
+    path: .
+    helm:
+      parameters:
+        - name: fromValues
+          value: $ARGOCD_APP_REVISION|$ARGOCD_APP_REVISION_SHORT|$ARGOCD_APP_REVISION_SHORT_8
+          forceString: true
+  destination:
+    name: in-cluster
+    namespace: parity-app-revision-oci

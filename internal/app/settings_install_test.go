@@ -1278,6 +1278,51 @@ func TestSettingsFromRenderedArgoCDInstallResolvesValueFilesLikeTheRenderer(t *t
 			want: "label",
 		},
 		{
+			// A local source renders with the HEAD commit as
+			// ARGOCD_APP_REVISION, so the install reads the file that the
+			// short SHA names, also in a dirty worktree.
+			name: "revision env substitution",
+			write: func(t *testing.T, root string) {
+				writeLocalChartArgoCDInstall(t, root, []string{"values-$ARGOCD_APP_REVISION_SHORT.yaml", "values-a.yaml"})
+				head := gitCommitAll(t, root, "install")
+				writeTestFile(t, filepath.Join(root, "argocd", "values-"+head[:7]+".yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: annotation\n")
+			},
+			want: "label",
+		},
+		{
+			// A multi-source Application pinned to an abbreviated SHA
+			// renders with the abbreviation as ARGOCD_APP_REVISION, so
+			// the install reads the file that the abbreviation names.
+			name: "multi-source abbreviated SHA env substitution",
+			write: func(t *testing.T, root string) {
+				writeFakeArgoCDChart(t, filepath.Join(root, "argocd", "chart"))
+				head := gitCommitAll(t, root, "chart")
+				writeTestFile(t, filepath.Join(root, "apps", "argocd.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/example/repo
+      targetRevision: "`+head[:9]+`"
+      path: argocd/chart
+      helm:
+        releaseName: argocd
+        valueFiles:
+          - ../values-$ARGOCD_APP_REVISION.yaml
+          - ../values-a.yaml
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+				writeDiffApplication(t, root, "other", "other", "same")
+				writeTestFile(t, filepath.Join(root, "argocd", "values-"+head[:9]+".yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: annotation\n")
+			},
+			want: "label",
+		},
+		{
 			name: "argocd-source override",
 			write: func(t *testing.T, root string) {
 				writeLocalChartArgoCDInstall(t, root, []string{"values-a.yaml"})

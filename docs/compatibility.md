@@ -287,6 +287,10 @@ Supported:
 - Kustomize `helmCharts` rendered through the shared Go-library Helm path.
 - Helm `$ref/...` external value files and file parameters from Git sources.
 - HTTP(S) remote Helm value files through the remote-resource cache.
+- A remote Kustomize Git ref at a branch name resolves from the
+  remote-tracking ref of its clone first, so `--refresh-remote-resources`
+  renders the remote's current commit also for the default branch, whose
+  local branch in the clone never moves. A refresh prunes deleted branches.
 - Remote Kustomize HTTP(S) file refs and Git refs through the remote-resource
   cache.
 - Default Git clone/fetch into the Git cache for unmapped path sources missing
@@ -560,12 +564,141 @@ Supported:
   `<app>` is the Application instance name like the repo-server's lookup: an
   Application outside the controller namespace reads
   `.argocd-source-<namespace>_<name>.yaml`, and a bare-name file is ignored.
-- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
-  `ARGOCD_APP_REVISION`, `ARGOCD_APP_REVISION_SHORT`, and
-  `ARGOCD_APP_REVISION_SHORT_8` carry the spec `targetRevision` string; a
-  repo-server reports the resolved revision (commit SHA for Git sources,
-  chart version for Helm repository sources, manifest digest for OCI
-  sources).
+- `ARGOCD_APP_REVISION`, `ARGOCD_APP_REVISION_SHORT`, and
+  `ARGOCD_APP_REVISION_SHORT_8` carry the revision that the Argo CD v3.6.1
+  repo-server resolves for each rendered source. `_SHORT` and `_SHORT_8` are
+  the first 7 and 8 bytes of that value, whatever it is. The variables reach
+  every place the build environment reaches: Helm parameters, value file
+  paths and file parameter paths, Kustomize images, `commonLabels` and
+  `commonAnnotations` (with `commonAnnotationsEnvsubst`), Jsonnet extVars and
+  TLAs, and the environment and `plugin.env` substitution of config
+  management plugins. In a multi-source Application each rendered source
+  gets the revision of its own repository, and a `$ref` source adds nothing.
+  drydock resolves the value offline as follows:
+  - A Git source fetched into the Git cache gets the commit SHA that drydock
+    checked out. A `targetRevision` that is also the name of a branch or
+    tag checks out that ref, also a short hex name such as `c` or `2024`,
+    because `ls-remote` matches ref names before it takes a hex revision as
+    an abbreviated SHA (`util/git/client.go:991-1022`). A hex name shorter
+    than 7 digits that names no ref does not resolve, as in `ls-remote`. An
+    abbreviated SHA must match a single object, of any type, and that
+    object must be a commit or an annotated tag, else the source fails as
+    in `git checkout`, which reports "short object ID ... is ambiguous"
+    when a commit and a tree or blob share the abbreviation. drydock looks
+    for a branch first under the remote-tracking refs of its clone, which
+    every fetch and `--refresh-git` update, and then under the local branch
+    that the clone created. A `--refresh-git` fetch prunes the branches
+    that the remote deleted, so such a branch stops resolving, as in
+    `ls-remote`. It uses the remote whose URL is the `repoURL` of the
+    source, compared in lower case (also a `.GIT` suffix) as Argo CD
+    compares repository URLs, and every remote in name order when no
+    remote has that URL.
+  - A source that renders from the `--path` tree (a path that exists there,
+    or a repository that drydock maps to the tree) gets the HEAD commit of
+    that tree, also when the worktree has uncommitted changes. drydock
+    renders the tree that is on disk whatever branch `targetRevision` names,
+    so it reports the commit of that tree. Each side of a `--ref` or
+    `--ref-orig` diff gets the commit of its snapshot.
+  - A `--repo-map` source gets the HEAD commit of the mapped directory.
+  - A `--path` or `--repo-map` source whose `targetRevision` pins a commit by
+    SHA gets what Argo CD reports for that pin, although drydock still
+    renders the local tree. A full SHA gives the SHA in lower case for a
+    single-source Application (`git rev-parse HEAD` after the checkout) and
+    the SHA as written for a multi-source Application. A hex revision that
+    is also a branch or tag name gives the commit of that ref. Any other
+    abbreviated SHA gives, for a single-source Application, the commit that
+    it names in the local repository (an abbreviated annotated tag object
+    gives the commit the tag points to, as `git checkout` does), or the
+    HEAD commit when no object in the local repository matches. For a
+    multi-source Application it stays as written. An abbreviation that
+    matches more than one object of any type, or only a tree or blob, fails
+    the source, as `git checkout` fails for it in the repo-server. In a
+    local tree drydock looks up the local branch first, which is what you
+    have checked out, then the remote-tracking refs.
+  - The targetRevision comes from the spec. An `.argocd-source` override
+    cannot change it: the repo-server keeps the spec `targetRevision` when it
+    merges the override (`repository.go:1946-1949`), and so does drydock,
+    in the render and in the settings discovery of an Argo CD install.
+  - A Git source of a multi-source Application gets what `git ls-remote`
+    resolution gives, as Argo CD does. The repo-server passes the
+    `ls-remote` result as the revision there and does not read the
+    checked-out commit (`repository.go:516-518`, `util/git/client.go:961-1027`).
+    So an abbreviated SHA stays as written, also one of an annotated tag
+    object, and a full SHA also stays as written, in its letter case. HEAD, a branch, a lightweight tag
+    and an annotated tag give the commit SHA, because Argo CD's
+    `listRemote` peels annotated tags (`util/git/workaround.go:86-96`). A
+    single-source Application gets the checked-out commit SHA in all of
+    these cases (`git rev-parse HEAD`, `repository.go:519-525`). Any
+    `spec.sources` list counts as multi-source, also with one entry.
+    drydock reads branch and tag names from the Git cache clone, the
+    repository of a `--ref` snapshot, the `--path` tree, or the
+    `--repo-map` directory, and branches from the remote whose URL is the
+    `repoURL` of the source.
+  - An OCI artifact source gets the manifest digest (`sha256:...`), so
+    `_SHORT` is `sha256:` and `_SHORT_8` is `sha256:` plus one hex digit,
+    as in Argo CD.
+  - A chart from a Helm repository gets the chart version. drydock supports
+    exact versions only, and for an exact version the repo-server reports
+    the `targetRevision` as written.
+- Recorded divergences from strict Argo CD v3.6.1 for these variables:
+  - When the `--path` tree or a `--repo-map` directory is not the top of a
+    Git repository (for example a subdirectory of a repository), or HEAD
+    names no commit, drydock cannot tell the commit and keeps the spec
+    `targetRevision`.
+  - A source that renders from the `--path` tree reports the local commit.
+    Argo CD reports the commit that `targetRevision` names in the remote
+    repository, which is a different commit until the change is pushed and,
+    after a merge, is the merge commit.
+  - A source that renders from the `--path` tree or a `--repo-map`
+    directory does not need its `targetRevision` to exist in the remote.
+    For a tag or a branch that exists only locally and was never pushed,
+    drydock reports the local commit, where Argo CD cannot resolve the
+    revision and fails the Application.
+  - Known nondeterminism in Argo CD: for a name that is both a branch and
+    a tag, `ls-remote` takes the first match in a ref list without a fixed
+    order, so Argo CD can resolve either. drydock always takes the branch.
+  - A local tree, a `--repo-map` directory and the repository of a `--ref`
+    snapshot can hold objects that the repo-server never sees: local-only
+    commits, and dangling objects that a fetch or `git gc` would not keep.
+    For such a tree, drydock can resolve an abbreviated SHA pin to a local
+    commit, or find it ambiguous, where the repo-server finds no such
+    commit or a single one.
+- The persistent render cache keys a local source on its input files and not
+  on the commit, so a commit that leaves the inputs unchanged keeps the
+  cached entry. A source whose spec names one of the `ARGOCD_APP_REVISION`
+  variables, also through a merged `.argocd-source` override, also keys on
+  the value that the variable gets when the key does not hold it already:
+  - a local source always keys on it, so with the HEAD commit each new
+    commit renders it again, and with a SHA pin it keeps its key;
+  - a fetched Git source keys on its commit, and also on the value when the
+    value differs from that commit: an abbreviated SHA, or a full SHA in
+    upper case, of a multi-source Application;
+  - a `--ref` snapshot source keys on the snapshot commit, and also on the
+    value when the value differs from that commit, such as a SHA pin of
+    another commit.
+
+  The keys of all other sources do not change.
+- A diff between two commits shows a change in the objects of a source that
+  reads one of these variables even when no input changed, as Argo CD does
+  after the new commit syncs. `--changed-only` selects every Application
+  whose spec reads one of the variables, in its spec or through a merged
+  `.argocd-source` override on either side, and every Application with a
+  config management plugin source that the run renders with a command,
+  whose environment always holds the variables, whenever the two sides
+  render different commits. A plugin source renders with a command only
+  through a trusted exec or container policy with `--enable-plugins` whose
+  checks before the command pass (source path, parameters, and
+  `applicationEnv.allow`; the render and the selection share them), or an
+  injected plugin renderer. A plugin found by discovery is matched in the
+  same root the render uses, such as a `--repo-map` directory. Native
+  policy engines, the built-in
+  argocd-vault-plugin compatibility and the native Kustomize CMP render in
+  process without the variables, and a plugin source that drydock cannot
+  render stays out of the selection, so it does not fail the diff with
+  `plugin.unsupported`. It also selects the Applications they render, and
+  warns `diff.changed-only-app-revision` with their number. `--strict` does not fail on that warning. When no relevant path
+  changed at all, the changed-only diff is still skipped before any
+  Application is listed, so these Applications are not rendered then.
 - Directory rendering honors `+argocd:skip-file-rendering`, walks hidden
   directories when `recurse` is enabled, renders Jsonnet through native Go
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative
@@ -918,6 +1051,12 @@ Supported:
 - Kustomize Helm `valuesFile` and `additionalValuesFiles` entries outside the
   kustomization directory when the resolved file remains inside the repository
   root.
+- Kustomize Helm `valuesFile` and `additionalValuesFiles` paths are read as
+  written, as kustomize reads them. A build environment variable such as
+  `$ARGOCD_APP_REVISION_SHORT` in such a path stays literal, because Argo CD
+  substitutes the build environment into a Kustomize source only for
+  `images`, `commonLabels`, and `commonAnnotations`. Earlier drydock releases
+  substituted it.
 - Kustomize Helm remote HTTP(S) value files through the same remote-resource
   cache path used by Helm sources.
 - Kustomize `ignoreMissingComponents` as in Argo CD v3.6.1: each
@@ -1211,7 +1350,12 @@ Supported:
   - The `valuesFile` and `additionalValuesFiles` of each Kustomize
     `helmCharts` entry, and the `values.yaml` files of its local chart.
     drydock reads them as the renderer does: relative to the kustomization
-    directory, with globs and build environment variables. It skips
+    directory, with globs. kustomize reads these paths as written, so a
+    `$ARGOCD_APP_NAME` or other build environment variable in them stays
+    literal. Argo CD substitutes the build environment only into the
+    `images`, `commonLabels`, and `commonAnnotations` of a Kustomize source
+    (`util/kustomize/kustomize.go:189`, `236`, and `254-257`). Earlier
+    drydock releases substituted it into these paths. It skips
     `valuesFile` when `valuesMerge` is `replace` and `valuesInline` is set,
     because the render then does not read it. When `valuesInline` is set,
     kustomize reads `valuesFile` with its own YAML parser, which reads only

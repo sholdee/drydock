@@ -1,0 +1,32 @@
+# A multi-source Application at an annotated tag. The smoke tags the fixture
+# commit with parity-app-revision-annotated before it serves the repository.
+# The repo-server passes the ls-remote result as the revision. Argo CD's
+# listRemote peels annotated tags, so that is the commit SHA, not the SHA of
+# the tag object, as for the single-source Application in
+# app-revision-annotated-tag-single.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-app-revision-annotated-tag
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: parity-app-revision-annotated
+      path: charts/app-revision
+      helm:
+        releaseName: parity-app-revision-annotated-tag
+        parameters:
+          - name: revision
+            value: $ARGOCD_APP_REVISION
+            forceString: true
+          - name: short
+            value: $ARGOCD_APP_REVISION_SHORT
+            forceString: true
+          - name: short8
+            value: ${ARGOCD_APP_REVISION_SHORT_8}
+            forceString: true
+  destination:
+    name: in-cluster
+    namespace: parity-app-revision-annotated-tag

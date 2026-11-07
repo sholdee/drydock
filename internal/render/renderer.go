@@ -38,24 +38,31 @@ type RenderOptions struct {
 	// v3.6.1). A config management plugin such as argocd-vault-plugin
 	// reads that output through a pipe instead, so the line break stays.
 	// The AVP compatibility plugin paths set it.
-	KeepOutputLineBreak          bool
-	EnableKSOPSCompat            bool
-	EnablePlugins                bool
-	Plugin                       *PluginConfig
-	KubeVersion                  string
-	APIVersions                  []string
-	BuildOptions                 []string
-	Kustomize                    *argoappv1.ApplicationSourceKustomize
-	Jsonnet                      argoappv1.ApplicationSourceJsonnet
-	ArgoEnv                      argoappv1.Env
-	RefRoots                     map[string]string
-	RefSources                   map[string]ResolvedSource
-	ReleaseName                  string
-	ValuesObject                 map[string]any
-	ValuesMergeMode              string
-	ValueFiles                   []string
-	ValueFilesBaseDir            string
-	ValueFilesBoundaryRoot       string
+	KeepOutputLineBreak    bool
+	EnableKSOPSCompat      bool
+	EnablePlugins          bool
+	Plugin                 *PluginConfig
+	KubeVersion            string
+	APIVersions            []string
+	BuildOptions           []string
+	Kustomize              *argoappv1.ApplicationSourceKustomize
+	Jsonnet                argoappv1.ApplicationSourceJsonnet
+	ArgoEnv                argoappv1.Env
+	RefRoots               map[string]string
+	RefSources             map[string]ResolvedSource
+	ReleaseName            string
+	ValuesObject           map[string]any
+	ValuesMergeMode        string
+	ValueFiles             []string
+	ValueFilesBaseDir      string
+	ValueFilesBoundaryRoot string
+	// LiteralValueFilePaths reads ValueFiles as written, without the Argo
+	// CD build environment substitution of a Helm source. The values files
+	// of a Kustomize helmCharts entry set it: kustomize loads them as
+	// written, and Argo CD substitutes only images, commonLabels, and
+	// commonAnnotations of a Kustomize source (util/kustomize/kustomize.go
+	// at v3.6.1).
+	LiteralValueFilePaths        bool
 	IgnoreMissingValueFiles      bool
 	HelmParameters               []argoappv1.HelmParameter
 	HelmFileParameters           []argoappv1.HelmFileParameter

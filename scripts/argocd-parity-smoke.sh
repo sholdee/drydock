@@ -317,6 +317,62 @@ APPLICATIONS=(
   parity-rolling-sync-duplicate-dev
   parity-rolling-sync-empty-step-dev
   parity-rolling-sync-max-update-dev
+  # ARGOCD_APP_REVISION, _SHORT and _SHORT_8 (see APP_REVISION_GIT_APPLICATIONS).
+  parity-app-revision-helm
+  parity-app-revision-kustomize
+  parity-app-revision-jsonnet
+  parity-app-revision-plugin
+  parity-app-revision-multi-source
+  parity-app-revision-oci
+  parity-app-revision-helm-repo
+  parity-app-revision-annotated-tag
+  parity-app-revision-annotated-tag-single
+)
+
+# Applications whose Git sources read the ARGOCD_APP_REVISION variables. The
+# repo-server reports the commit SHA of the fixture repository it serves.
+# drydock reports the HEAD commit of the --repo-map target, so their drydock
+# capture maps the fixture URL to FIXTURE_GIT_WORK, the Git repository that
+# the served bare repository is cloned from. Both sides then see the same
+# commit. The other captures keep FIXTURE_REPO_PATH, which is no Git
+# repository top, so drydock keeps the spec targetRevision there.
+APP_REVISION_GIT_APPLICATIONS=(
+  parity-app-revision-helm
+  parity-app-revision-kustomize
+  parity-app-revision-jsonnet
+  parity-app-revision-plugin
+  parity-app-revision-multi-source
+  parity-app-revision-annotated-tag
+  parity-app-revision-annotated-tag-single
+)
+# The annotated tag that prepare_fixture_git_image puts on the fixture
+# commit. A multi-source Application at this tag gets the git ls-remote
+# result, a single-source Application the checked-out commit. Argo CD's
+# listRemote peels annotated tags, so both get the commit SHA and never the
+# SHA of the tag object (APP_REVISION_TAG_OBJECT_ABSENT).
+APP_REVISION_ANNOTATED_TAG="parity-app-revision-annotated"
+# The value each revision Application must render on the Argo CD side, as
+# "name|text" pairs, so that both sides rendering an unresolved value cannot
+# pass the comparison. @GIT_HEAD@ stands for the commit of FIXTURE_GIT_WORK,
+# and "sha256:" for the start of an OCI manifest digest. The text is the part
+# after the first "|".
+APP_REVISION_EXPECTED=(
+  "parity-app-revision-helm|@GIT_HEAD@"
+  "parity-app-revision-kustomize|@GIT_HEAD@"
+  "parity-app-revision-jsonnet|@GIT_HEAD@"
+  "parity-app-revision-plugin|@GIT_HEAD@"
+  "parity-app-revision-multi-source|@GIT_HEAD@"
+  "parity-app-revision-multi-source|sha256:"
+  "parity-app-revision-oci|sha256:"
+  "parity-app-revision-helm-repo|1.0.0|1.0.0|1.0.0"
+  "parity-app-revision-annotated-tag|@GIT_HEAD@"
+  "parity-app-revision-annotated-tag-single|@GIT_HEAD@"
+)
+# Applications whose Argo CD capture must not hold the SHA of the
+# APP_REVISION_ANNOTATED_TAG tag object.
+APP_REVISION_TAG_OBJECT_ABSENT=(
+  parity-app-revision-annotated-tag
+  parity-app-revision-annotated-tag-single
 )
 
 # ApplicationSets that Argo CD must reject, as "name|text" pairs. Before the
@@ -375,6 +431,7 @@ TENANT_APPLICATIONS=(
 PLUGIN_APPLICATIONS=(
   parity-plugin-env
   parity-plugin-container
+  parity-app-revision-plugin
 )
 # CMP sidecars patched onto argocd-repo-server. Each entry is both the
 # container name and the ConfigManagementPlugin name, so its socket is
@@ -746,6 +803,7 @@ prepare_fixture_git_image() {
   git -C "${FIXTURE_GIT_WORK}" config user.name "drydock render parity smoke"
   git -C "${FIXTURE_GIT_WORK}" add .
   git -C "${FIXTURE_GIT_WORK}" commit -m "seed argocd parity fixture" >/dev/null
+  git -C "${FIXTURE_GIT_WORK}" tag -a "${APP_REVISION_ANNOTATED_TAG}" -m "annotated tag for the ARGOCD_APP_REVISION parity case"
   git clone --bare --no-hardlinks "${FIXTURE_GIT_WORK}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
   prepare_oob_symlink_repo
@@ -1557,12 +1615,14 @@ capture_argocd_manifests() {
 }
 
 # drydock_build_args sets DRYDOCK_BUILD_ARGS to the offline `drydock build
-# app` command line every capture shares.
+# app` command line every capture shares. The optional second argument is
+# the --repo-map target of the fixture URL (default FIXTURE_REPO_PATH).
 drydock_build_args() {
   local app_ref="$1"
+  local repo_map_path="${2:-${FIXTURE_REPO_PATH}}"
   DRYDOCK_BUILD_ARGS=(build app "${app_ref}"
     --path "${FIXTURE_REPO_PATH}"
-    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}"
+    --repo-map "${FIXTURE_REPO_URL}=${repo_map_path}"
     --oci-cache-dir "${OCI_CACHE_DIR}"
     --chart-cache-dir "${CHART_CACHE_DIR}"
     --oci-ca-file "${OCI_CA_FILE}"
@@ -1575,9 +1635,18 @@ capture_drydock_manifest() {
   local app_ref="$1"
   local stem="$2"
   local output_dir="$3"
-  local plugin_app stderr_file
+  local plugin_app revision_app stderr_file repo_map_path
   local build_args
-  drydock_build_args "${app_ref}"
+  repo_map_path="${FIXTURE_REPO_PATH}"
+  for revision_app in "${APP_REVISION_GIT_APPLICATIONS[@]}"; do
+    if [[ "${stem}" == "${revision_app}" ]]; then
+      [[ -n "${FIXTURE_GIT_WORK}" ]] \
+        || fail "FIXTURE_GIT_WORK is unset; prepare_fixture_git_image must run before capturing ${stem}"
+      repo_map_path="${FIXTURE_GIT_WORK}"
+      break
+    fi
+  done
+  drydock_build_args "${app_ref}" "${repo_map_path}"
   build_args=("${DRYDOCK_BUILD_ARGS[@]}")
   for plugin_app in "${PLUGIN_APPLICATIONS[@]}"; do
     if [[ "${stem}" == "${plugin_app}" ]]; then
@@ -1764,6 +1833,39 @@ assert_avp_markers() {
   done
   [[ "${mismatch}" == "false" ]] \
     || fail "every AVP side must render exactly its expected drydock-redacted- marker count; see ${OUT_DIR}/argocd-manifests/${AVP_APPLICATION}.yaml, ${OUT_DIR}/drydock-manifests/${AVP_APPLICATION}.yaml and ${OUT_DIR}/avp-oracle/"
+}
+
+# assert_app_revision_captures fails the smoke unless every revision
+# Application rendered its expected resolved value under Argo CD. The exact
+# comparison then proves that drydock rendered the same.
+assert_app_revision_captures() {
+  local entry app text git_head git_tag_object file mismatch="false"
+  log_step "Checking the resolved ARGOCD_APP_REVISION values on the Argo CD side"
+  git_head="$(git -C "${FIXTURE_GIT_WORK}" rev-parse HEAD)" \
+    || fail "could not read the HEAD commit of ${FIXTURE_GIT_WORK}"
+  git_tag_object="$(git -C "${FIXTURE_GIT_WORK}" rev-parse "refs/tags/${APP_REVISION_ANNOTATED_TAG}")" \
+    || fail "could not read the ${APP_REVISION_ANNOTATED_TAG} tag object of ${FIXTURE_GIT_WORK}"
+  [[ "${git_tag_object}" != "${git_head}" ]] \
+    || fail "${APP_REVISION_ANNOTATED_TAG} must be an annotated tag, whose object SHA differs from the commit SHA"
+  for entry in "${APP_REVISION_EXPECTED[@]}"; do
+    app="${entry%%|*}"
+    text="${entry#*|}"
+    text="${text//@GIT_HEAD@/${git_head}}"
+    file="${OUT_DIR}/argocd-manifests/${app}.yaml"
+    if ! grep -qF -- "${text}" "${file}"; then
+      echo "argocd render parity smoke: ${file} does not contain '${text}'" >&2
+      mismatch="true"
+    fi
+  done
+  for app in "${APP_REVISION_TAG_OBJECT_ABSENT[@]}"; do
+    file="${OUT_DIR}/argocd-manifests/${app}.yaml"
+    if grep -qF -- "${git_tag_object}" "${file}"; then
+      echo "argocd render parity smoke: ${file} contains the tag object SHA ${git_tag_object}" >&2
+      mismatch="true"
+    fi
+  done
+  [[ "${mismatch}" == "false" ]] \
+    || fail "the Argo CD side must render the resolved revision for every ARGOCD_APP_REVISION Application; see ${OUT_DIR}/argocd-manifests/"
 }
 
 # compare_avp_oracle_manifests runs the exact per-resource comparison on the
@@ -2486,6 +2588,7 @@ main() {
   log_step "Rendering the argocd-vault-plugin oracle inside the sidecar"
   capture_avp_oracle_manifests
   assert_avp_markers
+  assert_app_revision_captures
   compare_manifests
   compare_applications
   compare_rolling_sync_conditions

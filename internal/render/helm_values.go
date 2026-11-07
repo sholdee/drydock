@@ -664,6 +664,9 @@ func parseRemoteHelmValueFile(file string) (*url.URL, bool) {
 }
 
 func envsubstHelmValueFilePath(raw string, opts RenderOptions, refRoots map[string]string) string {
+	if opts.LiteralValueFilePaths {
+		return raw
+	}
 	ref, rest, ok := helmValueFileRefPrefix(raw, refRoots)
 	if !ok {
 		file := opts.ArgoEnv.Envsubst(raw)

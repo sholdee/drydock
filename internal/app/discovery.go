@@ -284,7 +284,7 @@ func (o Orchestrator) discoverRenderedKustomize(ctx context.Context, root string
 		if hasSettingsConfigMapCandidate(next) {
 			// Best-effort: without the graph paths, committed settings
 			// files stay candidates as before.
-			if values, err := render.KustomizeHelmValues(ctx, root, displayPath, nil, nil); err == nil {
+			if values, err := render.KustomizeHelmValues(ctx, root, displayPath, nil); err == nil {
 				markSettingsRenderInputs(&next, settingsInstall{valuesFilesRead: values.ValuesFiles, files: values.Files}, "", defaultArgoCDControllerNamespace)
 			}
 		}

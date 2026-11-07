@@ -3617,3 +3617,42 @@ func TestOrchestratorBuildExecPolicyPluginObservesApplicationEnv(t *testing.T) {
 		t.Fatalf("data = %#v, want ARGOCD_ENV_MODE=prod and no bare MODE", data)
 	}
 }
+
+// The build environment of a command-backed plugin carries the resolved
+// revision, and spec.source.plugin.env substitutes it: the repo-server
+// substitutes plugin.env with the same build environment
+// (getPluginParamEnvs, reposerver/repository/repository.go:2411-2430).
+func TestOrchestratorBuildSubstitutesResolvedRevisionIntoPluginEnv(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplicationWithEnv(t, root, "plugin", "exec-renderer", map[string]string{
+		"SUFFIX": "$ARGOCD_APP_REVISION_SHORT-${ARGOCD_APP_REVISION_SHORT_8}",
+	})
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	writeExecPluginPolicyWithApplicationEnv(t, root, "exec-renderer", []string{"renderer"}, []string{"SUFFIX"})
+	head := gitCommitAll(t, root, "plugin")
+	policy, fingerprint := readTestPluginPolicy(t, root)
+	runner := &recordingExecRunner{result: pluginexec.Result{Stdout: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: injected\n")}}
+
+	_, err := (Orchestrator{PluginExecRunner: runner}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	for _, want := range []string{
+		"ARGOCD_APP_REVISION=" + head,
+		"ARGOCD_APP_REVISION_SHORT=" + head[:7],
+		"ARGOCD_APP_REVISION_SHORT_8=" + head[:8],
+		"ARGOCD_APP_SOURCE_TARGET_REVISION=main",
+		"ARGOCD_ENV_SUFFIX=" + head[:7] + "-" + head[:8],
+	} {
+		if !slices.Contains(runner.lastRequest.ExtraEnv, want) {
+			t.Fatalf("ExtraEnv = %#v, want %q", runner.lastRequest.ExtraEnv, want)
+		}
+	}
+}

@@ -1,0 +1,43 @@
+# A multi-source Application: each rendered source gets the revision of its
+# own repository. The Git chart gets the commit SHA, the OCI artifact chart
+# gets the manifest digest, and the $values ref source adds nothing.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-app-revision-multi-source
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      ref: values
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: charts/app-revision
+      helm:
+        releaseName: parity-app-revision-multi-git
+        valueFiles:
+          - $values/values/ref-values.yaml
+        parameters:
+          - name: revision
+            value: $ARGOCD_APP_REVISION
+            forceString: true
+          - name: short
+            value: $ARGOCD_APP_REVISION_SHORT
+            forceString: true
+          - name: short8
+            value: ${ARGOCD_APP_REVISION_SHORT_8}
+            forceString: true
+    - repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/nested/parity-nested-chart
+      targetRevision: 1.0.0
+      path: .
+      helm:
+        releaseName: parity-app-revision-multi-oci
+        parameters:
+          - name: fromValues
+            value: $ARGOCD_APP_REVISION|$ARGOCD_APP_REVISION_SHORT|$ARGOCD_APP_REVISION_SHORT_8
+            forceString: true
+  destination:
+    name: in-cluster
+    namespace: parity-app-revision-multi-source

@@ -60,8 +60,11 @@ type BuildRequest struct {
 	persistentRenderCache   *persistentRenderCache
 	// symlinkBounds keeps the out-of-bounds symlink check of each tree for
 	// the run, shared by every provider the run builds.
-	symlinkBounds        *symlinkBoundsMemo
-	rootRevision         string
+	symlinkBounds *symlinkBoundsMemo
+	rootRevision  string
+	// rootRepo is the Git repository that the rootRevision snapshot came
+	// from. It is set with rootRevision.
+	rootRepo             string
 	selfRepo             selfRepoRefs
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map
@@ -1104,7 +1107,7 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // the whole ApplicationSet, which then contributes no Applications.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode:
 		return true
 	}
 	return false

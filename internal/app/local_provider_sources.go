@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -120,10 +122,155 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 		ResolvedRevision:  acquired.Revision,
 	})
 	return acquired.Path, SourceIdentity{
-		Kind:     sourceIdentityKindGit,
-		Locator:  sourcepkg.NormalizeURL(source.RepoURL),
-		Revision: acquired.Revision,
+		Kind:             sourceIdentityKindGit,
+		Locator:          sourcepkg.NormalizeURL(source.RepoURL),
+		Revision:         acquired.Revision,
+		LsRemoteRevision: acquired.LsRemoteRevision,
 	}, nil
+}
+
+// sourceAppRevision returns the revision that the Argo CD v3.6.1
+// repo-server passes to GenerateManifests for source, which newEnv
+// (reposerver/repository/repository.go:1864-1878) exposes as
+// ARGOCD_APP_REVISION. runRepoOperation (repository.go:375-386 and 516-536)
+// resolves it: the commit SHA for a Git source and the manifest digest for an
+// OCI source. For a Git source of a single-source Application it is the
+// checked-out commit (`git rev-parse HEAD`). For a Git source of a
+// multi-source Application (multi) it is the `git ls-remote` result as it
+// is, which sourcepkg.LsRemoteRevision gives: a full or abbreviated SHA as
+// written, else the commit SHA (listRemote peels annotated tags).
+//
+// root and identity are what resolveSourceRootIdentity returned for source.
+// A fetched Git source reports what drydock checked out. A source that
+// renders a local tree (the provider root or a --repo-map target) is
+// localTreeAppRevision. "" means drydock cannot tell, and the build
+// environment keeps the spec targetRevision. A chart from a chart
+// repository never gets here (PrepareSource stops at an empty path): for
+// the exact versions drydock supports, the repo-server reports the
+// targetRevision unchanged (newHelmClientResolveRevision,
+// repository.go:3038-3040).
+//
+// An abbreviated SHA pin that matches more than one commit or tag in a local
+// tree is an error, as `git checkout` fails for it in the repo-server.
+func (p localProvider) sourceAppRevision(source render.ResolvedSource, root string, identity SourceIdentity, multi bool) (string, error) {
+	switch identity.Kind {
+	case sourceIdentityKindGit:
+		if multi && identity.LsRemoteRevision != "" {
+			return identity.LsRemoteRevision, nil
+		}
+		return strings.TrimSpace(identity.Revision), nil
+	case sourceIdentityKindOCI:
+		return strings.TrimSpace(identity.Revision), nil
+	case sourceIdentityKindRoot:
+		// Only the synthetic Application of a plugin policy bootstrap
+		// entrypoint has no repoURL (Argo CD requires one). It has no Argo
+		// CD counterpart, so it keeps the documented spec values.
+		if strings.TrimSpace(source.RepoURL) == "" {
+			return "", nil
+		}
+		return localTreeAppRevision(p.rootGitRepo, p.rootAppRevision, source.TargetRevision, source.RepoURL, multi)
+	}
+	if p.sourceResolver == nil {
+		return "", nil
+	}
+	if _, ok := p.sourceResolver.MappedPath(source.RepoURL); !ok {
+		return "", nil
+	}
+	return p.mappedTreeAppRevision(root, source.TargetRevision, source.RepoURL, multi)
+}
+
+// localSourceAppRevision is sourceAppRevision for a source that
+// sourceResolvesToRepoRoot or a --repo-map resolves to a local tree, found
+// without acquiring anything. It returns "" for any other source and for a
+// source whose revision fails to resolve, which then fails in the render.
+func (p localProvider) localSourceAppRevision(source argoappv1.ApplicationSource, multi bool) string {
+	if strings.TrimSpace(source.RepoURL) == "" {
+		return ""
+	}
+	var revision string
+	var err error
+	switch {
+	case p.sourceResolver != nil && p.sourceResolverMaps(source.RepoURL):
+		mappedPath, _ := p.sourceResolver.MappedPath(source.RepoURL)
+		revision, err = p.mappedTreeAppRevision(mappedPath, source.TargetRevision, source.RepoURL, multi)
+	case p.sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)):
+		revision, err = localTreeAppRevision(p.rootGitRepo, p.rootAppRevision, source.TargetRevision, source.RepoURL, multi)
+	}
+	if err != nil {
+		return ""
+	}
+	return revision
+}
+
+// sourceResolverMaps reports whether a --repo-map maps repoURL.
+func (p localProvider) sourceResolverMaps(repoURL string) bool {
+	_, ok := p.sourceResolver.MappedPath(repoURL)
+	return ok
+}
+
+// mappedTreeAppRevision is localTreeAppRevision for a --repo-map target.
+func (p localProvider) mappedTreeAppRevision(root, targetRevision, repoURL string, multi bool) (string, error) {
+	if p.isRepoRoot(root) {
+		return localTreeAppRevision(p.rootGitRepo, p.rootAppRevision, targetRevision, repoURL, multi)
+	}
+	return localTreeAppRevision(root, p.mappedAppRevision(root), targetRevision, repoURL, multi)
+}
+
+// localTreeAppRevision returns the ARGOCD_APP_REVISION of a source that
+// renders a local tree, whose commit is commit in the Git repository at
+// repo. drydock renders the tree whatever targetRevision names. A
+// targetRevision that pins a commit by SHA gives what the repo-server
+// reports for it (sourcepkg.PinnedRevision), because that is known offline.
+// Any other targetRevision gives commit, which is "" when the tree is not
+// the top of a Git repository. An abbreviated SHA that no commit or tag of
+// repo matches gives commit for a single-source Application, and one that
+// matches more than one is an error. repoURL picks the remote whose branches
+// count.
+func localTreeAppRevision(repo, commit, targetRevision, repoURL string, multi bool) (string, error) {
+	single, multiRevision, ok, err := gitref.PinnedRevision(repo, targetRevision, repoURL)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("resolve targetRevision %q: %w", targetRevision, err)
+	case !ok:
+		return commit, nil
+	case multi:
+		return multiRevision, nil
+	case single != "":
+		return single, nil
+	default:
+		return commit, nil
+	}
+}
+
+// isRepoRoot reports whether dir is the provider root.
+func (p localProvider) isRepoRoot(dir string) bool {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	repoRoot, err := filepath.Abs(p.repoRoot)
+	return err == nil && filepath.Clean(repoRoot) == filepath.Clean(abs)
+}
+
+// mappedAppRevision returns the HEAD commit of a --repo-map target directory.
+// It returns "" when the directory is not the top of a Git repository.
+func (p localProvider) mappedAppRevision(root string) string {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return ""
+	}
+	abs = filepath.Clean(abs)
+	if p.mappedAppRevisions == nil {
+		return gitref.HeadRevision(abs)
+	}
+	if cached, ok := p.mappedAppRevisions.Load(abs); ok {
+		if revision, ok := cached.(string); ok {
+			return revision
+		}
+	}
+	revision := gitref.HeadRevision(abs)
+	p.mappedAppRevisions.Store(abs, revision)
+	return revision
 }
 
 // sourceResolvesToRepoRoot reports whether resolveSourceRootIdentity resolves
