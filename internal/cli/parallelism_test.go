@@ -336,6 +336,7 @@ type recordingCLIOrchestrator struct {
 	diagError                        error
 	diagStaticResult                 app.DiagResult
 	diagStaticError                  error
+	diagSelectedApplications         []argoappv1.Application
 }
 
 func (orchestrator *recordingCLIOrchestrator) Build(_ context.Context, request app.BuildRequest) (app.BuildResult, error) {
@@ -383,12 +384,22 @@ func (orchestrator *recordingCLIOrchestrator) DiffImages(_ context.Context, requ
 	return orchestrator.diffImagesResult, orchestrator.diffImagesError
 }
 
-func (orchestrator *recordingCLIOrchestrator) Diag(_ context.Context, request app.DiagRequest) (app.DiagResult, error) {
+func (orchestrator *recordingCLIOrchestrator) Diag(_ context.Context, request app.DiagRequest, selectApps app.ApplicationSelector) (app.DiagResult, error) {
 	orchestrator.diagRequests = append(orchestrator.diagRequests, request)
-	return orchestrator.diagResult, orchestrator.diagError
+	return orchestrator.selectDiagApplications(orchestrator.diagResult, selectApps), orchestrator.diagError
 }
 
-func (orchestrator *recordingCLIOrchestrator) DiagStatic(_ context.Context, request app.DiagRequest) (app.DiagResult, error) {
+func (orchestrator *recordingCLIOrchestrator) DiagStatic(_ context.Context, request app.DiagRequest, selectApps app.ApplicationSelector) (app.DiagResult, error) {
 	orchestrator.diagStaticRequests = append(orchestrator.diagStaticRequests, request)
-	return orchestrator.diagStaticResult, orchestrator.diagStaticError
+	return orchestrator.selectDiagApplications(orchestrator.diagStaticResult, selectApps), orchestrator.diagStaticError
+}
+
+// selectDiagApplications narrows the Applications of a diag result like the
+// orchestrator does, from the list result's Applications.
+func (orchestrator *recordingCLIOrchestrator) selectDiagApplications(result app.DiagResult, selectApps app.ApplicationSelector) app.DiagResult {
+	if selectApps != nil {
+		result.Applications = selectApps(orchestrator.listResult.Applications)
+		orchestrator.diagSelectedApplications = result.Applications
+	}
+	return result
 }

@@ -255,7 +255,7 @@ data:
     return { status = "Healthy" }
 `)
 
-	result, err := Orchestrator{}.Diag(context.Background(), DiagRequest{Path: root})
+	result, err := Orchestrator{}.Diag(context.Background(), DiagRequest{Path: root}, nil)
 	if err != nil {
 		t.Fatalf("Diag() error = %v", err)
 	}
@@ -365,7 +365,7 @@ stringData:
   enableOCI: typo
 `)
 
-	result, err := Orchestrator{}.Diag(context.Background(), DiagRequest{Path: root})
+	result, err := Orchestrator{}.Diag(context.Background(), DiagRequest{Path: root}, nil)
 	if err == nil {
 		t.Fatalf("Diag() error = nil, want invalid settings diagnostic error")
 	}

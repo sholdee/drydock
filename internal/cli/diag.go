@@ -185,9 +185,9 @@ type diagMode struct {
 
 func runDiag(ctx context.Context, orchestrator Orchestrator, request app.DiagRequest, mode diagMode) (app.DiagResult, error) {
 	if mode.Render {
-		return orchestrator.Diag(ctx, request)
+		return orchestrator.Diag(ctx, request, nil)
 	}
-	return orchestrator.DiagStatic(ctx, request)
+	return orchestrator.DiagStatic(ctx, request, nil)
 }
 
 func nonNilDiagnostics(diagnostics []diagnostic.Diagnostic) []diagnostic.Diagnostic {

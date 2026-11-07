@@ -47,13 +47,16 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 
 	var diagnostics []diagnostic.Diagnostic
 	var leftList, rightList diffSideOutcome
-	if request.ChangedOnly {
-		changedPaths, err := filteredChangedOnlyPaths(request)
-		if err != nil {
-			return BuildResult{}, BuildResult{}, diagnostics, err
-		}
-		if len(changedPaths) == 0 {
-			return BuildResult{}, BuildResult{}, diagnostics, nil
+	if request.ChangedOnly || selectsByLabels(request.LabelSelector) {
+		var changedPaths []string
+		if request.ChangedOnly {
+			changedPaths, err = filteredChangedOnlyPaths(request)
+			if err != nil {
+				return BuildResult{}, BuildResult{}, diagnostics, err
+			}
+			if len(changedPaths) == 0 {
+				return BuildResult{}, BuildResult{}, diagnostics, nil
+			}
 		}
 
 		leftList, rightList = runDiffSidePair(ctx, concurrent, o.ListApplications, leftBuildRequest, rightBuildRequest)
@@ -71,7 +74,7 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
 		rightBuildRequest.discovered = rightList.result.discovered
 
-		leftApplications, rightApplications, selectionDiags, err := changedOnlyApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList.result, rightList.result, changedPaths, o.pluginRenderer(leftBuildRequest) != nil)
+		leftApplications, rightApplications, selectionDiags, err := o.diffSideApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList.result, rightList.result, changedPaths)
 		diagnostics = append(diagnostics, selectionDiags...)
 		if err != nil {
 			return BuildResult{}, BuildResult{}, diagnostics, err
@@ -89,6 +92,32 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		return leftBuild.result, rightBuild.result, diagnostics, err
 	}
 	return leftBuild.result, rightBuild.result, diagnostics, nil
+}
+
+// diffSideApplications returns the Applications each side of a diff renders
+// after both sides are listed: the changed-only selection
+// (changedOnlyApplications) when request.ChangedOnly is set, or every listed
+// Application, narrowed to the label selection (selectDiffSidesByLabels) when
+// request.LabelSelector is set. A selector that matches no listed
+// Application adds a SelectorNoMatchCode warning.
+func (o Orchestrator) diffSideApplications(ctx context.Context, request DiffRequest, leftBuildRequest, rightBuildRequest BuildRequest, leftList, rightList BuildResult, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []diagnostic.Diagnostic, error) {
+	leftApplications, rightApplications := leftList.Applications, rightList.Applications
+	var diagnostics []diagnostic.Diagnostic
+	if request.ChangedOnly {
+		var err error
+		leftApplications, rightApplications, diagnostics, err = changedOnlyApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList, rightList, changedPaths, o.pluginRenderer(leftBuildRequest) != nil)
+		if err != nil {
+			return nil, nil, diagnostics, err
+		}
+	}
+	if !selectsByLabels(request.LabelSelector) {
+		return leftApplications, rightApplications, diagnostics, nil
+	}
+	leftApplications, rightApplications, matched := selectDiffSidesByLabels(request.LabelSelector, leftList.Applications, rightList.Applications, leftApplications, rightApplications)
+	if !matched {
+		diagnostics = append(diagnostics, SelectorNoMatchDiagnostic(request.LabelSelector))
+	}
+	return leftApplications, rightApplications, diagnostics, nil
 }
 
 // changedOnlySettingsCode identifies the changed-only render-all an Argo CD

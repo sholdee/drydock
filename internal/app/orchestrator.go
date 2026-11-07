@@ -236,8 +236,18 @@ func ensureSnapshotSession(request BuildRequest) (BuildRequest, func(), error) {
 	return request, session.Close, nil
 }
 
-func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult, error) {
-	result, err := o.Build(ctx, request)
+// Diag renders the Applications and reports the diagnostics of the run.
+// When selectApps is not nil, it renders only the Applications that
+// selectApps keeps (BuildSelection). Discovery, settings, and plugin policy
+// diagnostics belong to the repository, so they are reported either way.
+func (o Orchestrator) Diag(ctx context.Context, request DiagRequest, selectApps ApplicationSelector) (DiagResult, error) {
+	var result BuildResult
+	var err error
+	if selectApps != nil {
+		result, err = o.BuildSelection(ctx, request, selectApps)
+	} else {
+		result, err = o.Build(ctx, request)
+	}
 	diagResult := DiagResult{
 		Applications:     result.Applications,
 		Diagnostics:      result.Diagnostics,
@@ -260,8 +270,9 @@ func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult
 // project metadata checks). Rendered-resource policy needs manifests and
 // stays with Diag. ListApplications is left as a pure listing primitive
 // because get, plugin-policy, the public client, and the selection paths all
-// rely on it reporting nothing beyond discovery.
-func (o Orchestrator) DiagStatic(ctx context.Context, request DiagRequest) (DiagResult, error) {
+// rely on it reporting nothing beyond discovery. When selectApps is not nil,
+// only the Applications that it keeps are validated and returned.
+func (o Orchestrator) DiagStatic(ctx context.Context, request DiagRequest, selectApps ApplicationSelector) (DiagResult, error) {
 	request.DiscoveryMode = DiscoveryModeStatic
 	request.MaxDiscoveryDepth = 0
 	request.MaxDiscoveryDepthSet = true
@@ -275,7 +286,10 @@ func (o Orchestrator) DiagStatic(ctx context.Context, request DiagRequest) (Diag
 	if err != nil {
 		return diagResult, err
 	}
-	projectDiags := project.ValidateApplications(result.Applications, result.Projects, result.Settings)
+	if selectApps != nil {
+		diagResult.Applications = selectApps(result.Applications)
+	}
+	projectDiags := project.ValidateApplications(diagResult.Applications, result.Projects, result.Settings)
 	projectDiags = request.normalizeDiagnostics(projectDiags, false)
 	diagResult.Diagnostics = dedupeDiagnostics(append(diagResult.Diagnostics, projectDiags...))
 	if err := diagnosticFailure(projectDiags, request.Strict); err != nil {
