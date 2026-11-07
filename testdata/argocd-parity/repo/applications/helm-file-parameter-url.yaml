@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-file-parameter-url
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/helm-file-parameter-url
+    helm:
+      valueFiles:
+        - http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879/files/values.yaml
+      fileParameters:
+        - name: fromFileParameter
+          path: http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879/files/file-parameter.txt
+  destination:
+    name: in-cluster
+    namespace: parity-helm-file-parameter-url

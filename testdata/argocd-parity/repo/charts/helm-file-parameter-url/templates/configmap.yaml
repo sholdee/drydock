@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  fromFileParameter: {{ .Values.fromFileParameter | quote }}
+  fromRemoteValueFile: {{ .Values.fromRemoteValueFile | quote }}

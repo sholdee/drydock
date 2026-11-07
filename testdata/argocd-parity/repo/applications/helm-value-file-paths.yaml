@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-value-file-paths
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/helm-value-file-paths
+    helm:
+      valueFiles:
+        - ../../value-file-links/a.yaml
+        - ../../value-file-links/b.yaml
+        - ../../value-file-links/a.yaml
+        - ../../value-file-links/link-a.yaml
+        - /value-file-links/absolute.yaml
+        - ../../value-file-links/linked-dir/inner.yaml
+        - ../../value-file-links/glob/*.yaml
+  destination:
+    name: in-cluster
+    namespace: parity-helm-value-file-paths

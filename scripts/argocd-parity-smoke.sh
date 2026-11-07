@@ -238,6 +238,44 @@ NAMESPACE_DISABLED_APPLICATIONSET="parity-appset-namespace-disabled"
 CRD_REJECTED_DIR="${REPO_ROOT}/testdata/argocd-parity/crd-rejected"
 CRD_REJECTED_APPLICATION="parity-crd-sync-path-dot"
 CRD_REJECTED_MESSAGE="Invalid value: \".\": spec.sourceHydrator.syncSource.path in body should match"
+# The HTTP Helm repository fixture. A second container in the registry Pod
+# serves it on its own port, so it shares the registry hostname and its
+# /etc/hosts entry, and the registry port-forward also forwards this port.
+# HELM_REPO_CHARTS lists one "name version" archive for each entry of
+# helm-repo/index.yaml.
+HELM_REPO_PORT="18879"
+HELM_REPO_URL="http://argocd-parity-registry.argocd-parity.svc.cluster.local:${HELM_REPO_PORT}"
+HELM_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/helm-repo"
+HELM_REPO_CHARTS=(
+  "parity-range 1.0.0"
+  "parity-range 1.2.0"
+  "parity-range 1.2.3"
+  "parity-range 1.3.0-rc.1"
+  "parity-range 2.0.0"
+  "parity-extra 1.0.0"
+)
+# Applications that read the HTTP Helm repository: chart sources with a
+# version range, local charts whose dependencies helm dependency build
+# fetches, and a file parameter URL. warm_drydock_helm_repo_cache renders
+# each once online, so the offline captures find the charts, the recorded
+# version lists, and the remote files in the caches.
+HELM_REPO_APPLICATIONS=(
+  parity-helm-range-wildcard
+  parity-helm-range-constraint
+  parity-helm-range-short
+  parity-helm-range-prerelease
+  parity-helm-dependency-range
+  parity-helm-dependency-partial
+  parity-helm-file-parameter-url
+)
+# Applications whose source holds a file that prepare_fixture_git_image
+# adds to FIXTURE_GIT_WORK: the vendored archive
+# charts/helm-dependency-partial/charts/parity-range-1.2.0.tgz. Their drydock
+# captures map the fixture URL to FIXTURE_GIT_WORK, as Argo CD reads the
+# served copy of it.
+HELM_REPO_GIT_WORK_APPLICATIONS=(
+  parity-helm-dependency-partial
+)
 OCI_HOSTS_MARKER="drydock-argocd-parity-smoke"
 HOSTS_ENTRY_ADDED="false"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
@@ -392,6 +430,18 @@ APPLICATIONS=(
   parity-helm-chart-file-name
   # spec.sourceHydrator: Argo CD renders only the sync source.
   parity-source-hydrator
+  # Helm value file paths: a repeated file, a symlink, a symlinked
+  # directory, a path from the repository root, and a glob over a symlink.
+  parity-helm-value-file-paths
+  # HELM_REPO_APPLICATIONS, and a vendored dependency of another version.
+  parity-helm-file-parameter-url
+  parity-helm-range-wildcard
+  parity-helm-range-constraint
+  parity-helm-range-short
+  parity-helm-range-prerelease
+  parity-helm-dependency-range
+  parity-helm-dependency-partial
+  parity-helm-dependency-vendored-version
 )
 
 # Applications whose Git sources read the ARGOCD_APP_REVISION variables. The
@@ -685,6 +735,9 @@ CHART_CACHE_DIR="${WORK_DIR}/chart-cache"
 # omits Offline, so sharing one dir would let the offline loop replay the
 # warm (non-offline) render instead of exercising offline resolve+extract.
 OCI_WARM_RENDER_CACHE_DIR="${WORK_DIR}/render-cache-warm"
+# Remote value files and file parameter URLs. The warm run fills it and the
+# offline captures read it back.
+REMOTE_CACHE_DIR="${WORK_DIR}/remote-cache"
 OCI_OFFLINE_RENDER_CACHE_DIR="${WORK_DIR}/render-cache-offline"
 
 cleanup() {
@@ -870,6 +923,12 @@ prepare_fixture_git_image() {
   cp -R "${PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR}/repo/." "${FIXTURE_GIT_WORK}/"
   cp -R "${SOURCE_TYPE_GATES_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
   pin_container_policy_image "${FIXTURE_GIT_WORK}/.drydock/plugins.yaml"
+  package_helm_repo
+  # Vendored archive of an older parity-range version that matches the
+  # dependency range. helm dependency build fetches parity-range again, at
+  # the resolved version, and removes this archive.
+  mkdir -p "${FIXTURE_GIT_WORK}/charts/helm-dependency-partial/charts"
+  cp "${WORK_DIR}/helm-repo/parity-range-1.2.0.tgz" "${FIXTURE_GIT_WORK}/charts/helm-dependency-partial/charts/"
   git -C "${FIXTURE_GIT_WORK}" init --initial-branch=main >/dev/null
   git -C "${FIXTURE_GIT_WORK}" config user.email "drydock@example.invalid"
   git -C "${FIXTURE_GIT_WORK}" config user.name "drydock render parity smoke"
@@ -892,7 +951,8 @@ prepare_fixture_git_image() {
   dockerfile="${WORK_DIR}/Dockerfile.git"
   cat > "${dockerfile}" <<'DOCKERFILE'
 FROM alpine:3.23
-RUN apk add --no-cache git-daemon
+RUN apk add --no-cache git-daemon busybox-extras
+COPY --chown=65534:65534 helm-repo /srv/helm
 COPY --chown=65534:65534 repo.git /srv/git/repo.git
 COPY --chown=65534:65534 oob-symlink.git /srv/git/oob-symlink.git
 COPY --chown=65534:65534 live-diff.git /srv/git/live-diff.git
@@ -906,6 +966,28 @@ DOCKERFILE
   retry "docker build of ${image}" docker build -q -t "${image}" -f "${dockerfile}" "${WORK_DIR}" >/dev/null \
     || fail "docker build of the fixture Git server image ${image} failed"
   kind load docker-image "${image}" --name "${CLUSTER_NAME}"
+}
+
+# package_helm_repo writes the HTTP Helm repository into WORK_DIR/helm-repo:
+# the committed index and files, and one chart archive for each
+# HELM_REPO_CHARTS entry, built from helm-repo/chart-templates.
+package_helm_repo() {
+  local out="${WORK_DIR}/helm-repo"
+  local entry name version chart_dir
+  mkdir -p "${out}"
+  cp "${HELM_REPO_PATH}/index.yaml" "${out}/index.yaml"
+  cp -R "${HELM_REPO_PATH}/files" "${out}/files"
+  for entry in "${HELM_REPO_CHARTS[@]}"; do
+    name="${entry% *}"
+    version="${entry#* }"
+    chart_dir="${WORK_DIR}/helm-repo-src/${name}-${version}/${name}"
+    mkdir -p "${chart_dir}/templates"
+    printf 'apiVersion: v2\nname: %s\nversion: %s\n' "${name}" "${version}" > "${chart_dir}/Chart.yaml"
+    cp "${HELM_REPO_PATH}/chart-templates/configmap.yaml" "${chart_dir}/templates/configmap.yaml"
+    # COPYFILE_DISABLE keeps macOS tar from adding AppleDouble files.
+    COPYFILE_DISABLE=1 tar -C "$(dirname "${chart_dir}")" -czf "${out}/${name}-${version}.tgz" "${name}" \
+      || fail "could not package the Helm repository chart ${name} ${version}"
+  done
 }
 
 install_fixture_git_server() {
@@ -1151,6 +1233,13 @@ spec:
             - name: registry-tls
               mountPath: /certs
               readOnly: true
+        - name: helm-repo
+          image: drydock-argocd-parity-git:${CLUSTER_NAME}
+          imagePullPolicy: Never
+          command: ["busybox-extras", "httpd", "-f", "-p", "${HELM_REPO_PORT}", "-h", "/srv/helm"]
+          ports:
+            - containerPort: ${HELM_REPO_PORT}
+              name: helm-repo
       volumes:
         - name: registry-tls
           secret:
@@ -1167,23 +1256,27 @@ spec:
     - name: registry
       port: ${OCI_REGISTRY_PORT}
       targetPort: registry
+    - name: helm-repo
+      port: ${HELM_REPO_PORT}
+      targetPort: helm-repo
 YAML
   kubectl -n argocd-parity rollout status deployment/argocd-parity-registry --timeout=120s \
     || fail "OCI registry deployment argocd-parity-registry did not become ready within 120s"
 }
 
 start_registry_port_forward() {
-  kubectl -n argocd-parity port-forward svc/argocd-parity-registry "${OCI_REGISTRY_PORT}:${OCI_REGISTRY_PORT}" >/dev/null 2>&1 &
+  kubectl -n argocd-parity port-forward svc/argocd-parity-registry "${OCI_REGISTRY_PORT}:${OCI_REGISTRY_PORT}" "${HELM_REPO_PORT}:${HELM_REPO_PORT}" >/dev/null 2>&1 &
   REGISTRY_PORT_FORWARD_PID="$!"
   # One probe validates the hosts entry, the forward, the TLS SAN, and
-  # registry liveness together.
+  # registry liveness together. The second one checks the Helm repository.
   for _ in {1..60}; do
-    if curl -fsS --cacert "${OCI_CA_FILE}" "https://${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/v2/" >/dev/null 2>&1; then
+    if curl -fsS --cacert "${OCI_CA_FILE}" "https://${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/v2/" >/dev/null 2>&1 \
+      && curl -fsS "${HELM_REPO_URL}/index.yaml" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
   done
-  fail "OCI registry was not reachable at https://${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/v2/ through the port-forward (check the /etc/hosts entry, the TLS SAN, and the registry pod)"
+  fail "OCI registry or Helm repository was not reachable at https://${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/v2/ and ${HELM_REPO_URL}/index.yaml through the port-forward (check the /etc/hosts entry, the TLS SAN, and the registry pod)"
 }
 
 push_oci_artifact() {
@@ -1324,6 +1417,34 @@ warm_drydock_oci_cache() {
       --render-cache-dir "${OCI_WARM_RENDER_CACHE_DIR}" \
       > /dev/null 2> "${stderr_file}") \
       || fail "drydock OCI cache warm (non-offline build of ${app} with --oci-cache-dir/--chart-cache-dir/--oci-ca-file) failed; see ${stderr_file}"
+    rm -f "${stderr_file}"
+  done
+}
+
+# warm_drydock_helm_repo_cache renders each HELM_REPO_APPLICATIONS entry
+# once without --offline, so the offline captures find the charts, the
+# version lists that resolve the ranges, and the remote files.
+warm_drydock_helm_repo_cache() {
+  local app stderr_file repo_map_path git_work_app
+  for app in "${HELM_REPO_APPLICATIONS[@]}"; do
+    repo_map_path="${FIXTURE_REPO_PATH}"
+    for git_work_app in "${HELM_REPO_GIT_WORK_APPLICATIONS[@]}"; do
+      if [[ "${app}" == "${git_work_app}" ]]; then
+        repo_map_path="${FIXTURE_GIT_WORK}"
+      fi
+    done
+    stderr_file="${OUT_DIR}/drydock-helm-repo-warm-${app}.stderr"
+    (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${app}" \
+      --path "${FIXTURE_REPO_PATH}" \
+      --repo-map "${FIXTURE_REPO_URL}=${repo_map_path}" \
+      --oci-cache-dir "${OCI_CACHE_DIR}" \
+      --chart-cache-dir "${CHART_CACHE_DIR}" \
+      --remote-cache-dir "${REMOTE_CACHE_DIR}" \
+      --oci-ca-file "${OCI_CA_FILE}" \
+      --render-cache-dir "${OCI_WARM_RENDER_CACHE_DIR}" \
+      --appset-provider-fixture "${APPSET_PROVIDER_FIXTURE}" \
+      > /dev/null 2> "${stderr_file}") \
+      || fail "drydock Helm repository cache warm (non-offline build of ${app}) failed; see ${stderr_file}"
     rm -f "${stderr_file}"
   done
 }
@@ -1732,6 +1853,7 @@ drydock_build_args() {
     --chart-cache-dir "${CHART_CACHE_DIR}"
     --oci-ca-file "${OCI_CA_FILE}"
     --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}"
+    --remote-cache-dir "${REMOTE_CACHE_DIR}"
     --appset-provider-fixture "${APPSET_PROVIDER_FIXTURE}"
     --offline)
 }
@@ -1743,7 +1865,7 @@ capture_drydock_manifest() {
   local plugin_app revision_app stderr_file repo_map_path
   local build_args
   repo_map_path="${FIXTURE_REPO_PATH}"
-  for revision_app in "${APP_REVISION_GIT_APPLICATIONS[@]}" "${SOURCE_HYDRATOR_APPLICATION}"; do
+  for revision_app in "${APP_REVISION_GIT_APPLICATIONS[@]}" "${SOURCE_HYDRATOR_APPLICATION}" "${HELM_REPO_GIT_WORK_APPLICATIONS[@]}"; do
     if [[ "${stem}" == "${revision_app}" ]]; then
       [[ -n "${FIXTURE_GIT_WORK}" ]] \
         || fail "FIXTURE_GIT_WORK is unset; prepare_fixture_git_image must run before capturing ${stem}"
@@ -2857,6 +2979,8 @@ main() {
   capture_argocd_manifests
   log_step "Warming drydock OCI artifact and chart caches"
   warm_drydock_oci_cache
+  log_step "Warming drydock Helm repository caches"
+  warm_drydock_helm_repo_cache
   log_step "Capturing drydock rendered manifests"
   capture_drydock_manifests
   log_step "Capturing the drydock Application inventory"

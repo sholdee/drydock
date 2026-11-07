@@ -405,3 +405,46 @@ func TestHelmFileParameterURLFetchesThroughRemoteCache(t *testing.T) {
 		t.Fatalf("Render() error = %v, want the repo-server's scheme error", err)
 	}
 }
+
+// TestHelmValueFileSmokeFixtureMatchesUpstream renders the value files of
+// the parity smoke Application parity-helm-value-file-paths with drydock
+// and with the repo-server's resolution (upstreamHelmValueFileValues), and
+// requires the values that the fixture README lists.
+func TestHelmValueFileSmokeFixtureMatchesUpstream(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", "testdata", "argocd-parity", "repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const chartPath = "charts/helm-value-file-paths"
+	data, err := os.ReadFile(filepath.Join(repoRoot, "applications", "helm-value-file-paths.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var app argoappv1.Application
+	if err := yaml.Unmarshal(data, &app); err != nil {
+		t.Fatal(err)
+	}
+	files := app.Spec.Source.Helm.ValueFiles
+	want := map[string]any{
+		"winner":        "b",
+		"fromA":         "a",
+		"fromB":         "b",
+		"fromAbsolute":  "absolute",
+		"fromLinkedDir": "linked-dir",
+		"globPlain":     "plain",
+	}
+	upstream, err := upstreamHelmValueFileValues(filepath.Join(repoRoot, chartPath), repoRoot, nil, nil, files, false)
+	if err != nil {
+		t.Fatalf("upstream error = %v", err)
+	}
+	upstream = chartv2loader.MergeMaps(map[string]any{"winner": "chart-default"}, upstream)
+	if !reflect.DeepEqual(upstream, want) {
+		t.Fatalf("upstream values = %v, want %v", upstream, want)
+	}
+	result, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: chartPath}, RenderOptions{
+		AppName:    app.Name,
+		Namespace:  app.Spec.Destination.Namespace,
+		ValueFiles: files,
+	})
+	assertHelmValueFileParity(t, result, err, want, nil, "", "")
+}

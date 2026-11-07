@@ -1,0 +1,5 @@
+apiVersion: v2
+name: helm-file-parameter-url
+description: Local Helm chart for the Argo CD parity file parameter URL case.
+type: application
+version: 0.1.0

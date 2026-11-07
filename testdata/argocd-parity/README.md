@@ -896,6 +896,101 @@ the other Application does not read. Both sides must render this `data`:
 `internal/render` renders both with drydock and with the upstream resolver.
 "Helm file parameters that fail the source" below lists the failing cases.
 
+## Helm value file path fixture
+
+Argo CD v3.6.1 resolves `helm.valueFiles` with `getResolvedValueFiles`
+(`reposerver/repository/repository.go`) and the same resolver as file
+parameters. `value-file-links/` holds the files and symlinks. It is outside
+every chart, because drydock rejects a symlink in a chart.
+
+| path | what it is |
+| --- | --- |
+| `a.yaml`, `b.yaml` | `winner: a` and `winner: b`, and the keys `fromA` and `fromB` |
+| `link-a.yaml` | symlink to `a.yaml` |
+| `absolute.yaml` | the key `fromAbsolute` |
+| `linked-dir` | symlink to the directory `real`, which holds `inner.yaml` |
+| `glob/plain.yaml` | the key `globPlain` |
+| `glob/linked.yaml` | symlink to `../absolute.yaml` |
+
+`applications/helm-value-file-paths.yaml` (`parity-helm-value-file-paths`)
+renders `charts/helm-value-file-paths`, whose ConfigMap prints all values
+as JSON. Its value files are `a.yaml`, `b.yaml`, `a.yaml` again,
+`link-a.yaml`, `/value-file-links/absolute.yaml` (relative to the
+repository root), `linked-dir/inner.yaml`, and the glob `glob/*.yaml`. The
+repo-server reads each resolved path once, at its first place. The second
+`a.yaml` and `link-a.yaml` resolve to the path of the first `a.yaml`, so
+`winner` is `b`. Both Argo CD and drydock must render these values:
+
+| key | value |
+| --- | --- |
+| `winner` | `b` |
+| `fromA` | `a` |
+| `fromB` | `b` |
+| `fromAbsolute` | `absolute` |
+| `fromLinkedDir` | `linked-dir` |
+| `globPlain` | `plain` |
+
+`TestHelmValueFileSmokeFixtureMatchesUpstream` in `internal/render`
+renders the same value files with drydock and with a copy of
+`getResolvedValueFiles`.
+
+## HTTP Helm repository fixture
+
+`helm-repo/` is an HTTP Helm repository. The smoke serves it from a second
+container in the OCI registry Pod, at
+`http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879`, so it
+uses the same `/etc/hosts` entry, and the registry port-forward also
+forwards port `18879`. `package_helm_repo` in the smoke script builds one
+archive for each `HELM_REPO_CHARTS` entry from `chart-templates/`, and
+copies `index.yaml` and `files/`. The index lists `parity-range` at
+`1.0.0`, `1.2.0`, `1.2.3`, `1.3.0-rc.1`, and `2.0.0`, and `parity-extra` at
+`1.0.0`. Each chart renders a ConfigMap `<release>-<chart>` with the chart
+name and version and the value `revision`.
+
+The drydock captures run with `--offline`. Before them,
+`warm_drydock_helm_repo_cache` renders each `HELM_REPO_APPLICATIONS` entry
+once online, which fills the chart cache, the recorded version lists, and
+the remote cache.
+
+Chart sources with a version range. Each one sets the Helm parameter
+`revision` to `$ARGOCD_APP_REVISION`:
+
+| Application | `targetRevision` | chart | `revision` |
+| --- | --- | --- | --- |
+| `parity-helm-range-wildcard` | `1.2.*` | `parity-range-1.2.3` | `1.2.3` |
+| `parity-helm-range-constraint` | `>=1.0.0 <1.3.0` | `parity-range-1.2.3` | `1.2.3` |
+| `parity-helm-range-short` | `1.2` | `parity-range-1.2.3` | `1.2` |
+| `parity-helm-range-prerelease` | `~1.3.0-0` | `parity-range-1.3.0-rc.1` | `1.3.0-rc.1` |
+
+`1.2` parses as a semver version, so the repo-server keeps it as written,
+and helm pull takes the highest `1.2.x`. The other revisions are
+constraints, and the repo-server resolves them against the index.
+
+Local charts with dependencies on the repository:
+
+| Application | dependencies | rendered charts |
+| --- | --- | --- |
+| `parity-helm-dependency-range` | `parity-range ~1.2.0`, no `Chart.lock` | `parity-range-1.2.3` |
+| `parity-helm-dependency-partial` | `parity-range ~1.2.0` and `parity-extra 1.0.0`, no `Chart.lock` | `parity-range-1.2.3` and `parity-extra-1.0.0` |
+| `parity-helm-dependency-vendored-version` | `parity-range 9.9.9` | the vendored `parity-range-1.0.0` |
+
+`parity-extra` is missing in `parity-helm-dependency-partial`, so the
+repo-server runs `helm dependency build`. The smoke adds the archive
+`charts/parity-range-1.2.0.tgz` to that chart in `FIXTURE_GIT_WORK` before
+it commits the served repository. The build fetches `parity-range` again
+at `1.2.3` and removes the vendored archive. The drydock capture of this
+Application maps the fixture URL to `FIXTURE_GIT_WORK`
+(`HELM_REPO_GIT_WORK_APPLICATIONS`). In
+`parity-helm-dependency-vendored-version`, `charts/parity-range` is version
+`1.0.0`. helm template matches dependencies by name only, so nothing is
+fetched, and the vendored chart renders.
+
+`parity-helm-file-parameter-url` renders `charts/helm-file-parameter-url`
+with the value file `files/values.yaml` and the file parameter
+`fromFileParameter` from `files/file-parameter.txt`, both by URL. Both
+sides must render `fromRemoteValueFile: remote` and `fromFileParameter`
+with the text of the file and its final newline.
+
 ## ApplicationSet name validation fixture
 
 Argo CD v3.6.1 checks every generated Application name before it creates
@@ -1490,6 +1585,28 @@ chart-only Application reads the chart from the chart cache that the OCI
 warm run filled.
 `TestSourceTypeGatesSmokeFixture` in `internal/app` renders the phase
 offline with and without the `argocd-cm.yaml`.
+
+### Helm inputs that fail the source
+
+Four more render cases cover Helm value files, chart versions, and
+dependency builds. Their messages name no file. They fail in the
+repo-server around helm: in `helm dependency build`, in the value file
+resolver, or in the chart version resolution.
+`TestHelmRenderParityDecodeFixtures` renders the first three with drydock.
+It skips the chart repository source, which the tests in `internal/chart`
+cover.
+
+| Application | why it fails |
+| --- | --- |
+| `parity-decode-helm-dependency-stale-lock` | `parity-range` is missing, and the digest of `Chart.lock` does not match `Chart.yaml`, so `helm dependency build` fails: `the lock file (Chart.lock) is out of sync` |
+| `parity-decode-helm-dependency-http-lock` | the same with a matching `Chart.lock` that names the `http://` repository. The repo-server adds only `https` and `oci` repositories before the build: `no repository definition for <url>` |
+| `parity-decode-helm-value-file-bare-ref` | the value file `$values` resolves to the root of the ref source: `internal error: failed to resolve path` |
+| `parity-decode-helm-range-no-match` | the chart source `targetRevision` `>=9.0.0` matches no version of the five in the index: `invalid revision: version matching constraint not found in 5 tags` |
+
+The project `parity-directory-decode` allows the HTTP Helm repository as a
+source repository for the last case. drydock resolves its range offline
+from the version list that the warm run of the range Applications
+recorded.
 
 ## Live diff fixture
 

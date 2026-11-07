@@ -1,0 +1,15 @@
+# The index of the HTTP Helm repository that the smoke serves at
+# http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879.
+# HELM_REPO_CHARTS in scripts/argocd-parity-smoke.sh packages one archive
+# for each entry. The entries are not sorted, as in a real index.
+apiVersion: v1
+entries:
+  parity-range:
+    - {apiVersion: v2, name: parity-range, version: 1.0.0, urls: [parity-range-1.0.0.tgz]}
+    - {apiVersion: v2, name: parity-range, version: 1.2.3, urls: [parity-range-1.2.3.tgz]}
+    - {apiVersion: v2, name: parity-range, version: 2.0.0, urls: [parity-range-2.0.0.tgz]}
+    - {apiVersion: v2, name: parity-range, version: 1.2.0, urls: [parity-range-1.2.0.tgz]}
+    - {apiVersion: v2, name: parity-range, version: 1.3.0-rc.1, urls: [parity-range-1.3.0-rc.1.tgz]}
+  parity-extra:
+    - {apiVersion: v2, name: parity-extra, version: 1.0.0, urls: [parity-extra-1.0.0.tgz]}
+generated: "2026-01-01T00:00:00Z"

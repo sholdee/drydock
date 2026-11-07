@@ -1,0 +1,9 @@
+apiVersion: v2
+name: helm-dependency-http-lock
+description: Local Helm chart for an Argo CD parity dependency build failure.
+type: application
+version: 0.1.0
+dependencies:
+  - name: parity-range
+    version: ~1.2.0
+    repository: http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879

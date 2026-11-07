@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-decode-helm-range-no-match
+  namespace: parity-directory-decode
+spec:
+  project: parity-directory-decode
+  source:
+    repoURL: http://argocd-parity-registry.argocd-parity.svc.cluster.local:18879
+    chart: parity-range
+    targetRevision: ">=9.0.0"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-directory-decode-workloads
