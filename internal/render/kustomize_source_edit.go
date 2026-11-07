@@ -48,8 +48,11 @@ type kustomizeEditCommandLine struct {
 	// args are the positional arguments.
 	args []string
 	// help reports that the help flag is set: cobra then prints the help
-	// and the command changes nothing.
+	// and the command changes nothing, and it does not write the
+	// kustomization file.
 	help bool
+	// flags holds the value of each flag that the arguments set.
+	flags map[string]bool
 }
 
 // parseKustomizeEditArgs reads the arguments that Argo CD passes to a
@@ -57,11 +60,13 @@ type kustomizeEditCommandLine struct {
 // v1.0.10 under cobra v1.10.2, flag.go:980-1160). An argument that starts
 // with "-" and has more characters is a flag: "--" ends the flags, an
 // unknown flag fails the command, and an argument that starts with
-// "-test." is dropped. Every flag of these commands is a boolean flag.
+// "-test." is dropped. In a group of shorthand flags such as "-ftest.x",
+// pflag reads "-f" and then drops the rest, which starts with "test.".
+// Every flag of these commands is a boolean flag.
 // Argo CD passes most option values as arguments without a "--" before
 // them, so a value that starts with "-" is read as a flag.
 func parseKustomizeEditArgs(command string, args []string, flags []kustomizeEditFlag) (kustomizeEditCommandLine, error) {
-	var line kustomizeEditCommandLine
+	line := kustomizeEditCommandLine{flags: map[string]bool{}}
 	set := func(flag kustomizeEditFlag, value string) error {
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
@@ -71,6 +76,7 @@ func parseKustomizeEditArgs(command string, args []string, flags []kustomizeEdit
 			}
 			return fmt.Errorf("kustomize edit %s: invalid argument %q for %q flag: %w", command, value, name, err)
 		}
+		line.flags[flag.name] = parsed
 		if flag.name == "help" {
 			line.help = parsed
 		}
@@ -158,20 +164,21 @@ var errKustomizeEditImageInvalid = errors.New(`invalid format of image, use one 
 // new tag or digest keeps the value of the image already in the
 // kustomization, or clears it when there is none. Then every image is
 // sorted by name, one per name, so an image the arguments add can come
-// before an image it is renamed to.
-func editSetKustomizeImages(kustomization *types.Kustomization, args []string) error {
+// before an image it is renamed to. written reports whether the command
+// writes the kustomization file: it does not when the help flag is set.
+func editSetKustomizeImages(kustomization *types.Kustomization, args []string) (written bool, err error) {
 	line, err := parseKustomizeEditArgs("set image", args, kustomizeEditCommonFlags)
 	if err != nil || line.help {
-		return err
+		return false, err
 	}
 	if len(line.args) == 0 {
-		return errors.New("kustomize edit set image: no image specified")
+		return false, errors.New("kustomize edit set image: no image specified")
 	}
 	byName := make(map[string]types.Image, len(line.args))
 	for _, arg := range line.args {
 		image, err := parseKustomizeEditImage(arg)
 		if err != nil {
-			return fmt.Errorf("kustomize edit set image: %w", err)
+			return false, fmt.Errorf("kustomize edit set image: %w", err)
 		}
 		byName[image.Name] = image
 	}
@@ -207,29 +214,30 @@ func editSetKustomizeImages(kustomization *types.Kustomization, args []string) e
 	}
 	sort.Slice(images, func(i, j int) bool { return images[i].Name < images[j].Name })
 	kustomization.Images = images
-	return nil
+	return true, nil
 }
 
 // parseKustomizeEditImage mirrors parse in commands/edit/set/setimage.go:
 // 222-276. Without "=", the argument names the image and sets its tag or
 // digest. With "=", the text before it names the image and the text after
-// it is the new name with an optional tag and digest. An argument that
-// changes nothing, such as a bare name, fails.
+// it is the new name with an optional tag and digest. An empty name before
+// "=" counts as no "=", so "=nginx:1.2" sets the tag of nginx. An argument
+// that changes nothing, such as a bare name, fails.
 func parseKustomizeEditImage(arg string) (types.Image, error) {
 	key, value, hasKey := strings.Cut(arg, "=")
 	if !hasKey {
-		value = arg
+		key, value = "", arg
 	}
 	name, tag, digest := kustomizeutil.SplitImageName(value)
 	if name == arg {
 		return types.Image{}, errKustomizeEditImageInvalid
 	}
 	image := types.Image{NewTag: tag, Digest: digest}
-	if hasKey {
+	if key == "" {
+		image.Name = name
+	} else {
 		image.Name = key
 		image.NewName = name
-	} else {
-		image.Name = name
 	}
 	return image, nil
 }
@@ -238,24 +246,25 @@ func parseKustomizeEditImage(arg string) (types.Image, error) {
 // (commands/edit/set/setreplicas.go:56-128). Each argument is
 // "<name>=<count>"; the last argument for a name wins, an argument replaces
 // the replica of the same name, and every replica is sorted by name, one
-// per name.
-func editSetKustomizeReplicas(kustomization *types.Kustomization, args []string) error {
+// per name. written reports whether the command writes the kustomization
+// file.
+func editSetKustomizeReplicas(kustomization *types.Kustomization, args []string) (written bool, err error) {
 	line, err := parseKustomizeEditArgs("set replicas", args, kustomizeEditCommonFlags)
 	if err != nil || line.help {
-		return err
+		return false, err
 	}
 	if len(line.args) == 0 {
-		return errors.New("kustomize edit set replicas: no replicas specified")
+		return false, errors.New("kustomize edit set replicas: no replicas specified")
 	}
 	byName := make(map[string]types.Replica, len(line.args))
 	for _, arg := range line.args {
 		parts := strings.Split(arg, "=")
 		if len(parts) != 2 {
-			return errors.New("kustomize edit set replicas: invalid format of replica, use the following format: <name>=<count>")
+			return false, errors.New("kustomize edit set replicas: invalid format of replica, use the following format: <name>=<count>")
 		}
 		count, err := strconv.ParseInt(parts[1], 10, 64)
 		if err != nil {
-			return errors.New("kustomize edit set replicas: invalid format of replica, use the following format: <name>=<count>")
+			return false, errors.New("kustomize edit set replicas: invalid format of replica, use the following format: <name>=<count>")
 		}
 		byName[parts[0]] = types.Replica{Name: parts[0], Count: count}
 	}
@@ -270,22 +279,32 @@ func editSetKustomizeReplicas(kustomization *types.Kustomization, args []string)
 	}
 	sort.Slice(replicas, func(i, j int) bool { return replicas[i].Name < replicas[j].Name })
 	kustomization.Replicas = replicas
-	return nil
+	return true, nil
 }
 
 // kustomizeEditMetadataArgs returns the arguments Argo CD passes to `kustomize
-// edit add label` or `kustomize edit add annotation`: one "<key>:<value>"
-// per entry (mapToEditAddArgs, util/kustomize/kustomize.go:105-123, for
-// kustomize v3.8.5 and later).
-func kustomizeEditMetadataArgs(values map[string]string) []string {
-	args := make([]string, 0, len(values))
+// edit add label` or `kustomize edit add annotation`: the flags of options,
+// then one "<key>:<value>" per entry (util/kustomize/kustomize.go:233-262,
+// and mapToEditAddArgs at 105-123 for kustomize v3.8.5 and later).
+func kustomizeEditMetadataArgs(values map[string]string, options kustomizeEditMetadataOptions) []string {
+	var args []string
+	if options.force {
+		args = append(args, "--force")
+	}
+	if options.withoutSelector {
+		args = append(args, "--without-selector")
+	}
+	if options.includeTemplates {
+		args = append(args, "--include-templates")
+	}
+	entries := make([]string, 0, len(values))
 	for key, value := range values {
-		args = append(args, key+":"+value)
+		entries = append(entries, key+":"+value)
 	}
 	// Argo CD passes them in Go map order. Sort them, so that an error
 	// that more than one entry can cause names the same entry every time.
-	sort.Strings(args)
-	return args
+	sort.Strings(entries)
+	return append(args, entries...)
 }
 
 // parseKustomizeEditMetadata mirrors util.ConvertSliceToMap
@@ -326,63 +345,70 @@ type kustomizeEditMetadataOptions struct {
 // the first labels entry that does not include selectors and includes
 // templates only under --include-templates, or to a new such entry. A key
 // already in that map fails unless --force is set, also when its value is
-// the same. --include-templates without --without-selector fails.
-func editAddKustomizeLabels(kustomization *types.Kustomization, labels map[string]string, options kustomizeEditMetadataOptions) error {
-	line, err := parseKustomizeEditArgs("add label", kustomizeEditMetadataArgs(labels), kustomizeEditLabelFlags)
+// the same. --include-templates without --without-selector fails. The
+// flags come from the arguments, as kustomize reads them, so a label key
+// such as "-ftest.x" sets --force. written reports whether the command
+// writes the kustomization file.
+func editAddKustomizeLabels(kustomization *types.Kustomization, labels map[string]string, options kustomizeEditMetadataOptions) (written bool, err error) {
+	line, err := parseKustomizeEditArgs("add label", kustomizeEditMetadataArgs(labels, options), kustomizeEditLabelFlags)
 	if err != nil || line.help {
-		return err
+		return false, err
 	}
 	if len(line.args) == 0 {
-		return errors.New("kustomize edit add label: must specify label")
+		return false, errors.New("kustomize edit add label: must specify label")
 	}
-	if !options.withoutSelector && options.includeTemplates {
-		return errors.New("kustomize edit add label: --without-selector flag must be specified for --include-templates to work")
+	force, withoutSelector, includeTemplates := line.flags["force"], line.flags["without-selector"], line.flags["include-templates"]
+	if !withoutSelector && includeTemplates {
+		return false, errors.New("kustomize edit add label: --without-selector flag must be specified for --include-templates to work")
 	}
 	parsed, err := parseKustomizeEditMetadata("label", line.args)
 	if err != nil {
-		return fmt.Errorf("kustomize edit add label: %w", err)
+		return false, fmt.Errorf("kustomize edit add label: %w", err)
 	}
-	if !options.withoutSelector {
+	if !withoutSelector {
 		if kustomization.CommonLabels == nil { //nolint:staticcheck // Argo CD adds source labels to commonLabels.
 			kustomization.CommonLabels = map[string]string{} //nolint:staticcheck // Argo CD adds source labels to commonLabels.
 		}
-		return writeKustomizeEditMetadata(kustomization.CommonLabels, parsed, "label", options.force) //nolint:staticcheck // Argo CD adds source labels to commonLabels.
+		return true, writeKustomizeEditMetadata(kustomization.CommonLabels, parsed, "label", force) //nolint:staticcheck // Argo CD adds source labels to commonLabels.
 	}
 	index := slices.IndexFunc(kustomization.Labels, func(label types.Label) bool {
-		return !label.IncludeSelectors && label.IncludeTemplates == options.includeTemplates
+		return !label.IncludeSelectors && label.IncludeTemplates == includeTemplates
 	})
 	if index < 0 {
 		kustomization.Labels = append(kustomization.Labels, types.Label{
 			Pairs:            map[string]string{},
-			IncludeTemplates: options.includeTemplates,
+			IncludeTemplates: includeTemplates,
 		})
 		index = len(kustomization.Labels) - 1
 	}
 	if kustomization.Labels[index].Pairs == nil {
-		kustomization.Labels[index].Pairs = map[string]string{}
+		// kustomize writes into the nil map and panics
+		// (commands/edit/add/addmetadata.go:163), so the command fails.
+		return false, fmt.Errorf("kustomize edit add label: labels entry %d has no pairs; kustomize v5.8.3 fails on it with a nil map panic", index)
 	}
-	return writeKustomizeEditMetadata(kustomization.Labels[index].Pairs, parsed, "label", options.force)
+	return true, writeKustomizeEditMetadata(kustomization.Labels[index].Pairs, parsed, "label", force)
 }
 
 // editAddKustomizeAnnotations mirrors `kustomize edit add annotation`
 // (commands/edit/add/addmetadata.go:136-142): the annotations go to
 // commonAnnotations, and a key already there fails unless --force is set.
-func editAddKustomizeAnnotations(kustomization *types.Kustomization, annotations map[string]string, force bool) error {
-	line, err := parseKustomizeEditArgs("add annotation", kustomizeEditMetadataArgs(annotations), kustomizeEditAnnotationFlags)
+// written reports whether the command writes the kustomization file.
+func editAddKustomizeAnnotations(kustomization *types.Kustomization, annotations map[string]string, force bool) (written bool, err error) {
+	line, err := parseKustomizeEditArgs("add annotation", kustomizeEditMetadataArgs(annotations, kustomizeEditMetadataOptions{force: force}), kustomizeEditAnnotationFlags)
 	if err != nil || line.help {
-		return err
+		return false, err
 	}
 	if len(line.args) == 0 {
-		return errors.New("kustomize edit add annotation: must specify annotation")
+		return false, errors.New("kustomize edit add annotation: must specify annotation")
 	}
 	parsed, err := parseKustomizeEditMetadata("annotation", line.args)
 	if err != nil {
-		return fmt.Errorf("kustomize edit add annotation: %w", err)
+		return false, fmt.Errorf("kustomize edit add annotation: %w", err)
 	}
 	if kustomization.CommonAnnotations == nil {
 		kustomization.CommonAnnotations = map[string]string{}
 	}
-	return writeKustomizeEditMetadata(kustomization.CommonAnnotations, parsed, "annotation", force)
+	return true, writeKustomizeEditMetadata(kustomization.CommonAnnotations, parsed, "annotation", line.flags["force"])
 }
 
 // writeKustomizeEditMetadata mirrors writeToMap and writeToMapEntry
@@ -442,13 +468,20 @@ func editAddKustomizeComponents(kustomization *types.Kustomization, kustomizatio
 // it as a root (loader.New, kustomize/api v0.21.3,
 // internal/loader/fileloader.go:172-209): a remote ref, which the later
 // steps fetch, or a local directory. Any other such pattern fails with
-// "has no match". An absolute pattern is kept as written, because drydock
-// never reads absolute paths; the later steps reject it.
+// "has no match", with the text of loader.New: an empty pattern, an
+// absolute pattern, a path with an ambiguous element, or a path that is no
+// directory. drydock never reads absolute paths, so an absolute pattern
+// always fails as one without a match.
 //
-// The globs read only inside boundaryRoot, through an os.Root. A directory
-// they cannot list there, such as one outside the repository, one reached
-// through a symlink that leaves it, or a .git directory, adds no matches,
-// as a directory that cannot be read adds none to filepath.Glob.
+// The globs read only inside boundaryRoot, through an os.Root, which
+// follows symlinks that stay inside it. A directory they cannot list
+// there, such as one outside the repository or one reached through a
+// symlink that leaves it, adds no matches, as a directory that cannot be
+// read adds none to filepath.Glob. A path whose text enters .git adds no
+// matches either. A symlink in the repository to .git is followed, as
+// Argo CD follows it, so its entries can match. The later steps reject
+// such a match, because it passes through a symlink, before kustomize reads
+// any file in it.
 func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []string) ([]string, error) {
 	var out []string
 	var root *os.Root
@@ -459,8 +492,7 @@ func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []strin
 	}()
 	for _, pattern := range patterns {
 		if filepath.IsAbs(pattern) {
-			out = append(out, pattern)
-			continue
+			return nil, fmt.Errorf("kustomize edit add component: %s has no match: new root '%s' cannot be absolute", pattern, pattern)
 		}
 		if root == nil {
 			opened, err := os.OpenRoot(boundaryRoot)
@@ -574,6 +606,9 @@ func (g kustomizeComponentGlob) globDir(dirPath, pattern string, matches []strin
 // element that holds ".." next to other characters, and it must be a
 // directory.
 func (g kustomizeComponentGlob) confirmDir(path string) error {
+	if path == "" {
+		return errors.New("new root cannot be empty")
+	}
 	for element := range strings.SplitSeq(filepath.ToSlash(path), "/") {
 		if element != "" && element != "." && element != ".." && strings.Contains(element, "..") {
 			return fmt.Errorf("path %q is ambiguous: resolves to %q after normalization, which is likely not the intended target; check for YAML indentation errors in your kustomization file", path, filepath.Clean(path))
@@ -590,8 +625,11 @@ func (g kustomizeComponentGlob) confirmDir(path string) error {
 	return nil
 }
 
-// exists reports whether Lstat reads path.
+// exists reports whether Lstat reads path. Lstat fails on an empty path.
 func (g kustomizeComponentGlob) exists(path string) bool {
+	if path == "" {
+		return false
+	}
 	rel, ok := g.rootPath(path)
 	if !ok {
 		return false

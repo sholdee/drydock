@@ -315,8 +315,15 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 // in-repository directories skipped before the first valid component and
 // the kustomization file names of each component after it. The components
 // then go through the globs of `kustomize edit add component`
-// (sourceKustomizeComponentMatches), and the directories those globs list
-// are optional inputs too.
+// (sourceKustomizeComponentMatches).
+//
+// The directories that the globs list are not inputs. Each match is a
+// component, whose files are inputs, and the render cache key records the
+// path of each input. So a new, removed, or renamed match changes the set
+// of inputs and the key, and an entry that does not match changes neither
+// the render nor the key. The order of the matches follows from their
+// names. Owning the listed directory as a whole tree would digest every
+// file under it, and a symlink anywhere under it would turn the cache off.
 func sourceKustomizeAddedComponents(repoRoot, sourceRoot string, kustomize *argoappv1.ApplicationSourceKustomize) ([]string, []string, error) {
 	components := kustomize.Components
 	var optionalRefs []string
@@ -334,16 +341,15 @@ func sourceKustomizeAddedComponents(repoRoot, sourceRoot string, kustomize *argo
 		}
 		components = []string{selection.kept}
 	}
-	matches, globDirs := sourceKustomizeComponentMatches(repoRoot, sourceRoot, components)
-	return matches, append(optionalRefs, globDirs...), nil
+	matches, _ := sourceKustomizeComponentMatches(repoRoot, sourceRoot, components)
+	return matches, optionalRefs, nil
 }
 
 // sourceKustomizeComponentMatches returns the components that `kustomize
 // edit add component` reads from the patterns in components, without the
 // source kustomization file itself, and the directories that the glob
-// patterns list (kustomizeComponentGlobDir). A new entry in such a
-// directory can change the matches, so the directory is a render input.
-// When the arguments or the globs fail the command, the patterns come back
+// patterns list (kustomizeComponentGlobDir), which changed-only selection
+// owns. When the arguments or the globs fail the command, the patterns come back
 // as written: the render then fails in applySourceKustomizeOptions.
 func sourceKustomizeComponentMatches(repoRoot, sourceRoot string, components []string) (matches, globDirs []string) {
 	patterns := sourceKustomizeComponentArgs(components)

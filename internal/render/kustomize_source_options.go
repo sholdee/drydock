@@ -1,10 +1,11 @@
 package render
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -68,11 +69,16 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, kustomizati
 		return nil, nil
 	}
 	var diags []diagnostic.Diagnostic
+	// edited reports whether an edit command wrote the kustomization file
+	// before the patches are added.
+	edited := false
 	if kustomize.NamePrefix != "" {
 		kustomization.NamePrefix = kustomize.NamePrefix
+		edited = true
 	}
 	if kustomize.NameSuffix != "" {
 		kustomization.NameSuffix = kustomize.NameSuffix
+		edited = true
 	}
 	if len(kustomize.Images) != 0 {
 		// The build environment reaches each image (kustomize.go:202-205).
@@ -80,9 +86,11 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, kustomizati
 		for _, image := range kustomize.Images {
 			args = append(args, opts.ArgoEnv.Envsubst(string(image)))
 		}
-		if err := editSetKustomizeImages(kustomization, args); err != nil {
+		written, err := editSetKustomizeImages(kustomization, args)
+		if err != nil {
 			return nil, err
 		}
+		edited = edited || written
 	}
 	if len(kustomize.Replicas) != 0 {
 		args := make([]string, 0, len(kustomize.Replicas))
@@ -93,45 +101,56 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, kustomizati
 			}
 			args = append(args, fmt.Sprintf("%s=%d", replica.Name, count))
 		}
-		if err := editSetKustomizeReplicas(kustomization, args); err != nil {
+		written, err := editSetKustomizeReplicas(kustomization, args)
+		if err != nil {
 			return nil, err
 		}
+		edited = edited || written
 	}
 	if len(kustomize.CommonLabels) != 0 {
 		// The build environment always reaches the label values
 		// (kustomize.go:247-250).
 		labels := envsubstStringMap(kustomize.CommonLabels, opts.ArgoEnv)
-		if err := editAddKustomizeLabels(kustomization, labels, kustomizeEditMetadataOptions{
+		written, err := editAddKustomizeLabels(kustomization, labels, kustomizeEditMetadataOptions{
 			force:            kustomize.ForceCommonLabels,
 			withoutSelector:  kustomize.LabelWithoutSelector,
 			includeTemplates: kustomize.LabelIncludeTemplates,
-		}); err != nil {
+		})
+		if err != nil {
 			return nil, err
 		}
+		edited = edited || written
 	}
 	if len(kustomize.CommonAnnotations) != 0 {
 		annotations := kustomize.CommonAnnotations
 		if kustomize.CommonAnnotationsEnvsubst {
 			annotations = envsubstStringMap(annotations, opts.ArgoEnv)
 		}
-		if err := editAddKustomizeAnnotations(kustomization, annotations, kustomize.ForceCommonAnnotations); err != nil {
+		written, err := editAddKustomizeAnnotations(kustomization, annotations, kustomize.ForceCommonAnnotations)
+		if err != nil {
 			return nil, err
 		}
+		edited = edited || written
 	}
 	if kustomize.Namespace != "" {
 		kustomization.Namespace = kustomize.Namespace
+		edited = true
 	}
 	// kustomize reads the patches only in the build, or in the next edit
 	// command, so a patch error comes after the component globs.
 	var patchErr error
 	if len(kustomize.Patches) != 0 {
-		if !kustomizeSourceEditedBeforePatches(kustomize) {
+		if !edited {
 			if err := sourceKustomizationPatchesField(content); err != nil {
 				return nil, err
 			}
 		}
-		kustomization.Patches = append(kustomization.Patches, sourceKustomizePatches(kustomize.Patches)...)
-		patchErr = sourceKustomizePatchOptionsError(kustomize.Patches)
+		patches, err := decodeSourceKustomizePatches(kustomize.Patches)
+		if err != nil {
+			patchErr = err
+		} else {
+			kustomization.Patches = append(kustomization.Patches, patches...)
+		}
 	}
 	if len(kustomize.Components) != 0 {
 		components, dropped, err := sourceKustomizeComponents(dir, boundaryRoot, originDir, originRoot, kustomize.Components, kustomize.IgnoreMissingComponents)
@@ -151,19 +170,6 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, kustomizati
 		return nil, patchErr
 	}
 	return diags, nil
-}
-
-// kustomizeSourceEditedBeforePatches reports whether Argo CD runs a
-// `kustomize edit` command before it adds the patches. Such a command
-// rewrites the kustomization file from its decoded form.
-func kustomizeSourceEditedBeforePatches(kustomize *argoappv1.ApplicationSourceKustomize) bool {
-	return kustomize.NamePrefix != "" ||
-		kustomize.NameSuffix != "" ||
-		len(kustomize.Images) != 0 ||
-		len(kustomize.Replicas) != 0 ||
-		len(kustomize.CommonLabels) != 0 ||
-		len(kustomize.CommonAnnotations) != 0 ||
-		kustomize.Namespace != ""
 }
 
 // sourceKustomizationPatchesField mirrors how Argo CD v3.6.1 reads the
@@ -191,25 +197,25 @@ func sourceKustomizationPatchesField(content []byte) error {
 	return nil
 }
 
-// sourceKustomizePatchOptionsError mirrors how kustomize reads the patches
-// that Argo CD v3.6.1 writes into the kustomization file: it decodes the
-// file with unknown fields disallowed (types.Kustomization.Unmarshal), and
-// a patch option other than allowNameChange and allowKindChange is an
-// unknown field.
-func sourceKustomizePatchOptionsError(patches argoappv1.KustomizePatches) error {
-	for _, patch := range patches {
-		keys := make([]string, 0, len(patch.Options))
-		for key := range patch.Options {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			if key != "allowNameChange" && key != "allowKindChange" {
-				return fmt.Errorf("invalid Kustomization: json: unknown field %q", key)
-			}
-		}
+// decodeSourceKustomizePatches returns the source patches as kustomize
+// reads them from the kustomization file that Argo CD v3.6.1 writes
+// (util/kustomize/kustomize.go:286-312). kustomize decodes the file as JSON
+// with unknown fields disallowed (types.Kustomization.Unmarshal,
+// api/types/kustomization.go:340-356). So a patch option other than
+// allowNameChange and allowKindChange fails, and the field names match
+// without regard to letter case.
+func decodeSourceKustomizePatches(patches argoappv1.KustomizePatches) ([]types.Patch, error) {
+	data, err := json.Marshal(patches)
+	if err != nil {
+		return nil, fmt.Errorf("encode kustomize source patches: %w", err)
 	}
-	return nil
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var out []types.Patch
+	if err := decoder.Decode(&out); err != nil {
+		return nil, fmt.Errorf("invalid Kustomization: %w", err)
+	}
+	return out, nil
 }
 
 func envsubstStringMap(in map[string]string, env argoappv1.Env) map[string]string {
@@ -218,44 +224,6 @@ func envsubstStringMap(in map[string]string, env argoappv1.Env) map[string]strin
 		out[key] = env.Envsubst(value)
 	}
 	return out
-}
-
-func sourceKustomizePatches(patches argoappv1.KustomizePatches) []types.Patch {
-	out := make([]types.Patch, 0, len(patches))
-	for _, patch := range patches {
-		out = append(out, types.Patch{
-			Path:    patch.Path,
-			Patch:   patch.Patch,
-			Target:  sourceKustomizePatchTarget(patch.Target),
-			Options: sourceKustomizePatchOptions(patch.Options),
-		})
-	}
-	return out
-}
-
-func sourceKustomizePatchTarget(target *argoappv1.KustomizeSelector) *types.Selector {
-	if target == nil {
-		return nil
-	}
-	return &types.Selector{
-		Group:              target.Group,
-		Version:            target.Version,
-		Kind:               target.Kind,
-		Name:               target.Name,
-		Namespace:          target.Namespace,
-		AnnotationSelector: target.AnnotationSelector,
-		LabelSelector:      target.LabelSelector,
-	}
-}
-
-func sourceKustomizePatchOptions(options map[string]bool) *types.PatchArgs {
-	if len(options) == 0 {
-		return nil
-	}
-	return &types.PatchArgs{
-		AllowNameChange: options["allowNameChange"],
-		AllowKindChange: options["allowKindChange"],
-	}
 }
 
 // sourceKustomizeComponents returns the spec.source.kustomize components

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/filedigest"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -485,7 +486,7 @@ func TestEditSetKustomizeImagesMatchesKustomize(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description+strings.Join(tc.given.args, " "), func(t *testing.T) {
 			kustomization := decodeEditTestKustomization(t, strings.Join(tc.given.infileImages, "\n"))
-			err := editSetKustomizeImages(&kustomization, tc.given.args)
+			_, err := editSetKustomizeImages(&kustomization, tc.given.args)
 			if !sameKustomizeEditError(err, tc.expected.err) {
 				t.Fatalf("editSetKustomizeImages() error = %v, want %v", err, tc.expected.err)
 			}
@@ -605,7 +606,7 @@ func TestEditSetKustomizeReplicasMatchesKustomize(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description+strings.Join(tc.given.args, " "), func(t *testing.T) {
 			kustomization := decodeEditTestKustomization(t, strings.Join(tc.given.infileReplicas, "\n"))
-			err := editSetKustomizeReplicas(&kustomization, tc.given.args)
+			_, err := editSetKustomizeReplicas(&kustomization, tc.given.args)
 			if !sameKustomizeEditError(err, tc.expected.err) {
 				t.Fatalf("editSetKustomizeReplicas() error = %v, want %v", err, tc.expected.err)
 			}
@@ -760,7 +761,7 @@ func TestEditAddKustomizeLabelsWithoutSelectorMatchesKustomize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := decodeEditTestKustomization(t, "")
 			m.Labels = tt.baseLabels
-			err := editAddKustomizeLabels(&m, tt.options.metadata, kustomizeEditMetadataOptions{
+			_, err := editAddKustomizeLabels(&m, tt.options.metadata, kustomizeEditMetadataOptions{
 				force:            tt.options.force,
 				withoutSelector:  tt.options.labelsWithoutSelector,
 				includeTemplates: tt.options.includeTemplates,
@@ -820,6 +821,10 @@ func TestParseKustomizeEditArgsMatchesCobra(t *testing.T) {
 		{"-f:v"},
 		{"--without-selector", "a:b"},
 		{"--include-templates=false", "a:b"},
+		{"-ftest.x:v", "a:b"},
+		{"--force", "--force=false", "a:b"},
+		{"-f=false", "a:b"},
+		{"-f=yes"},
 	}
 	commands := []struct {
 		name  string
@@ -832,7 +837,7 @@ func TestParseKustomizeEditArgsMatchesCobra(t *testing.T) {
 	for _, command := range commands {
 		for _, args := range cases {
 			t.Run(command.name+" "+strings.Join(args, " "), func(t *testing.T) {
-				wantArgs, wantHelp, wantErr := cobraKustomizeEditArgs(args, command.flags)
+				wantArgs, wantHelp, wantFlags, wantErr := cobraKustomizeEditArgs(args, command.flags)
 				line, err := parseKustomizeEditArgs(command.name, args, command.flags)
 				switch {
 				case wantErr != nil:
@@ -846,6 +851,13 @@ func TestParseKustomizeEditArgsMatchesCobra(t *testing.T) {
 				case !wantHelp && !slices.Equal(line.args, wantArgs):
 					t.Fatalf("args = %q, want %q", line.args, wantArgs)
 				}
+				if wantErr == nil && !wantHelp {
+					for name, want := range wantFlags {
+						if line.flags[name] != want {
+							t.Fatalf("flag %s = %t, want %t", name, line.flags[name], want)
+						}
+					}
+				}
 			})
 		}
 	}
@@ -853,8 +865,9 @@ func TestParseKustomizeEditArgsMatchesCobra(t *testing.T) {
 
 // cobraKustomizeEditArgs runs args through cobra as kustomize does and
 // returns the positional arguments, whether cobra printed the help instead
-// of running the command, and the error.
-func cobraKustomizeEditArgs(args []string, flags []kustomizeEditFlag) ([]string, bool, error) {
+// of running the command, the values of the command's own flags, and the
+// error.
+func cobraKustomizeEditArgs(args []string, flags []kustomizeEditFlag) ([]string, bool, map[string]bool, error) {
 	root := &cobra.Command{Use: "kustomize", SilenceErrors: true, SilenceUsage: true}
 	root.PersistentFlags().Bool("stack-trace", false, "print a stack-trace on error")
 	var got []string
@@ -882,9 +895,20 @@ func cobraKustomizeEditArgs(args []string, flags []kustomizeEditFlag) ([]string,
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)
 	if err := root.Execute(); err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
-	return got, !ran, nil
+	values := map[string]bool{}
+	for _, flag := range flags {
+		if flag.name == "help" || flag.name == "stack-trace" {
+			continue
+		}
+		value, err := command.Flags().GetBool(flag.name)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		values[flag.name] = value
+	}
+	return got, !ran, values, nil
 }
 
 // TestExpandKustomizeComponentPatternsMatchesKyamlGlob compares the
@@ -961,12 +985,23 @@ func TestExpandKustomizeComponentPatternsStaysInRepository(t *testing.T) {
 			t.Fatalf("expandKustomizeComponentPatterns(%q) error = %v, want no match", pattern, err)
 		}
 	}
-	got, err := expandKustomizeComponentPatterns(app, root, []string{"/abs/*", "https://example.invalid/repo//c?ref=v1"})
+	got, err := expandKustomizeComponentPatterns(app, root, []string{"https://example.invalid/repo//c?ref=v1"})
 	if err != nil {
 		t.Fatalf("expandKustomizeComponentPatterns() error = %v", err)
 	}
-	if want := []string{"/abs/*", "https://example.invalid/repo//c?ref=v1"}; !slices.Equal(got, want) {
+	if want := []string{"https://example.invalid/repo//c?ref=v1"}; !slices.Equal(got, want) {
 		t.Fatalf("matches = %q, want %q", got, want)
+	}
+	// kustomize fails these at the edit step with the text of loader.New
+	// (kustomize/api v0.21.3, internal/loader/fileloader.go:172-209).
+	for pattern, want := range map[string]string{
+		"":            " has no match: new root cannot be empty",
+		"/nonexist/*": "/nonexist/* has no match: new root '/nonexist/*' cannot be absolute",
+	} {
+		_, err := expandKustomizeComponentPatterns(app, root, []string{pattern})
+		if err == nil || !strings.HasSuffix(err.Error(), "kustomize edit add component: "+want) {
+			t.Fatalf("expandKustomizeComponentPatterns(%q) error = %v, want %q", pattern, err, want)
+		}
 	}
 }
 
@@ -1010,13 +1045,13 @@ func TestEditAddKustomizeComponentsMatchesKustomize(t *testing.T) {
 // commands/edit/add/addmetadata_test.go.
 func TestEditAddKustomizeMetadataMatchesKustomize(t *testing.T) {
 	kustomization := decodeEditTestKustomization(t, "")
-	if err := editAddKustomizeAnnotations(&kustomization, map[string]string{"owls": "cute", "otters": "adorable"}, false); err != nil {
+	if _, err := editAddKustomizeAnnotations(&kustomization, map[string]string{"owls": "cute", "otters": "adorable"}, false); err != nil {
 		t.Fatalf("TestRunAddAnnotation first error = %v", err)
 	}
-	if err := editAddKustomizeAnnotations(&kustomization, map[string]string{"owls": "cute", "otters": "adorable"}, false); err == nil {
+	if _, err := editAddKustomizeAnnotations(&kustomization, map[string]string{"owls": "cute", "otters": "adorable"}, false); err == nil {
 		t.Fatal("TestRunAddAnnotation repeat error = nil, want already in kustomization file")
 	}
-	if err := editAddKustomizeAnnotations(&kustomization, map[string]string{"new": "annotation"}, false); err != nil {
+	if _, err := editAddKustomizeAnnotations(&kustomization, map[string]string{"new": "annotation"}, false); err != nil {
 		t.Fatalf("TestRunAddAnnotation new error = %v", err)
 	}
 }
@@ -1026,10 +1061,10 @@ func TestEditAddKustomizeMetadataMatchesKustomize(t *testing.T) {
 // writes.
 func addKustomizeEditMetadata(kustomization *types.Kustomization, kind string, values map[string]string, force bool) (map[string]string, error) {
 	if kind == "label" {
-		err := editAddKustomizeLabels(kustomization, values, kustomizeEditMetadataOptions{force: force})
+		_, err := editAddKustomizeLabels(kustomization, values, kustomizeEditMetadataOptions{force: force})
 		return kustomization.CommonLabels, err //nolint:staticcheck // Argo CD adds source labels to commonLabels.
 	}
-	err := editAddKustomizeAnnotations(kustomization, values, force)
+	_, err := editAddKustomizeAnnotations(kustomization, values, force)
 	return kustomization.CommonAnnotations, err
 }
 
@@ -1089,7 +1124,7 @@ func TestEditAddKustomizeMetadataForceMatchesKustomize(t *testing.T) {
 		}
 	}
 	kustomization := decodeEditTestKustomization(t, "")
-	err := editAddKustomizeLabels(&kustomization, map[string]string{"new": "label"}, kustomizeEditMetadataOptions{includeTemplates: true})
+	_, err := editAddKustomizeLabels(&kustomization, map[string]string{"new": "label"}, kustomizeEditMetadataOptions{includeTemplates: true})
 	if err == nil || !strings.Contains(err.Error(), "--without-selector flag must be specified for --include-templates to work") {
 		t.Fatalf("include templates error = %v", err)
 	}
@@ -1170,6 +1205,8 @@ func TestKustomizeSourceImagesFollowEditSetImage(t *testing.T) {
 		{name: "tag and digest without =", images: []string{"nginx:1.2@sha256:abc"}, want: []string{"nginx:1.2@sha256:abc", "a"}},
 		{name: "keep the tag", kustomization: "images:\n  - name: nginx\n    newTag: \"9.9\"\n", images: []string{"nginx=registry.example.invalid/nginx:*"}, want: []string{"registry.example.invalid/nginx:9.9", "a"}},
 		{name: "empty new name", images: []string{"nginx="}, want: []string{"nginx:1.0", "a"}},
+		{name: "empty new name replaces the entry", kustomization: "images:\n  - name: nginx\n    newTag: \"9.9\"\n", images: []string{"nginx="}, want: []string{"nginx:1.0", "a"}},
+		{name: "empty name before =", kustomization: "images:\n  - name: nginx\n    newName: registry.example.invalid/other\n", images: []string{"=nginx:1.2"}, want: []string{"nginx:1.2", "a"}},
 		{name: "no space trimmed", images: []string{" nginx:3"}, want: []string{"nginx:1.0", "a"}},
 		{name: "last wins", images: []string{"nginx:1", "nginx:2"}, want: []string{"nginx:2", "a"}},
 		{name: "build environment", images: []string{"nginx:$ARGOCD_APP_NAME"}, want: []string{"nginx:demo", "a"}},
@@ -1265,6 +1302,20 @@ func TestKustomizeSourceMetadataFollowsEditAdd(t *testing.T) {
 			kustomization: "commonAnnotations:\n  owner: a\n",
 			kustomize:     argoappv1.ApplicationSourceKustomize{CommonAnnotations: map[string]string{"owner": "a"}},
 			wantErr:       "kustomize edit add annotation: annotation owner already in kustomization file. Use --force to override.",
+		},
+		{
+			// pflag reads -f as --force and drops the rest, which starts
+			// with "test.", so the other labels are written with force.
+			name:          "label key that sets force",
+			kustomization: "commonLabels:\n  team: a\n",
+			kustomize:     argoappv1.ApplicationSourceKustomize{CommonLabels: map[string]string{"-ftest.x": "v", "team": "x"}},
+			wantLabels:    map[string]string{"app": "web", "team": "x"},
+		},
+		{
+			name:          "labels entry without pairs",
+			kustomization: "labels:\n  - pairs: null\n",
+			kustomize:     argoappv1.ApplicationSourceKustomize{CommonLabels: map[string]string{"team": "x"}, LabelWithoutSelector: true},
+			wantErr:       "kustomize edit add label: labels entry 0 has no pairs; kustomize v5.8.3 fails on it with a nil map panic",
 		},
 		{
 			name:      "label key read as a flag",
@@ -1381,6 +1432,22 @@ func TestKustomizeSourceOptionsFailInArgoCDOrder(t *testing.T) {
 			wantErr:   `invalid Kustomization: json: unknown field "foo"`,
 		},
 		{
+			name:          "help flag does not rewrite the file",
+			kustomization: "patches:\n",
+			kustomize:     argoappv1.ApplicationSourceKustomize{Images: argoappv1.KustomizeImages{"--help"}, Patches: argoappv1.KustomizePatches{patch}},
+			wantErr:       "expected 'patches' field in kustomization.yaml to be []any, but got <nil>",
+		},
+		{
+			name:      "empty component before patch option",
+			kustomize: argoappv1.ApplicationSourceKustomize{Patches: argoappv1.KustomizePatches{unknownOption}, Components: []string{""}},
+			wantErr:   "kustomize edit add component:  has no match: new root cannot be empty",
+		},
+		{
+			name:      "absolute component before patch option",
+			kustomize: argoappv1.ApplicationSourceKustomize{Patches: argoappv1.KustomizePatches{unknownOption}, Components: []string{"/nonexist/*"}},
+			wantErr:   "/nonexist/* has no match: new root '/nonexist/*' cannot be absolute",
+		},
+		{
 			name:      "component glob before patch option",
 			kustomize: argoappv1.ApplicationSourceKustomize{Patches: argoappv1.KustomizePatches{unknownOption}, Components: []string{"../../components/missing"}},
 			wantErr:   "../../components/missing has no match",
@@ -1393,6 +1460,18 @@ func TestKustomizeSourceOptionsFailInArgoCDOrder(t *testing.T) {
 			}
 		})
 	}
+	// kustomize matches the patch fields without regard to letter case.
+	rename := argoappv1.KustomizePatch{Patch: "- op: replace\n  path: /metadata/name\n  value: renamed\n", Target: patch.Target}
+	for _, key := range []string{"AllowNameChange", "allownamechange"} {
+		rename.Options = map[string]bool{key: true}
+		manifests, err := renderSourceEditTest(t, writeSourceEditTestRepo(t, ""), argoappv1.ApplicationSourceKustomize{Patches: argoappv1.KustomizePatches{rename}})
+		if err != nil {
+			t.Fatalf("Render() with option %s error = %v", key, err)
+		}
+		if findManifest(manifests, "Deployment", "renamed") == nil {
+			t.Fatalf("manifests with option %s = %#v, want Deployment renamed", key, manifests)
+		}
+	}
 	// An edit command before the patches rewrites the kustomization file,
 	// which drops the empty patches field.
 	manifests, err := renderSourceEditTest(t, writeSourceEditTestRepo(t, "patches:\n"), argoappv1.ApplicationSourceKustomize{NamePrefix: "x-", Patches: argoappv1.KustomizePatches{patch}})
@@ -1404,25 +1483,73 @@ func TestKustomizeSourceOptionsFailInArgoCDOrder(t *testing.T) {
 	}
 }
 
-// A component glob owns the directory it lists, for the render cache key
-// and for changed-only selection: a new entry there can change the
-// matches.
-func TestKustomizeSourceComponentGlobOwnsItsDirectory(t *testing.T) {
-	root := writeSourceEditTestRepo(t, "")
-	kustomize := &argoappv1.ApplicationSourceKustomize{Components: []string{"../../components/[ab]"}}
+// sourceEditTestDigest returns the render cache input paths of apps/demo
+// under kustomize, and the filesystem digest of those paths.
+func sourceEditTestDigest(t *testing.T, root string, kustomize *argoappv1.ApplicationSourceKustomize) ([]string, string) {
+	t.Helper()
 	paths, err := KustomizeInputDigestPaths(context.Background(), ResolvedSource{RepoRoot: root, Path: filepath.Join("apps", "demo")}, RenderOptions{Kustomize: kustomize})
 	if err != nil {
 		t.Fatalf("KustomizeInputDigestPaths() error = %v", err)
 	}
 	digestPaths := make([]string, 0, len(paths))
+	inputs := make([]filedigest.PathDigestPath, 0, len(paths))
 	for _, path := range paths {
 		digestPaths = append(digestPaths, path.Path)
+		inputs = append(inputs, filedigest.PathDigestPath{Path: path.Path, Optional: path.Optional})
 	}
-	for _, want := range []string{"components", "components/a/kustomization.yaml", "components/b/cm.yaml"} {
-		if !slices.Contains(digestPaths, want) {
-			t.Fatalf("digest paths = %q, want %q", digestPaths, want)
+	slices.Sort(digestPaths)
+	result, err := filedigest.PathDigest(context.Background(), filedigest.PathDigestInput{RepoRoot: root, Paths: inputs})
+	if err != nil {
+		t.Fatalf("PathDigest() error = %v", err)
+	}
+	return digestPaths, result.Digest
+}
+
+// A component glob changes the render cache key when a match is added,
+// and not when an entry that does not match is added: the key records the
+// path of each input, and each match is a component whose files are
+// inputs. The directory that the glob lists is not an input, so a symlink
+// elsewhere in it does not turn the cache off.
+func TestKustomizeSourceComponentGlobKeysItsMatches(t *testing.T) {
+	root := writeSourceEditTestRepo(t, "")
+	kustomize := &argoappv1.ApplicationSourceKustomize{Components: []string{"../../components/[abc]"}}
+	paths, before := sourceEditTestDigest(t, root, kustomize)
+	for _, want := range []string{"components/a/kustomization.yaml", "components/b/cm.yaml"} {
+		if !slices.Contains(paths, want) {
+			t.Fatalf("digest paths = %q, want %q", paths, want)
 		}
 	}
+	if slices.Contains(paths, "components") {
+		t.Fatalf("digest paths = %q, want no whole components directory", paths)
+	}
+
+	// An entry that does not match, and a symlink, change nothing.
+	writeFile(t, filepath.Join(root, "components", "d", "kustomization.yaml"), "kind: Component\n")
+	if err := os.Symlink("a", filepath.Join(root, "components", "link")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	if _, after := sourceEditTestDigest(t, root, kustomize); after != before {
+		t.Fatal("digest changed for an entry that does not match")
+	}
+
+	// A new match changes the key.
+	writeFile(t, filepath.Join(root, "components", "c", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
+	paths, after := sourceEditTestDigest(t, root, kustomize)
+	if after == before || !slices.Contains(paths, "components/c/kustomization.yaml") {
+		t.Fatalf("digest paths = %q, digest unchanged = %t, want components/c and a new digest", paths, after == before)
+	}
+
+	// A glob whose directory is the repository root keys its matches only.
+	if paths, _ := sourceEditTestDigest(t, root, &argoappv1.ApplicationSourceKustomize{Components: []string{"../../comp*/a"}}); slices.Contains(paths, ".") || !slices.Contains(paths, "components/a/cm.yaml") {
+		t.Fatalf("digest paths = %q, want components/a without the root", paths)
+	}
+}
+
+// For changed-only selection, a component glob owns the directory it
+// lists, so a change that removes a match there selects the source.
+func TestKustomizeSourceComponentGlobOwnsItsDirectory(t *testing.T) {
+	root := writeSourceEditTestRepo(t, "")
+	kustomize := &argoappv1.ApplicationSourceKustomize{Components: []string{"../../components/[ab]"}}
 	selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), kustomize)
 	if err != nil {
 		t.Fatalf("KustomizeSelectionPaths() error = %v", err)

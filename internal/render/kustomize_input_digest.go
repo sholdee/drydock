@@ -143,18 +143,18 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 // collectSourceKustomizeComponent adds the components that one
 // spec.source.kustomize.components pattern adds through the globs of
 // `kustomize edit add component`, with their graphs. A glob pattern also
-// owns the directory it lists (kustomizeComponentGlobDir), so a new match
-// there selects the source, unless that directory is the repository root:
-// like a Helm value file glob without a static prefix, it then owns
-// nothing more.
+// owns the directory it lists (kustomizeComponentGlobDir), so a change that
+// adds or removes a match there selects the source. The directory is owned
+// as a path prefix only: the selection does not walk its tree. When that
+// directory is the repository root, the pattern owns nothing more, like a
+// Helm value file glob without a static prefix.
 func (c *kustomizeInputCollector) collectSourceKustomizeComponent(ctx context.Context, sourceRoot, pattern string) error {
 	matches, globDirs := sourceKustomizeComponentMatches(c.repoRoot, sourceRoot, []string{pattern})
 	for _, globDir := range globDirs {
-		if filepath.Clean(globDir) == c.repoRoot {
-			continue
-		}
-		if err := c.addAbsPath(ctx, globDir, true); err != nil {
-			return err
+		if err := c.addSelectionPrefix(globDir); err != nil {
+			if err := c.skip(ctx, err); err != nil {
+				return err
+			}
 		}
 	}
 	for _, component := range matches {
@@ -179,6 +179,26 @@ func (c *kustomizeInputCollector) collectSourceKustomizeComponent(ctx context.Co
 		}
 	}
 	return nil
+}
+
+// addSelectionPrefix owns dir for changed-only selection as a path prefix,
+// without a walk of its tree. dir must be inside the repository, below its
+// root, outside .git, and reached without a symlink.
+func (c *kustomizeInputCollector) addSelectionPrefix(dir string) error {
+	dir = filepath.Clean(dir)
+	if dir == c.repoRoot {
+		return nil
+	}
+	if err := rejectPathOutsideBoundary("kustomize components glob directory", dir, c.repoRoot); err != nil {
+		return err
+	}
+	if pathEntersGit(c.repoRoot, dir) {
+		return gitPathRefError("kustomize components glob directory", dir)
+	}
+	if err := rejectSymlinkedPath(c.repoRoot, dir); err != nil {
+		return err
+	}
+	return c.addDigestPath(dir, true)
 }
 
 // collectSkippedComponent applies the ignoreMissingComponents check to one
