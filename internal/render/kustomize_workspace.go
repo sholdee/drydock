@@ -30,6 +30,9 @@ type kustomizeWorkspace struct {
 	// emits duplicate resource IDs, which kustomize accumulation rejects
 	// before any diagnostic is surfaced.
 	ksopsSubstitutedFiles int
+	// ksopsSkippedExecGenerators counts KSOPS generator documents with an
+	// exec function that kustomize skips without --enable-exec.
+	ksopsSkippedExecGenerators int
 	// sourceOptionDiagnostics holds the warnings from merging the
 	// spec.source.kustomize options into the source kustomization.
 	sourceOptionDiagnostics []diagnostic.Diagnostic
@@ -42,6 +45,9 @@ func (w *kustomizeWorkspace) diagnostics() []diagnostic.Diagnostic {
 	diags := append([]diagnostic.Diagnostic(nil), w.sourceOptionDiagnostics...)
 	if w.ksopsSubstitutedFiles != 0 {
 		diags = append(diags, ksopsCompatDiagnostic(w.ksopsSubstitutedFiles))
+	}
+	if w.ksopsSkippedExecGenerators != 0 {
+		diags = append(diags, ksopsExecSkippedDiagnostic(w.ksopsSkippedExecGenerators))
 	}
 	return diags
 }

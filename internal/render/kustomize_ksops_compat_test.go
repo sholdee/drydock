@@ -1078,3 +1078,73 @@ sops:
 		t.Fatalf("spec.data.NESTED = %q, want plain drydock-ksops-redacted- marker (nested data: must not base64)", value)
 	}
 }
+
+const ksopsTestExecFunctionManifest = `apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: demo-secret-generator
+  annotations:
+    config.kubernetes.io/function: |
+      exec:
+        path: ksops
+files:
+  - ./demo-secret.sops.yaml
+`
+
+// KSOPS is an external plugin. With a found argocd-cm, the kustomize v5.8.3
+// binary fails it without --enable-alpha-plugins, and with only that flag
+// it skips a KSOPS exec function and renders nothing from it. The legacy
+// exec plugin form needs --enable-alpha-plugins only. The texts are the
+// ones of the kustomize binary for the same kustomization.
+func TestKSOPSGeneratorNeedsKustomizePluginFlags(t *testing.T) {
+	const disabled = "loading generator plugins: failed to load generator: external plugins disabled; unable to load external plugin 'ksops'"
+	for _, tc := range []struct {
+		name       string
+		manifest   string
+		caller     KustomizeBuildCaller
+		options    []string
+		wantErr    string
+		wantSecret bool
+		wantSkip   bool
+	}{
+		{name: "no argocd-cm, exec function", manifest: ksopsTestExecFunctionManifest, caller: KustomizeCallerArgoCDAssumed, wantSecret: true},
+		{name: "no argocd-cm, legacy plugin", manifest: ksopsTestGeneratorManifest, caller: KustomizeCallerArgoCDAssumed, wantSecret: true},
+		{name: "no plugin flags", manifest: ksopsTestExecFunctionManifest, caller: KustomizeCallerArgoCD, options: []string{"--enable-helm"}, wantErr: disabled},
+		{name: "exec only", manifest: ksopsTestExecFunctionManifest, caller: KustomizeCallerArgoCD, options: []string{"--enable-exec"}, wantErr: disabled},
+		{name: "legacy plugin without flags", manifest: ksopsTestGeneratorManifest, caller: KustomizeCallerArgoCD, wantErr: disabled},
+		{name: "exec function with alpha plugins only", manifest: ksopsTestExecFunctionManifest, caller: KustomizeCallerArgoCD, options: []string{"--enable-alpha-plugins"}, wantSkip: true},
+		{name: "exec function with both flags", manifest: ksopsTestExecFunctionManifest, caller: KustomizeCallerArgoCD, options: []string{"--enable-alpha-plugins", "--enable-exec"}, wantSecret: true},
+		{name: "legacy plugin with alpha plugins", manifest: ksopsTestGeneratorManifest, caller: KustomizeCallerArgoCD, options: []string{"--enable-alpha-plugins"}, wantSecret: true},
+		{name: "plugin command without flags", manifest: ksopsTestGeneratorManifest, caller: KustomizeCallerCommand, wantErr: disabled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeKSOPSFixtureApp(t, root)
+			writeFile(t, filepath.Join(root, "apps", "demo", "secret-generator.yaml"), tc.manifest)
+			manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: filepath.Join("apps", "demo")}, RenderOptions{
+				EnableKSOPSCompat: true,
+				KustomizeCaller:   tc.caller,
+				BuildOptions:      tc.options,
+			})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Render() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if got := len(manifests) == 1 && manifests[0].Object.GetName() == "demo-secret"; got != tc.wantSecret {
+				t.Fatalf("manifests = %d, want the placeholder Secret %t", len(manifests), tc.wantSecret)
+			}
+			skipped := false
+			for _, diag := range diags {
+				skipped = skipped || diag.Code == "kustomize.ksops-exec-skipped"
+			}
+			if skipped != tc.wantSkip {
+				t.Fatalf("diagnostics = %#v, want the exec skip warning %t", diags, tc.wantSkip)
+			}
+		})
+	}
+}

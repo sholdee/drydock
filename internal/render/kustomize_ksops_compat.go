@@ -19,6 +19,8 @@ import (
 	goyaml "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/kyaml/fn/runtime/runtimeutil"
+	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 // KSOPS generator manifests are matched by the exact apiVersion/kind strings
@@ -185,6 +187,20 @@ func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot st
 	}
 	if len(ksopsDocs) == 0 {
 		return true, nil, nil
+	}
+	ksopsDocs, err := w.loadableKSOPSGenerators(ksopsDocs)
+	if err != nil {
+		return false, nil, err
+	}
+	if len(ksopsDocs) == 0 {
+		// kustomize skipped every document, so the entry gives nothing.
+		// An empty resource file stands for it, because krusty fails a
+		// kustomization that the rewrite leaves empty.
+		generatedRel := filepath.ToSlash(filepath.Join(".drydock", "ksops", fmt.Sprintf("%03d-%03d-skipped.yaml", graphIndex, entryIndex)))
+		if err := writeGeneratedKustomizeWorkspaceFile(dir, generatedRel, nil); err != nil {
+			return false, nil, err
+		}
+		return false, []string{generatedRel}, nil
 	}
 	if !w.opts.EnableKSOPSCompat {
 		return false, nil, fmt.Errorf("kustomize generators entry %q is a KSOPS generator; pass --enable-ksops-compat to render deterministic placeholder manifests without decryption", describe)
@@ -594,4 +610,48 @@ func removeYAMLMappingKey(node *goyaml.Node, key string) {
 		filtered = append(filtered, node.Content[i], node.Content[i+1])
 	}
 	node.Content = filtered
+}
+
+// loadableKSOPSGenerators returns the KSOPS generator documents that the
+// kustomize binary runs with the flags of the build. KSOPS is an external
+// plugin, so without --enable-alpha-plugins kustomize fails the build
+// (PluginRestrictionsBuiltinsOnly, api/internal/plugins/loader/loader.go:
+// 205-210 at kustomize/api v0.21.3). A document with an exec function
+// annotation, such as config.kubernetes.io/function, runs only with
+// --enable-exec too. Without it, kustomize skips the function and the
+// generator gives no resources (RunFns.getFilterProvider in kyaml). drydock
+// counts the skipped documents for a warning. Without a found argocd-cm,
+// drydock cannot tell the flags, so it renders every document, as before.
+func (w *kustomizeWorkspace) loadableKSOPSGenerators(docs []*goyaml.Node) ([]*goyaml.Node, error) {
+	if w.opts.KustomizeCaller == KustomizeCallerArgoCDAssumed {
+		return docs, nil
+	}
+	if !w.buildSettings.EnableAlphaPlugins {
+		return nil, fmt.Errorf("loading generator plugins: failed to load generator: external plugins disabled; unable to load external plugin '%s'", yamlMappingString(docs[0], "kind"))
+	}
+	if w.buildSettings.EnableExec {
+		return docs, nil
+	}
+	out := make([]*goyaml.Node, 0, len(docs))
+	for _, doc := range docs {
+		spec, err := runtimeutil.GetFunctionSpec(kyaml.NewRNode(doc))
+		if err != nil {
+			return nil, fmt.Errorf("loading generator plugins: loader: %w", err)
+		}
+		if spec != nil && spec.Exec.Path != "" {
+			w.ksopsSkippedExecGenerators++
+			continue
+		}
+		out = append(out, doc)
+	}
+	return out, nil
+}
+
+func ksopsExecSkippedDiagnostic(skipped int) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     "kustomize.ksops-exec-skipped",
+		Severity: diagnostic.SeverityWarning,
+		Category: "kustomize",
+		Message:  fmt.Sprintf("%d KSOPS generators with an exec function gave no resources, because kustomize.buildOptions has no --enable-exec; kustomize skips such functions", skipped),
+	}
 }
