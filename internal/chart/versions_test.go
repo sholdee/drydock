@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/argoproj/argo-cd/v3/util/versions"
@@ -128,7 +129,8 @@ func chartDescription(t *testing.T, chartDir string) string {
 // and helm pull then fetches that version. A revision that parses as
 // semver, such as "1.2", stays as written, and helm pull takes the highest
 // version that matches it (IndexFile.Get, also the oracle). The cache entry
-// and the result carry the resolved version.
+// and the result carry the version that helm pull takes, so a partial
+// version picks up a new release on the next online run.
 func TestDefaultAcquirerResolvesTargetRevisionRanges(t *testing.T) {
 	for _, tt := range []struct {
 		revision string
@@ -151,6 +153,9 @@ func TestDefaultAcquirerResolvesTargetRevisionRanges(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Acquire() error = %v", err)
 			}
+			// The repo-server passes a semver revision to helm pull as
+			// written, and resolves a constraint with MaxVersion. drydock
+			// caches the version that helm pull then takes.
 			want := tt.revision
 			if !versions.IsVersion(tt.revision) {
 				var err error
@@ -158,10 +163,11 @@ func TestDefaultAcquirerResolvesTargetRevisionRanges(t *testing.T) {
 					t.Fatalf("upstream MaxVersion() error = %v", err)
 				}
 			}
+			want = upstreamHelmIndexGet(t, want)
 			if result.Version != want {
-				t.Fatalf("result version = %q, want the repo-server's %q", result.Version, want)
+				t.Fatalf("result version = %q, want helm pull's %q", result.Version, want)
 			}
-			if got, want := chartDescription(t, result.ChartDir), upstreamHelmIndexGet(t, want); got != want || got != tt.fetched {
+			if got := chartDescription(t, result.ChartDir); got != want || got != tt.fetched {
 				t.Fatalf("fetched archive = %q, want helm pull's %q (%q)", got, want, tt.fetched)
 			}
 			resolved := request
@@ -261,9 +267,10 @@ func TestDefaultAcquirerResolvesHelmDependencyRanges(t *testing.T) {
 }
 
 type fakeOCITagPuller struct {
-	tags    []string
-	pulled  []string
-	archive []byte
+	tags     []string
+	pulled   []string
+	tagCalls int
+	archive  []byte
 }
 
 func (puller *fakeOCITagPuller) Pull(_ context.Context, request Request, _ Options) ([]byte, error) {
@@ -272,6 +279,7 @@ func (puller *fakeOCITagPuller) Pull(_ context.Context, request Request, _ Optio
 }
 
 func (puller *fakeOCITagPuller) Tags(context.Context, Request, Options) ([]string, error) {
+	puller.tagCalls++
 	return puller.tags, nil
 }
 
@@ -290,5 +298,107 @@ func TestDefaultAcquirerResolvesOCITargetRevisionRanges(t *testing.T) {
 	}
 	if result.Version != "1.2.3" || len(puller.pulled) != 1 || puller.pulled[0] != "1.2.3" {
 		t.Fatalf("result = %#v, pulled = %v, want 1.2.3", result, puller.pulled)
+	}
+}
+
+// TestDefaultAcquirerUsesExplicitOCIDependencyVersions pins that a
+// Chart.yaml dependency on an OCI repository without a Chart.lock uses a
+// version that parses as semver as an explicit tag, as resolver.Resolve
+// does (helm v4.3.1 internal/resolver/resolver.go:135-147): "v1.2.3" and
+// "1.2" are pulled as written, without a tag list. A range lists the tags.
+func TestDefaultAcquirerUsesExplicitOCIDependencyVersions(t *testing.T) {
+	for _, tt := range []struct {
+		version, pulled string
+		tagCalls        int
+	}{
+		{version: "v1.2.3", pulled: "v1.2.3"},
+		{version: "1.2", pulled: "1.2"},
+		{version: "~1.2.0", pulled: "1.2.3", tagCalls: 1},
+	} {
+		t.Run(tt.version, func(t *testing.T) {
+			puller := &fakeOCITagPuller{
+				tags:    []string{"2.0.0", "1.2.3"},
+				archive: chartArchive(t, "demo", map[string]string{"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n"}),
+			}
+			request := Request{Repository: "registry.example.test/charts", Name: "demo", Version: tt.version, Kind: RepositoryOCI, VersionPolicy: VersionHelmDependency}
+			result, err := (DefaultAcquirer{OCIPuller: puller}).Acquire(context.Background(), request, Options{CacheDir: t.TempDir()})
+			if err != nil {
+				t.Fatalf("Acquire() error = %v", err)
+			}
+			if result.Version != tt.pulled || len(puller.pulled) != 1 || puller.pulled[0] != tt.pulled || puller.tagCalls != tt.tagCalls {
+				t.Fatalf("result = %#v, pulled = %v, tag calls = %d, want %s with %d tag calls", result, puller.pulled, puller.tagCalls, tt.pulled, tt.tagCalls)
+			}
+		})
+	}
+}
+
+// TestDefaultAcquirerResolvesPartialVersionsAgain pins that a partial
+// targetRevision such as "1.2" on an HTTP repository is not a fixed pin:
+// the cache entry is the version that helm pull takes, so the next online
+// run picks up a new 1.2.x. A Kustomize helmCharts "1.2" (VersionAsWritten)
+// never reads that entry.
+func TestDefaultAcquirerResolvesPartialVersionsAgain(t *testing.T) {
+	server, requests := newRangeIndexServer(t)
+	cacheDir := t.TempDir()
+	acquirer := DefaultAcquirer{Client: server.Client()}
+	request := Request{Repository: server.URL, Name: "demo", Version: "1.2", Kind: RepositoryHTTP, VersionPolicy: VersionArgoTargetRevision}
+	for range 2 {
+		result, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+		if err != nil {
+			t.Fatalf("Acquire() error = %v", err)
+		}
+		if result.Version != "1.2.3" {
+			t.Fatalf("result version = %q, want 1.2.3", result.Version)
+		}
+	}
+	if requests["/index.yaml"] != 2 {
+		t.Fatalf("index requests = %d, want one per online run", requests["/index.yaml"])
+	}
+	kustomize := request
+	kustomize.VersionPolicy = VersionAsWritten
+	if _, err := acquirer.Acquire(context.Background(), kustomize, Options{CacheDir: cacheDir, Offline: true}); err == nil || !strings.Contains(err.Error(), "offline cache miss for chart demo 1.2") {
+		t.Fatalf("Kustomize Acquire() error = %v, want an offline cache miss", err)
+	}
+}
+
+// TestDefaultAcquirerMarksOldVersionListsStale pins that an offline resolve
+// from a version list older than the chart cache max age still resolves,
+// and reports the result stale, as an expired chart cache entry is. A
+// version list of unknown age is stale under a max age too. Without a max
+// age nothing expires.
+func TestDefaultAcquirerMarksOldVersionListsStale(t *testing.T) {
+	server, _ := newRangeIndexServer(t)
+	cacheDir := t.TempDir()
+	acquirer := DefaultAcquirer{Client: server.Client()}
+	request := Request{Repository: server.URL, Name: "demo", Version: "1.2.*", Kind: RepositoryHTTP, VersionPolicy: VersionArgoTargetRevision}
+	if _, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir}); err != nil {
+		t.Fatalf("online Acquire() error = %v", err)
+	}
+	record, ok := readVersionsRecord(cacheDir, request)
+	if !ok || record.FetchedAt.IsZero() {
+		t.Fatalf("version record = %#v, %v, want one with a fetch time", record, ok)
+	}
+	for _, tt := range []struct {
+		name      string
+		fetchedAt time.Time
+		maxAge    time.Duration
+		stale     bool
+	}{
+		{name: "fresh", fetchedAt: time.Now().UTC(), maxAge: time.Hour},
+		{name: "old", fetchedAt: time.Now().Add(-2 * time.Hour).UTC(), maxAge: time.Hour, stale: true},
+		{name: "unknown age", maxAge: time.Hour, stale: true},
+		{name: "no max age", fetchedAt: time.Now().Add(-2 * time.Hour).UTC()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			record.FetchedAt = tt.fetchedAt
+			writeVersionsRecord(cacheDir, request, record, nil)
+			result, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir, Offline: true, MaxAge: tt.maxAge})
+			if err != nil {
+				t.Fatalf("offline Acquire() error = %v", err)
+			}
+			if result.Version != "1.2.3" || result.Stale != tt.stale {
+				t.Fatalf("result = %#v, want 1.2.3 with stale %v", result, tt.stale)
+			}
+		})
 	}
 }

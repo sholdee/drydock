@@ -10,6 +10,13 @@ func ChartKindRoot(root, kind string) string {
 	return filepath.Join(root, kind)
 }
 
+// ChartVersionsRecordDir holds the recorded version lists of the charts of
+// one repository kind, which resolve version ranges under --offline. Its
+// name is not a cache key, so the entry listers skip it.
+func ChartVersionsRecordDir(root, kind string) string {
+	return filepath.Join(ChartKindRoot(root, kind), "versions")
+}
+
 func ChartEntryPath(root, kind, key string) string {
 	return filepath.Join(ChartKindRoot(root, kind), key)
 }

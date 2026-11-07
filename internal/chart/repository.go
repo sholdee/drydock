@@ -11,8 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/argoproj/pkg/sync"
 	"github.com/sholdee/drydock/internal/cache"
 )
+
+// chartKeyLock serializes the work on one chart cache entry in this
+// process.
+var chartKeyLock = sync.NewKeyLock()
 
 type DefaultAcquirer struct {
 	Client    *http.Client
@@ -35,13 +40,15 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	}
 	opts.CacheDir = cacheDir
 	var index *repositoryIndex
+	versionsStale := false
 	if needsVersionResolution(request) {
-		resolved, fetched, err := acquirer.resolveVersion(ctx, request, opts)
+		resolved, err := acquirer.resolveVersion(ctx, request, opts)
 		if err != nil {
 			return Result{}, err
 		}
-		request.Version = resolved
-		index = fetched
+		request.Version = resolved.version
+		index = resolved.index
+		versionsStale = resolved.stale
 	}
 	key, err := NewCacheKey(request)
 	if err != nil {
@@ -49,6 +56,10 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	}
 	keyParent := cache.ChartKindRoot(opts.CacheDir, string(request.Kind))
 	keyDir := cache.ChartEntryPath(opts.CacheDir, string(request.Kind), key)
+	// The lock is on the resolved entry, so two requests that resolve to
+	// one version, such as 1.2.* and ~1.2.0, do not publish it at once.
+	chartKeyLock.Lock(keyDir)
+	defer chartKeyLock.Unlock(keyDir)
 	chartDir := filepath.Join(keyDir, chartLeaf(request.Name))
 	if err := rejectForbiddenCachePath(keyDir, opts.ForbiddenRoots); err != nil {
 		return Result{}, err
@@ -65,7 +76,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 			result := resultFor(request, chartDir, true)
 			result.CacheKey = key
 			result.FetchedAt = fetchedAt
-			result.Stale = expired
+			result.Stale = expired || versionsStale
 			return result, nil
 		}
 	}
@@ -125,7 +136,7 @@ func publishFetchedChart(request Request, opts Options, keyParent, keyDir, key s
 	if !chartDirReady(tmpChartDir) {
 		return Result{}, fmt.Errorf("chart archive for %s %s did not extract Chart.yaml", request.Name, request.Version)
 	}
-	if err := publishChartCache(keyDir, tmpKeyDir); err != nil {
+	if err := publishChartCache(keyDir, tmpKeyDir, chartLeaf(request.Name)); err != nil {
 		return Result{}, err
 	}
 	// The published entry starts without metadata, so its creation time is

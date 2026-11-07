@@ -6,7 +6,11 @@ import (
 	"path/filepath"
 )
 
-func publishChartCache(keyDir, tmpKeyDir string) error {
+// publishChartCache moves the fetched entry tmpKeyDir to keyDir. When the
+// rename fails because another writer made keyDir ready at the same time,
+// it keeps that entry: both hold the same chart version. leaf is the chart
+// directory in the entry.
+func publishChartCache(keyDir, tmpKeyDir, leaf string) error {
 	parent := filepath.Dir(keyDir)
 	base := filepath.Base(keyDir)
 	var backupDir string
@@ -29,6 +33,12 @@ func publishChartCache(keyDir, tmpKeyDir string) error {
 	if err := os.Rename(tmpKeyDir, keyDir); err != nil {
 		if backupDir != "" {
 			_ = os.Rename(backupDir, keyDir)
+		}
+		if chartDirReady(filepath.Join(keyDir, leaf)) {
+			if backupDir != "" {
+				_ = os.RemoveAll(backupDir)
+			}
+			return nil
 		}
 		return fmt.Errorf("publish chart cache %s: %w", keyDir, err)
 	}

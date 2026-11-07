@@ -84,6 +84,9 @@ type OperationResult struct {
 	// never on dry-run) can trim renders further; its effect is reported separately
 	// in RenderSweep. Always present in JSON/YAML output (not omitempty).
 	TotalSizeBytes int64 `json:"totalSizeBytes" yaml:"totalSizeBytes"`
+	// VersionRecordsRemoved counts the recorded chart version lists that an
+	// age prune removed, or would remove on a dry run.
+	VersionRecordsRemoved int `json:"versionRecordsRemoved,omitempty" yaml:"versionRecordsRemoved,omitempty"`
 }
 
 func List(opts Options) ([]Entry, error) {
@@ -140,6 +143,11 @@ func Prune(opts OperationOptions) (OperationResult, error) {
 		return OperationResult{}, err
 	}
 	selected, result := buildPruneResult(entries, opts)
+	records, err := pruneChartVersionRecords(opts)
+	if err != nil {
+		return OperationResult{}, err
+	}
+	result.VersionRecordsRemoved = records
 	if opts.DryRun {
 		return result, nil
 	}
@@ -574,6 +582,62 @@ func resolveCacheRoot(root string, forbiddenRoots []string) (string, bool, error
 		return "", false, fmt.Errorf("cache root %q must not be inside Git repository %q", absRoot, gitRoot)
 	}
 	return absRoot, true, nil
+}
+
+// pruneChartVersionRecords removes, in an age prune of the chart cache, the
+// recorded chart version lists that were written before the cutoff. An
+// online resolve rewrites its list, so the write time is its fetch time. A
+// dry run only counts them.
+func pruneChartVersionRecords(opts OperationOptions) (int, error) {
+	if opts.OlderThan <= 0 || !enabledSources(opts.Sources)[SourceChart] || (opts.Source != "" && opts.Source != SourceChart) {
+		return 0, nil
+	}
+	root, ok, err := resolveCacheRoot(opts.ChartCacheDir, opts.ForbiddenRoots)
+	if err != nil || !ok {
+		return 0, err
+	}
+	cutoff := time.Now().Add(-opts.OlderThan)
+	removed := 0
+	for _, kind := range []string{"http", "oci"} {
+		if opts.Kind != "" && opts.Kind != kind {
+			continue
+		}
+		count, err := pruneVersionRecordDir(ChartVersionsRecordDir(root, kind), cutoff, opts.DryRun)
+		removed += count
+		if err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
+}
+
+// pruneVersionRecordDir removes the version lists in dir that were written
+// before cutoff, or only counts them on a dry run.
+func pruneVersionRecordDir(dir string, cutoff time.Time, dryRun bool) (int, error) {
+	children, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	removed := 0
+	for _, child := range children {
+		if !child.Type().IsRegular() || filepath.Ext(child.Name()) != ".json" {
+			continue
+		}
+		info, err := child.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if !dryRun {
+			if err := os.Remove(filepath.Join(dir, child.Name())); err != nil && !os.IsNotExist(err) {
+				return removed, err
+			}
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func enabledSources(sources []Source) map[Source]bool {

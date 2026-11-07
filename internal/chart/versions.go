@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/argoproj/argo-cd/v3/util/versions"
@@ -29,10 +31,12 @@ const (
 	// the Argo CD v3.6.1 repo-server resolves it
 	// (newHelmClientResolveRevision, reposerver/repository/repository.go:
 	// 3029-3066). A version that parses as semver (versions.IsVersion), also
-	// "1.2", stays as written, and helm pull then takes the index entry with
-	// that version, or else the highest one that matches it as a constraint
-	// (helmIndexGet). Any other revision is a constraint: the repo-server
-	// takes the highest index version or registry tag that matches it
+	// "1.2", stays as written. On an HTTP repository helm pull then takes the
+	// index entry with that version, or else the highest one that matches it
+	// as a constraint (helmIndexGet), so a partial version such as "1.2"
+	// resolves like a range. On an OCI repository helm pull takes the tag as
+	// written. Any other revision is a constraint: the repo-server takes the
+	// highest index version or registry tag that matches it
 	// (versions.MaxVersion), and helm pull fetches that version.
 	VersionArgoTargetRevision VersionPolicy = "argo-target-revision"
 	// VersionHelmDependency is the version of a Chart.yaml dependency
@@ -40,7 +44,8 @@ const (
 	// (Manager.Update and resolver.Resolve, helm v4.3.1
 	// internal/resolver/resolver.go:56-205): the highest index version
 	// with an archive URL, or the highest registry tag, that matches the
-	// version as a constraint. A strict semver version stays as written.
+	// version as a constraint. On an OCI repository, a version that parses
+	// as semver is an explicit tag and stays as written.
 	VersionHelmDependency VersionPolicy = "helm-dependency"
 	// VersionHelmLocked is the version of a Chart.lock entry, which
 	// `helm dependency build` fetches as helm pull does (helmIndexGet).
@@ -54,10 +59,21 @@ func needsVersionResolution(request Request) bool {
 	version := strings.TrimSpace(request.Version)
 	switch request.VersionPolicy {
 	case VersionArgoTargetRevision:
-		return !versions.IsVersion(version)
+		if request.Kind == RepositoryOCI {
+			// helm pull takes a semver version as an exact tag
+			// (registry.Client.ValidateReference, helm v4.3.1
+			// pkg/registry/client.go:883-887).
+			return !versions.IsVersion(version)
+		}
+		return !IsExactVersion(version)
 	case VersionHelmDependency:
-		_, err := semver.StrictNewVersion(version)
-		return err != nil
+		if request.Kind == RepositoryOCI {
+			// resolver.Resolve uses an explicit OCI version as written
+			// (helm v4.3.1 internal/resolver/resolver.go:135-147).
+			_, err := semver.NewVersion(version)
+			return err != nil
+		}
+		return !IsExactVersion(version)
 	case VersionAsWritten, VersionHelmLocked:
 		return false
 	default:
@@ -65,11 +81,26 @@ func needsVersionResolution(request Request) bool {
 	}
 }
 
-// versionsRecordDirName holds the version list of each chart that an online
-// resolve read, so a version range resolves under --offline. It is not a
-// 64-hex cache key, so the cache entry listers skip it and prune never
-// selects it.
-const versionsRecordDirName = "versions"
+// exactVersionPattern is a full major.minor.patch version, with an optional
+// leading "v", prerelease, and build metadata.
+var exactVersionPattern = regexp.MustCompile(`^v?\d+\.\d+\.\d+([-+].*)?$`)
+
+// IsExactVersion reports whether version names one full chart version,
+// such as 1.2.3 or v1.2.3-rc.1. A partial version such as 1.2 or 1 is not
+// exact: on an HTTP repository helm takes the highest version that matches
+// it, so it resolves like a range.
+func IsExactVersion(version string) bool {
+	version = strings.TrimSpace(version)
+	if !exactVersionPattern.MatchString(version) {
+		return false
+	}
+	_, err := semver.NewVersion(version)
+	return err == nil
+}
+
+// The version list of each chart that an online resolve read is recorded
+// under cache.ChartVersionsRecordDir, so a version range resolves under
+// --offline. The cache prune removes old lists with an age prune.
 
 // chartVersionsRecord is the version list of one chart in one repository:
 // the index entries of an HTTP repository, with whether each one has an
@@ -78,6 +109,10 @@ type chartVersionsRecord struct {
 	// Found is false when the HTTP index has no entry for the chart.
 	Found    bool                   `json:"found"`
 	Versions []recordedChartVersion `json:"versions,omitempty"`
+	// FetchedAt is when the online resolve read the list. An offline
+	// resolve from a list older than the chart cache max age reports the
+	// result stale, as for an expired chart cache entry.
+	FetchedAt time.Time `json:"fetchedAt,omitzero"`
 }
 
 type recordedChartVersion struct {
@@ -93,13 +128,22 @@ func (record chartVersionsRecord) tags() []string {
 	return tags
 }
 
+// entries returns the recorded versions as index entries, for helmIndexGet.
+func (record chartVersionsRecord) entries() []repositoryChartVersion {
+	out := make([]repositoryChartVersion, 0, len(record.Versions))
+	for _, version := range record.Versions {
+		out = append(out, repositoryChartVersion{Version: version.Version})
+	}
+	return out
+}
+
 func versionsRecordPath(cacheDir string, request Request) (string, error) {
 	normalized, err := NormalizeCacheRepository(request.Repository, request.Kind)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{string(request.Kind), normalized, strings.TrimSpace(request.Name)}, "\x00")))
-	return filepath.Join(cache.ChartKindRoot(cacheDir, string(request.Kind)), versionsRecordDirName, hex.EncodeToString(sum[:])+".json"), nil
+	return filepath.Join(cache.ChartVersionsRecordDir(cacheDir, string(request.Kind)), hex.EncodeToString(sum[:])+".json"), nil
 }
 
 func readVersionsRecord(cacheDir string, request Request) (chartVersionsRecord, bool) {
@@ -148,26 +192,40 @@ func writeVersionsRecord(cacheDir string, request Request, record chartVersionsR
 	_ = os.Rename(tmpName, path)
 }
 
+// resolvedVersion is the version that a request named, as resolveVersion
+// found it.
+type resolvedVersion struct {
+	version string
+	// index is the HTTP repository index that the resolve read, if any.
+	index *repositoryIndex
+	// stale reports an offline resolve from a version list older than the
+	// chart cache max age, or of unknown age under a max age.
+	stale bool
+}
+
 // resolveVersion returns the version that request names, under its
-// VersionPolicy, and the HTTP repository index it read, if any. Online it
-// reads the index or the registry tags and records their versions. Offline
-// it resolves from that record, and fails as a cache miss without one.
-func (acquirer DefaultAcquirer) resolveVersion(ctx context.Context, request Request, opts Options) (string, *repositoryIndex, error) {
+// VersionPolicy. Online it reads the index or the registry tags and
+// records their versions with the fetch time. Offline it resolves from
+// that record, and fails as a cache miss without one. An offline resolve
+// from a record past opts.MaxAge is still used and reported stale, as an
+// expired chart cache entry is (Expired).
+func (acquirer DefaultAcquirer) resolveVersion(ctx context.Context, request Request, opts Options) (resolvedVersion, error) {
 	if opts.Offline {
 		record, ok := readVersionsRecord(opts.CacheDir, request)
 		if !ok {
-			return "", nil, fmt.Errorf("offline cache miss for chart %s %s: no recorded version list to resolve the version range", request.Name, request.Version)
+			return resolvedVersion{}, fmt.Errorf("offline cache miss for chart %s %s: no recorded version list to resolve the version range", request.Name, request.Version)
 		}
 		resolved, err := selectChartVersion(request, record)
-		return resolved, nil, err
+		stale := Expired(record.FetchedAt, !record.FetchedAt.IsZero(), opts.MaxAge, time.Now())
+		return resolvedVersion{version: resolved, stale: stale}, err
 	}
-	var record chartVersionsRecord
+	record := chartVersionsRecord{FetchedAt: time.Now().UTC()}
 	var index *repositoryIndex
 	switch request.Kind {
 	case RepositoryHTTP:
 		fetched, err := acquirer.fetchHTTPIndex(ctx, request, opts)
 		if err != nil {
-			return "", nil, err
+			return resolvedVersion{}, err
 		}
 		index = &fetched
 		entries, found := fetched.Entries[request.Name]
@@ -178,18 +236,18 @@ func (acquirer DefaultAcquirer) resolveVersion(ctx context.Context, request Requ
 	case RepositoryOCI:
 		tags, err := acquirer.listOCIChartTags(ctx, request, opts)
 		if err != nil {
-			return "", nil, err
+			return resolvedVersion{}, err
 		}
 		record.Found = true
 		for _, tag := range tags {
 			record.Versions = append(record.Versions, recordedChartVersion{Version: tag, HasURL: true})
 		}
 	default:
-		return "", nil, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
+		return resolvedVersion{}, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
 	}
 	writeVersionsRecord(opts.CacheDir, request, record, opts.ForbiddenRoots)
 	resolved, err := selectChartVersion(request, record)
-	return resolved, index, err
+	return resolvedVersion{version: resolved, index: index}, err
 }
 
 // selectChartVersion picks the version that request names from record.
@@ -197,6 +255,15 @@ func selectChartVersion(request Request, record chartVersionsRecord) (string, er
 	version := strings.TrimSpace(request.Version)
 	switch request.VersionPolicy {
 	case VersionArgoTargetRevision:
+		if request.Kind == RepositoryHTTP && versions.IsVersion(version) {
+			// A partial version: helm pull takes the index entry that
+			// IndexFile.Get returns for it.
+			entry, err := helmIndexGet(record.entries(), request.Name, version)
+			if errors.Is(err, errChartVersionNotFound) {
+				return "", fmt.Errorf("chart %s version %s not found in repository index", request.Name, version)
+			}
+			return entry.Version, err
+		}
 		if request.Kind == RepositoryHTTP && !record.Found {
 			// helm.Index.GetEntries (util/helm/index.go:27-33 at v3.6.1).
 			return "", fmt.Errorf("chart '%s' not found in index", request.Name)

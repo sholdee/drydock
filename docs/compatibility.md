@@ -477,9 +477,10 @@ Important boundaries:
   repo-server (`newHelmClientResolveRevision`,
   `reposerver/repository/repository.go:3029-3066`), on HTTP(S) and
   schemeless OCI Helm repositories. A revision that parses as semver, also
-  `1.2` or `v1.2.3`, stays as written. helm then takes the index entry with
-  that version, or else the highest one that matches it as a constraint,
-  so `1.2` fetches the highest `1.2.x` on an HTTP repository. Any other
+  `1.2` or `v1.2.3`, stays as written. On an HTTP repository, helm then
+  takes the index entry with that version, or else the highest one that
+  matches it as a constraint, so `1.2` fetches the highest `1.2.x`. On an
+  OCI repository, helm pulls the tag as written. Any other
   revision, such as `1.2.*`, `>=1.0.0 <2.0.0`, or `*`, is a constraint:
   drydock takes the highest index version or registry tag that matches it
   (`versions.MaxVersion`), with prereleases only for a constraint that
@@ -487,18 +488,31 @@ Important boundaries:
   event revision, and `ARGOCD_APP_REVISION` hold the resolved version. A
   constraint that matches nothing fails with the repo-server's `invalid
   revision: version matching constraint not found in <n> tags`.
-- A version range is resolved on every online run, so it picks up a new
-  release. Each online resolve records the version list of the chart in
-  the chart cache, and an offline run resolves the range from that record.
-  Without a record, the offline run fails with `offline cache miss`. A
-  render that resolved a range is never stored in the persistent render
-  cache, because the next run can resolve another version.
+- drydock treats every revision that is not an exact full version
+  (`1.2.3`, `v1.2.3`, `1.2.3-rc.1`) as a range: a constraint, and on an
+  HTTP repository also a partial version such as `1.2` or `1`. It
+  resolves such a revision on every online run, so it picks up a new
+  release, and it caches the chart under the version that helm takes.
+  `ARGOCD_APP_REVISION` stays as written for a revision that parses as
+  semver, such as `1.2`, as in the repo-server. Each online resolve
+  records the version list of the chart, with its fetch time, in the chart
+  cache, and an offline run resolves the range from that record. Without a
+  record, the offline run fails with `offline cache miss`. A render that
+  resolved a range is never stored in the persistent render cache,
+  because the next run can resolve another version.
+- With `--chart-cache-max-age`, an offline resolve from a version list
+  older than the max age, or of unknown age, is still used, as an expired
+  chart is. It gives the `source.chart-cache-stale` warning. An age prune
+  (`drydock cache prune --older-than`) of the chart cache also removes the
+  version lists that are older than the cutoff.
 - Recorded divergence from strict Argo CD v3.6.1: on a schemeless OCI
   repository, drydock lists the tags with helm's registry client, which
   keeps only strict semver tags. The repo-server lists every tag, so a
   constraint can also match a tag such as `v1.2.0` there.
 - Kustomize `helmCharts` versions are not resolved as ranges. They must
-  name an index version as written.
+  name an index version as written. A chart cache entry that a range or a
+  partial version filled is named by the full version it resolved to, so a
+  Kustomize `helmCharts` version such as `1.2` never reads it.
 - `$ref` value-file sources are Git-only, matching upstream: an OCI `$ref`
   source fails with a clear error.
 - Private OCI registries are supported for OCI artifact sources through

@@ -1117,3 +1117,24 @@ metadata:
 		t.Fatalf("remote git credentials = %#v, want %#v", got, remoteGitCredentials)
 	}
 }
+
+// TestChartOnlySourceIdentityNeedsAnExactVersion pins that only an exact
+// full chart version gives a chart-only source a persistent render cache
+// identity. A range and a partial version such as 1.2 resolve against the
+// repository on each run, so they re-render.
+func TestChartOnlySourceIdentityNeedsAnExactVersion(t *testing.T) {
+	for revision, eligible := range map[string]bool{
+		"1.2.3":        true,
+		"v1.2.3":       true,
+		"1.2.3-rc.1":   true,
+		"1.2":          false,
+		"1":            false,
+		"1.2.*":        false,
+		">=1.0.0 <2.0": false,
+	} {
+		identity := chartOnlySourceIdentity(render.ResolvedSource{RepoURL: "https://charts.example.test", Chart: "demo", TargetRevision: revision})
+		if got := identity != (SourceIdentity{}); got != eligible {
+			t.Fatalf("chartOnlySourceIdentity(%q) eligible = %v, want %v", revision, got, eligible)
+		}
+	}
+}

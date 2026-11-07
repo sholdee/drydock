@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/argoproj/argo-cd/v3/util/versions"
+
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -75,8 +77,9 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 	// The repo-server renders with the version that a range resolved to
 	// as ARGOCD_APP_REVISION (newHelmClientResolveRevision and newEnv,
 	// reposerver/repository/repository.go:3029-3066 and 1864-1878 at
-	// v3.6.1). An exact version stays as written.
-	if resolved := strings.TrimSpace(acquired.Version); resolved != "" && resolved != strings.TrimSpace(source.TargetRevision) {
+	// v3.6.1). A revision that parses as semver, also a partial one such
+	// as 1.2, stays as written.
+	if resolved := strings.TrimSpace(acquired.Version); resolved != "" && !versions.IsVersion(strings.TrimSpace(source.TargetRevision)) {
 		opts.ArgoEnv = withArgoAppRevision(opts.ArgoEnv, resolved)
 	}
 
