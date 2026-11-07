@@ -169,9 +169,7 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 	kustomization.Resources = resources
-	// The resources before the output of helmCharts and generators:, and
-	// the steps of the generators, for checkKustomizeGeneratorOrder.
-	earlierResources := append([]string(nil), resources...)
+	// The steps of the generators, for checkKustomizeGeneratorOrder.
 	generationSteps := kustomizeFieldGeneratorSteps(&kustomization)
 
 	if len(kustomization.HelmCharts) != 0 {
@@ -216,7 +214,7 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 	generationSteps = append(generationSteps, entrySteps...)
-	if err := checkKustomizeGeneratorOrder(dir, graphIndex, earlierResources, generationSteps); err != nil {
+	if err := checkKustomizeGeneratorOrder(generationSteps); err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 	if err := w.prepareKustomizeTransformers(ctx, dir, boundaryRoot, graphIndex, &kustomization); err != nil {

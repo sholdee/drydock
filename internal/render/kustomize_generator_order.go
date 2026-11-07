@@ -6,11 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
-	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/types"
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/kustomize/kyaml/kio"
 	"sigs.k8s.io/kustomize/kyaml/resid"
 )
@@ -66,30 +63,20 @@ func kustomizeFieldGeneratorSteps(kustomization *types.Kustomization) []kustomiz
 // step adds, and drydock moved that later output to the resources, where
 // krusty would find it.
 //
-// kustomize fails such a merge with "does not exist; cannot merge or
-// replace", because the ID does not exist yet. When the resources already
-// hold the ID, the merge works, and the later output fails with "exists;
-// can not use behavior". To tell the two cases, drydock builds the
-// resources of the kustomization on their own, only for such a merge, so
-// other builds do not pay for it. If that build fails, the real build
-// reports the error.
-//
-// The build of the resources is a finished build: it gives the IDs after
-// name suffixes and without the configurations marked local-config, where
-// kustomize compares every earlier ID too. Both build fail then, but the
-// text can differ.
-func checkKustomizeGeneratorOrder(dir string, graphIndex int, resources []string, steps []kustomizeGenerationStep) error {
+// kustomize then fails in one of two ways. When the resources of the
+// kustomization do not hold the ID, the merge fails with "does not exist;
+// cannot merge or replace". When they hold it, the merge works, and the
+// later output fails with "exists; can not use behavior". Both fail the
+// build. To tell them apart, drydock would have to build the resources on
+// their own before the build, which reads them outside the main build and
+// its checks. So drydock gives the first text, unless an earlier generator
+// step of the kustomization made the ID, which it knows without a build.
+// The other text is a recorded divergence.
+func checkKustomizeGeneratorOrder(steps []kustomizeGenerationStep) error {
 	if !kustomizeMergeNamesLaterMovedOutput(steps) {
 		return nil
 	}
 	var existing []resid.ResId
-	if len(resources) != 0 {
-		ids, ok := kustomizeAccumulatedResourceIDs(dir, graphIndex, resources)
-		if !ok {
-			return nil
-		}
-		existing = ids
-	}
 	for _, step := range steps {
 		if step.merge != nil {
 			if !slices.ContainsFunc(existing, step.merge.Equals) {
@@ -139,33 +126,6 @@ func kustomizeResourceFileIDs(dir string, files []string) ([]resid.ResId, bool) 
 		for _, node := range nodes {
 			out = append(out, resid.FromRNode(node))
 		}
-	}
-	return out, true
-}
-
-// kustomizeAccumulatedResourceIDs builds the resources of a kustomization
-// on their own and returns their IDs.
-func kustomizeAccumulatedResourceIDs(dir string, graphIndex int, resources []string) ([]resid.ResId, bool) {
-	probeRel := filepath.Join(".drydock", "probes", fmt.Sprintf("%03d", graphIndex))
-	probeDir := filepath.Join(dir, probeRel)
-	defer func() { _ = os.RemoveAll(probeDir) }()
-	var content strings.Builder
-	content.WriteString("resources:\n")
-	for _, resource := range resources {
-		fmt.Fprintf(&content, "  - %q\n", filepath.ToSlash(filepath.Join("..", "..", "..", resource)))
-	}
-	if err := writeGeneratedKustomizeWorkspaceFile(dir, filepath.ToSlash(filepath.Join(probeRel, "kustomization.yaml")), []byte(content.String())); err != nil {
-		return nil, false
-	}
-	options := krusty.MakeDefaultOptions()
-	options.LoadRestrictions = types.LoadRestrictionsNone
-	resMap, err := krusty.MakeKustomizer(options).Run(filesys.MakeFsOnDisk(), probeDir)
-	if err != nil {
-		return nil, false
-	}
-	out := make([]resid.ResId, 0, resMap.Size())
-	for _, resource := range resMap.Resources() {
-		out = append(out, resource.CurId())
 	}
 	return out, true
 }
