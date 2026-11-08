@@ -204,14 +204,21 @@ interpolation execution errors are appset-scoped warning diagnostics
 (`appset.template-render-failed`), and the failing ApplicationSet contributes
 zero generated Applications, matching the Argo CD controller's
 `ErrorOccurred` condition scoping. Generator template failures are marked with
-`generatorTemplateError`; other generator evaluation errors (IO, acquisition,
-invalid generator specs) stay fatal. The "template render failed" message
-substring is the stable-code dispatch key in `internal/diagnostic`; keep the
-message and dispatch case in sync.
+`generatorTemplateError`. Generator errors that Argo CD v3.6.1 returns from
+`generators.Transform` (list decode, matrix/merge shape and merge keys, empty
+or double children, selector parse, provider filter regexps) are marked with
+`generatorParamsError` and give the appset-scoped `appset.generator-failed`
+warning. IO and acquisition errors stay fatal. The "template render failed"
+and "ApplicationSet generator failed" message substrings are the stable-code
+dispatch keys in `internal/diagnostic`. Keep each message and its dispatch
+case in sync.
 
 After rendering, generated Applications go through Argo CD's name validation
 (empty names first, then duplicates; every Application sharing a duplicated
-name is dropped) as `appset.application-validation-failed` warnings, and
+name is dropped) as `appset.application-validation-failed` warnings. After
+discovery, `pruneMissingProjectApplications` in `internal/app` drops a
+generated Application whose AppProject the repository does not declare, with
+the same code, and
 `spec.strategy` RollingSync handling follows
 `applicationsetcontroller.enable.progressive.syncs` (`appset.Options.ProgressiveSyncs`).
 Each discovery run uses one value, read before the first ApplicationSet

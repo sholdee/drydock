@@ -257,14 +257,36 @@ Supported:
   such as Git `path.segments` or pull-request `labels` is one key whose value
   is the Go print form, such as `[apps alpha]`. The render parity smoke checks a
   selector on `path.segments`.
+- Argo CD v3.6.1 selectors on matrix children. Argo CD filters the params of
+  a matrix child with the selector of that child as written. It does not
+  fill in the params of the first child
+  (`generator_spec_processor.go:34` and `:89`). So a child selector such as
+  `env: '{{.env}}'` matches nothing. The selectors of generators inside a
+  merge child do get the params, because that child runs them from the
+  filled-in spec. The render parity smoke checks both cases.
 - Nested matrix/merge combinations where the Argo CD v3 nested JSON API
   permits them.
+- One `spec.generators` entry that sets more than one generator, such as
+  `list` and `matrix` together. Argo CD v3.6.1 runs each one in the field
+  order of `ApplicationSetGenerator` and keeps all their Applications
+  (`GetRelevantGenerators`). Earlier drydock releases ran only the first
+  one. The render parity smoke checks this case.
 - Explicit local YAML/JSON fixtures for cluster, clusterDecisionResource, SCM
   provider, pull-request, and plugin ApplicationSet generators. Cluster
   generator params omit the annotations Argo CD v3.6.1 reserves
   (`argocd.argoproj.io/refresh`, `refresh-timestamp`, `hydrate`,
   `hydrate-timestamp`, `tracking-id`, `installation-id`, and
-  `kubectl.kubernetes.io/last-applied-configuration`). The Go-template
+  `kubectl.kubernetes.io/last-applied-configuration`). The pull-request
+  `branch_slug` and `target_branch_slug` params use the slug rules of the
+  Argo CD v3.6.1 pull request generator: `github.com/gosimple/slug` with a
+  50-character limit that cuts after the last whole word, and `_` replaced
+  by `-`. Accented letters become plain letters, so `fix/café-crème` gives
+  `fix-cafe-creme`. Earlier drydock releases cut at exactly 50 characters
+  and replaced accented letters with `-`. Argo CD keeps the smart-truncation
+  option of the slug library in a variable that the `slugify` template
+  function also sets. drydock uses the library default. So a controller
+  whose templates call `slugify` with smart truncation off can give a
+  different slug. The Go-template
   `.metadata.annotations` key exists only when the fixture cluster has
   annotations; `.metadata.labels` is always present, as it is for Argo CD's
   secret-type-labelled cluster Secrets. The render parity smoke checks the
@@ -313,7 +335,14 @@ Supported:
   ApplicationSet, and generates no Applications for it. The
   `clusterDecisionResource` panic above has the same outcome.
 - Fail-closed fixture diagnostics for invalid provider fixtures, no provider
-  matches, and unsupported provider filters.
+  matches, and unsupported provider filters. A provider filter that Argo CD
+  itself rejects fails the ApplicationSet instead (see the generator error
+  rule below): a pull request or SCM provider filter regexp that does not
+  compile, a cluster generator selector that `metav1.LabelSelectorAsSelector`
+  rejects, a `clusterDecisionResource` generator that sets both or neither of
+  `name` and `labelSelector`, and a `clusterDecisionResource` generator for
+  which the fixture has decision resources but none that it names or
+  selects.
 - Warning diagnostics when a discovered ApplicationSet generates zero
   Applications; `--strict` promotes those diagnostics to errors.
 - Argo CD Git and OCI files param decoding for empty content: empty,
@@ -327,6 +356,31 @@ Supported:
   warnings to errors, matching the Argo CD controller's `ErrorOccurred`
   condition behavior. Other generator evaluation errors, such as file IO and
   source acquisition, remain fatal.
+- Argo CD v3.6.1 generator errors that are not template errors. Argo CD
+  reports them as an `ErrorOccurred` condition with reason
+  `ApplicationParamsGenerationError` and generates no Applications for the
+  whole ApplicationSet, also from its other generators. drydock warns
+  `appset.generator-failed` with the Argo CD message and generates no
+  Applications for that ApplicationSet. `--strict` promotes the warning to
+  an error. The errors are these:
+  - A list element that does not decode, a non-string value without
+    `goTemplate`, or an `elementsYaml` that is not a YAML list of mappings
+    (`applicationset/generators/list.go:44-86`). Earlier drydock releases
+    warned and kept the other Applications for a bad `elementsYaml`.
+  - A matrix that does not have exactly two children, or a merge with fewer
+    than two children, no merge keys, or a repeated merge key value.
+  - A matrix or merge child that names no generator, such as `{}`, or a
+    matrix nested one level too deep. Argo CD fails with `child generator
+    generated no parameters` (`matrix.go:129-131`, `merge.go:169-171`).
+    Earlier drydock releases called this an unsupported generator and kept
+    the Applications of the other generators.
+  - A matrix or merge child that names more than one generator.
+  - A generator selector that does not parse
+    (`generator_spec_processor.go:34-37`).
+  - A fasttemplate matrix whose two children set one key to two values.
+
+  Earlier drydock releases stopped the whole run for most of these errors.
+  The render parity smoke checks each kind against Argo CD.
 - Argo CD v3.6.1 generated-Application name validation: a generated
   Application with an empty `metadata.name` (including a
   `generateName`-only `templatePatch`) and every generated Application that
@@ -337,13 +391,21 @@ Supported:
   whole drydock Application list with the Argo CD list. The ApplicationSet
   controller then looks up the AppProject of each generated Application. An
   empty `spec.project` names no AppProject, so drydock omits that
-  Application with the same warning, as Argo CD does. drydock keeps a
-  generated Application whose named AppProject is missing from the
-  repository, because that AppProject can exist only in the cluster. It
-  also skips the destination-cluster check of the ApplicationSet
-  controller for generated Applications, because the clusters can exist
-  only in the cluster. AppProject validation reports both later, as for any
-  Application.
+  Application with the same warning, as Argo CD does. When the named
+  AppProject does not exist, Argo CD does not create the generated
+  Application either, and it keeps the other Applications of the
+  ApplicationSet (`applicationset_controller.go:627-633`). drydock omits
+  that Application with the same warning when the repository declares
+  AppProjects but not the named one and the name is not `default`. This is
+  the rule of the `project.missing` warning. If the repository declares no
+  AppProject, the named one can exist only in the cluster, so drydock keeps
+  the Application. drydock applies this rule after discovery ends, so the
+  AppProjects that rendered Applications make count too. Earlier drydock
+  releases kept every such Application. The render parity smoke checks
+  this case. drydock skips the destination-cluster check of the
+  ApplicationSet controller for generated Applications, because the
+  clusters can exist only in the cluster. AppProject validation reports
+  that later, as for any Application.
 - Argo CD v3.6.1 RollingSync handling for `spec.strategy.type: RollingSync`,
   gated on `applicationsetcontroller.enable.progressive.syncs` in
   `argocd-cmd-params-cm` (off by default; only `true` in any letter case
@@ -2600,7 +2662,7 @@ implemented or documented as runtime boundaries.
 | Rendered AppProject discovery | `applyExplicitKustomizeDiscovery`, `discoverRenderedFleet`, bootstrap discovery | Existing explicit-rendered and fleet discovery tests | Phase 2 fixture expansion |
 | Duplicate or conflicting projects | `mergeProjects`, `resolveDiscoveryConflict`, same-scan `projectIndex` last-wins | Existing rendered precedence coverage | Discovery-focused follow-up |
 | Implicit default project | `effectiveProject`, `implicitDefaultProject` | `TestValidateApplicationsAllowsImplicitDefaultProject`, `TestValidateApplicationsImplicitDefaultProjectPermitsAnySourceNamespace`, `TestValidateApplicationsDefersUnresolvedProjectWithoutLocalProjects`, `TestValidateApplicationsCurrentBehaviorAllowsImplicitDefaultProjectWhenOtherLocalProjectsExist` | No follow-up |
-| Missing non-default project | `ValidateApplications`, `projectIndex`, `applicationProject` | `TestValidateApplicationsCurrentBehaviorReportsMissingNonDefaultProject` | No follow-up |
+| Missing non-default project | `ValidateApplications`, `projectIndex`, `applicationProject`; `pruneMissingProjectApplications` omits generated Applications | `TestValidateApplicationsCurrentBehaviorReportsMissingNonDefaultProject`, `TestListApplicationsDropsGeneratedApplicationWithMissingProject` | No follow-up |
 | Source repository matching | `validateSources`, Argo `IsSourcePermitted` | Existing source policy tests, source parity fixtures, `TestValidateApplicationsCurrentBehaviorReportsDeniedMultiSourceRepository` | Phase 3 remediation for any future parity gaps |
 | Destination matching | `validateDestination`, `destinationCluster`, `offlineDestinationPermitted`, Argo `IsDestinationPermitted` | Existing destination and project-scoped cluster tests, destination parity fixtures fed Argo CD-resolved clusters, `TestOfflineDestinationPermittedIsSoundAgainstArgoCD` | Unresolved destinations defer only when the unknown name, server, or project scoping decides the outcome |
 | Cluster Secret metadata | `clusterSecretSettings`, `projectScopedClusters`, `projectScopedClusterDestinations` | Cluster parser tests, project-scoped destination tests, `TestValidateApplicationsAddsProjectScopedClusterDestinations`, metadata integration fixtures | No follow-up |

@@ -37,6 +37,13 @@ decodes to one empty param set, matching Argo CD. If a matched file should
 generate nothing, make its content `[]`. Use `--strict` when the warning
 should fail the run.
 
+An `appset.generator-failed` warning means a generator failed in a way that
+Argo CD v3.6.1 also reports as an `ErrorOccurred` condition. Examples are an
+`elementsYaml` that is not a list of mappings, a matrix child written as `{}`,
+a matrix nested too deep, repeated merge key values, and a selector that
+does not parse. The warning carries the Argo CD message. Fix the generator
+that the message names.
+
 In one-sided diffs, the failing side's zero desired Applications appear as
 additions or deletions, while the live controller would abort reconciliation
 without pruning.
@@ -49,7 +56,10 @@ only `generateName` or renders an empty name) or shared its name with another
 Application from the same ApplicationSet. Argo CD v3.6.1 refuses those
 Applications, and for a duplicated name it refuses every Application with
 that name. Give each generated Application a unique, non-empty
-`metadata.name`.
+`metadata.name`. The same warning with `application references project ...
+which does not exist` means the generated Application names an AppProject
+that the repository does not declare. Argo CD does not create it. Declare the
+AppProject, or fix `spec.project` in the template.
 
 ## Symptom: Discovery Fails Decoding Non-Deployable YAML
 
