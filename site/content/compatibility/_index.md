@@ -157,10 +157,12 @@ drydock checks out submodule content as the Argo CD repo-server does, unless
 `reposerver.enable.git.submodule` in `argocd-cmd-params-cm` is `false`. A
 fetched Git source keeps it in the Git cache. A `--ref` snapshot reads it
 from the repository's `.git/modules` store, the Git cache, or the network.
-When drydock cannot find a submodule of a snapshot, only the sources in
-that submodule fail. A working tree is rendered as it is, and drydock warns
-for a submodule that is not initialized. drydock refuses submodule URLs
-that git and its own Git client read differently, and local paths.
+When drydock cannot find a submodule of a snapshot, it warns once, and the
+sources whose path is in that submodule or holds it fail. A working tree is
+rendered as it is, and drydock warns for a submodule that is not
+initialized. drydock refuses submodule URLs that git and its own Git client
+read differently, local paths, and `http` URLs with a query. No cache entry
+stores a user or password from a URL.
 
 drydock reads `enableLfs` from repository Secrets. It does not run git-lfs
 and does not download Git LFS objects. A `--ref` snapshot reads Git LFS
