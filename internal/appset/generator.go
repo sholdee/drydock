@@ -51,6 +51,11 @@ type Options struct {
 	// reposerver.include.hidden.directories. With it, the Git and OCI
 	// directory generators also see hidden directories.
 	IncludeHiddenDirectories bool `json:"includeHiddenDirectories,omitempty"`
+	// SubmodulesDisabled is the parsed argocd-cmd-params-cm key
+	// applicationsetcontroller.enable.git.submodule turned off. The Git
+	// generator then sees each gitlink as an empty directory, as the
+	// repo-server's checkout holds it without submodule content.
+	SubmodulesDisabled bool `json:"submodulesDisabled,omitempty"`
 	// Worktree, when set, filters the repository of a working-tree run: the
 	// Git generator skips every path it reports. drydock sets it to the
 	// paths that Git ignores and does not track, which no commit can hold.

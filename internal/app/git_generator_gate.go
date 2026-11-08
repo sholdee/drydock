@@ -110,18 +110,23 @@ func (f *lazyWorktreeFilter) Gitlinks() []string {
 // snapshotGitlinks gives the Git generator the gitlinks of a snapshot of
 // a Git ref, which holds committed paths only, so it skips nothing.
 type snapshotGitlinks struct {
-	root  string
-	once  sync.Once
-	links []string
+	root string
+	once sync.Once
+	// links are the gitlinks the snapshot listed when listed is set.
+	links  []string
+	listed bool
 }
 
 func (s *snapshotGitlinks) Skip(string, bool) bool { return false }
 
-// Gitlinks returns the empty directories of the snapshot, which are its
-// gitlinks (gitref.SnapshotGitlinks).
+// Gitlinks returns the gitlinks the snapshot listed. A snapshot that did
+// not list them holds no submodule content, so they are its empty
+// directories (gitref.SnapshotGitlinks).
 func (s *snapshotGitlinks) Gitlinks() []string {
 	s.once.Do(func() {
-		s.links = gitref.SnapshotGitlinks(s.root)
+		if !s.listed {
+			s.links = gitref.SnapshotGitlinks(s.root)
+		}
 	})
 	return s.links
 }

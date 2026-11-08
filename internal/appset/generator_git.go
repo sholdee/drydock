@@ -73,7 +73,7 @@ func gitGeneratorParamSets(ctx generatorContext, git *argoappv1.GitGenerator) ([
 	if len(git.Directories) == 0 && len(git.Files) == 0 {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
-	tree := newGitRepositoryTree(ctx.RepoRoot, ctx.Options.Worktree)
+	tree := newGitGeneratorTree(ctx.RepoRoot, ctx.Options)
 	useGoTemplate := ctx.AppSet.Spec.GoTemplate
 	goTemplateOptions := ctx.AppSet.Spec.GoTemplateOptions
 	// When both are set, directories win and files are ignored
@@ -88,8 +88,10 @@ func gitGeneratorParamSets(ctx generatorContext, git *argoappv1.GitGenerator) ([
 	} else {
 		paramSets, diags, err = gitFileParamSets(ctx, tree, git, useGoTemplate, goTemplateOptions)
 	}
-	if tree.scanned && tree.scanErr == nil && tree.hasSubmoduleConfig() {
-		diags = append(diags, submoduleContentDiagnostic(ctx.ManifestPath))
+	if tree.scanned && tree.scanErr == nil {
+		if empty := tree.emptySubmodules(); len(empty) > 0 {
+			diags = append(diags, submoduleContentDiagnostic(ctx.ManifestPath, empty))
+		}
 	}
 	if err != nil {
 		return nil, diags, true, err
@@ -97,14 +99,22 @@ func gitGeneratorParamSets(ctx generatorContext, git *argoappv1.GitGenerator) ([
 	return paramSets, diags, true, nil
 }
 
-// submoduleContentDiagnostic warns that the repository has submodules. The
-// Argo CD repo-server fetches their content by default
-// (ARGOCD_GIT_MODULES_ENABLED, reposerver.enable.git.submodule), and the
-// Git generator then sees it. drydock does not fetch it: it sees a submodule
-// as the tree holds it, which is an empty directory in a snapshot of a Git
-// ref.
-func submoduleContentDiagnostic(manifestPath string) diagnostic.Diagnostic {
-	return appsetDiagnostic(manifestPath, "the repository has submodules (.gitmodules); Argo CD fetches submodule content by default (ARGOCD_GIT_MODULES_ENABLED) and its Git generator sees it, but drydock does not fetch it and sees each submodule as the local tree holds it")
+// submoduleContentDiagnostic warns about submodules that hold nothing in
+// the tree the Git generator reads, while the Argo CD repo-server checks
+// their content out (applicationsetcontroller.enable.git.submodule, on by
+// default) and its Git generator sees it. A snapshot of a Git ref holds
+// that content, so this happens for a working tree whose submodules are
+// not initialized.
+func submoduleContentDiagnostic(manifestPath string, empty []string) diagnostic.Diagnostic {
+	return appsetDiagnostic(manifestPath, fmt.Sprintf("submodule %s holds nothing in the working tree; Argo CD checks out submodule content (applicationsetcontroller.enable.git.submodule) and its Git generator sees it, so run git submodule update --init --recursive, or diff a Git ref with --ref", strings.Join(quoteAll(empty), ", ")))
+}
+
+func quoteAll(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, strconv.Quote(value))
+	}
+	return out
 }
 
 // gitDirectoryParamSets mirrors generateRepoSourceDirectoryParams: the

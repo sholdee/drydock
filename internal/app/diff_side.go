@@ -604,5 +604,7 @@ func (request DiffRequest) withSideRoots(left, right BuildRequest) (BuildRequest
 	right.rootRevision = request.rightPathRevision
 	left.rootRepo = request.Repo
 	right.rootRepo = request.Repo
+	left.rootSnapshot = request.leftSnapshot
+	right.rootSnapshot = request.rightSnapshot
 	return left, right
 }

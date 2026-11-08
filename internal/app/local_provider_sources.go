@@ -97,10 +97,12 @@ func (p localProvider) acquireGitSource(ctx context.Context, source render.Resol
 		URL:      source.RepoURL,
 		Revision: source.TargetRevision,
 	}, sourcepkg.GitOptions{
-		AllowNetwork: !p.offline,
-		CacheDir:     p.gitCacheDir,
-		Refresh:      p.refreshGit,
-		Credentials:  p.gitCredentials,
+		AllowNetwork:                !p.offline,
+		CacheDir:                    p.gitCacheDir,
+		Refresh:                     p.refreshGit,
+		Credentials:                 p.gitCredentials,
+		Submodules:                  p.gitSubmodules,
+		AllowFileSubmoduleTransport: allowFileSubmoduleTransport,
 	})
 	if err != nil {
 		acquireError := cacheevent.NewAcquisitionError(cacheevent.AcquisitionEventInput{

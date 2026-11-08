@@ -79,6 +79,7 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		chartCredentials:                  request.ChartCredentials,
 		ociChartRepositories:              ociChartRepositoriesFromSettings(settings),
 		gitCacheDir:                       request.GitCacheDir,
+		gitSubmodules:                     config.ParseEnableGitSubmodules(settings.EnableGitSubmodules.Value),
 		refreshGit:                        request.RefreshGit,
 		gitCredentials:                    request.GitCredentials,
 		refreshRemoteResources:            request.RefreshRemoteResources,
@@ -118,6 +119,7 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 	}
 	provider.mappedAppRevisions = &sync.Map{}
 	provider.hydratorSnapshots = &sync.Map{}
+	provider.submodules = newRootSubmodules(root, request)
 	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
 		provider.selfRepoURLKeys = matcher.urlKeys
 		provider.selfRepoRevisions = matcher.revisions

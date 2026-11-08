@@ -25,20 +25,23 @@ type localProvider struct {
 	// Application's instance name (<namespace>_<name> outside it); empty means
 	// the drydock default. It must match the tracking options the render path
 	// uses so override files, ARGOCD_APP_NAME, and tracking metadata agree.
-	controllerNamespace          string
-	sourceResolver               *sourcepkg.Resolver
-	chartAcquirer                chart.Acquirer
-	gitAcquirer                  sourcepkg.GitAcquirer
-	remoteResourceAcquirer       remote.Acquirer
-	pluginRenderer               render.PluginRenderer
-	offline                      bool
-	refreshCharts                bool
-	chartCacheMaxAge             time.Duration
-	chartCacheDir                string
-	chartForbiddenRoots          []string
-	chartCredentials             chart.ChartCredentials
-	ociChartRepositories         map[string]bool
-	gitCacheDir                  string
+	controllerNamespace    string
+	sourceResolver         *sourcepkg.Resolver
+	chartAcquirer          chart.Acquirer
+	gitAcquirer            sourcepkg.GitAcquirer
+	remoteResourceAcquirer remote.Acquirer
+	pluginRenderer         render.PluginRenderer
+	offline                bool
+	refreshCharts          bool
+	chartCacheMaxAge       time.Duration
+	chartCacheDir          string
+	chartForbiddenRoots    []string
+	chartCredentials       chart.ChartCredentials
+	ociChartRepositories   map[string]bool
+	gitCacheDir            string
+	// gitSubmodules is argocd-cmd-params-cm reposerver.enable.git.submodule:
+	// a fetched Git source holds the content of its submodules.
+	gitSubmodules                bool
 	refreshGit                   bool
 	gitCredentials               sourcepkg.GitCredentials
 	refreshRemoteResources       bool
@@ -114,6 +117,9 @@ type localProvider struct {
 	// Git repository for a source hydrator sync source, keyed by the
 	// absolute path and the branch (hydratorSnapshot).
 	hydratorSnapshots *sync.Map
+	// submodules describes the submodules of the tree at repoRoot, for the
+	// warnings of submoduleRenderDiagnostics.
+	submodules *rootSubmodules
 	// rootDirtyPaths is the sorted complete dirty-path enumeration for the
 	// repo root when rootInputMode is dirty; empty otherwise. Per-path-set
 	// keying uses it to keep committed keys for untouched applications. An
@@ -183,6 +189,7 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		}
 	}
 	source.RepoRoot = sourceRoot
+	nearMissDiags = append(nearMissDiags, p.submoduleRenderDiagnostics(ctx, source)...)
 	opts.ChartAcquirer = p.acquisition.ChartAcquirer(p.chartAcquirer)
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline

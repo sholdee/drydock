@@ -32,7 +32,7 @@ func snapshotSubmodules(ctx context.Context, request Request, tree *object.Tree,
 	options := request.Submodules
 	remoteURL := options.RemoteURL
 	if strings.TrimSpace(remoteURL) == "" {
-		remoteURL = defaultRemoteURL(request.Repo)
+		remoteURL = DefaultRemoteURL(request.Repo)
 	}
 	return gittree.CheckoutSubmodules(ctx, gittree.SubmoduleRequest{
 		Root:                    root,
@@ -44,11 +44,11 @@ func snapshotSubmodules(ctx context.Context, request Request, tree *object.Tree,
 	})
 }
 
-// defaultRemoteURL returns the URL of the remote origin of the repository
+// DefaultRemoteURL returns the URL of the remote origin of the repository
 // at repoPath, or of its only remote, or "". The Argo CD repo-server
 // resolves relative submodule URLs against origin, which holds the
 // repoURL of the Application.
-func defaultRemoteURL(repoPath string) string {
+func DefaultRemoteURL(repoPath string) string {
 	repo, err := git.PlainOpenWithOptions(repoPath, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
 	if err != nil {
 		return ""

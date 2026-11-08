@@ -34,6 +34,12 @@ type Request struct {
 	// URL, which helm fetches whatever its name. The cache key does not
 	// change.
 	AnyFileType bool
+	// Submodules checks out the submodules of a Git repository, as
+	// kustomize does unless the ref says ?submodules=false
+	// (sigs.k8s.io/kustomize/api internal/git/cloner.go). The cache key
+	// does not change: the entry's worktree holds the content of the last
+	// request.
+	Submodules bool
 }
 
 type Credentials struct {
@@ -59,6 +65,13 @@ type Options struct {
 	ForbiddenRoots []string
 	Credentials    Credentials
 	GitCredentials GitCredentials
+	// LockEntry, when set, locks the cache entry of a Git request for the
+	// time drydock reads or writes it, and returns the unlock function.
+	// Submodule fetches lock their own entries with it.
+	LockEntry func(request Request, opts Options) (unlock func())
+	// AllowFileSubmoduleTransport lets a submodule URL be a local path or a
+	// file URL, which git refuses for submodules. Only tests set it.
+	AllowFileSubmoduleTransport bool
 }
 
 type Result struct {

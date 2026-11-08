@@ -34,6 +34,8 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeEnableProgressiveSyncs(&merged, candidate)...)
 		diags = append(diags, mergeBoolCommandParameter(&merged.EnableNewGitFileGlobbing, candidate.EnableNewGitFileGlobbing, enableNewGitFileGlobbingKey)...)
 		diags = append(diags, mergeBoolCommandParameter(&merged.IncludeHiddenDirectories, candidate.IncludeHiddenDirectories, includeHiddenDirectoriesKey)...)
+		diags = append(diags, mergeBoolCommandParameterDefault(&merged.EnableGitSubmodules, candidate.EnableGitSubmodules, enableGitSubmoduleKey, true)...)
+		diags = append(diags, mergeBoolCommandParameterDefault(&merged.AppSetEnableGitSubmodules, candidate.AppSetEnableGitSubmodules, appSetEnableGitSubmoduleKey, true)...)
 		diags = append(diags, mergeIgnoreNormalizerJQTimeout(&merged, candidate)...)
 		merged.CommandParametersFound = merged.CommandParametersFound || candidate.CommandParametersFound
 		merged.ArgoCDConfigMapFound = merged.ArgoCDConfigMapFound || candidate.ArgoCDConfigMapFound
@@ -152,6 +154,14 @@ func ParseIncludeHiddenDirectories(value string) bool {
 	return parseBoolFromEnv(value, false)
 }
 
+// ParseEnableGitSubmodules reads reposerver.enable.git.submodule or
+// applicationsetcontroller.enable.git.submodule as the Argo CD v3.6.1
+// repo-server and ApplicationSet controller read ARGOCD_GIT_MODULES_ENABLED,
+// through env.ParseBoolFromEnv with the default true.
+func ParseEnableGitSubmodules(value string) bool {
+	return parseBoolFromEnv(value, true)
+}
+
 // parseBoolFromEnv copies env.ParseBoolFromEnv (Argo CD v3.6.1
 // util/env/env.go:184-193) for a value read from argocd-cmd-params-cm,
 // which Kubernetes passes to the process as an environment variable
@@ -204,10 +214,17 @@ func mergeEnableProgressiveSyncs(merged *ArgoSettings, candidate ArgoSettings) [
 // false. Spellings that the component reads the same, such as "TRUE" and
 // "true", do not conflict.
 func mergeBoolCommandParameter(merged *Value[string], candidate Value[string], key string) []diagnostic.Diagnostic {
+	return mergeBoolCommandParameterDefault(merged, candidate, key, false)
+}
+
+// mergeBoolCommandParameterDefault merges a boolean command parameter
+// whose Argo CD default is defaultValue: two spellings that parse the same
+// do not conflict.
+func mergeBoolCommandParameterDefault(merged *Value[string], candidate Value[string], key string, defaultValue bool) []diagnostic.Diagnostic {
 	if !hasProvenance(candidate) {
 		return nil
 	}
-	if hasProvenance(*merged) && parseBoolFromEnv(merged.Value, false) != parseBoolFromEnv(candidate.Value, false) {
+	if hasProvenance(*merged) && parseBoolFromEnv(merged.Value, defaultValue) != parseBoolFromEnv(candidate.Value, defaultValue) {
 		return []diagnostic.Diagnostic{conflictDiagnostic(
 			fmt.Sprintf("conflicting %s values %q and %q", key, merged.Value, candidate.Value),
 			candidate.Provenance,
@@ -511,6 +528,7 @@ func sameRepositorySettings(left, right RepositorySettings) bool {
 		left.Type == right.Type &&
 		left.URL == right.URL &&
 		left.EnableOCI == right.EnableOCI &&
+		left.EnableLFS == right.EnableLFS &&
 		left.Project == right.Project
 }
 

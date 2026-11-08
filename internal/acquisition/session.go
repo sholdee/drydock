@@ -306,9 +306,14 @@ func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source
 	}
 	unlock := acquirer.locks.lock(key)
 	defer unlock()
+	// Submodule fetches lock their own cache entries the same way.
+	opts.LockEntry = acquirer.lockEntry
+	// The worktree of an entry holds submodule content or not, so the
+	// session memo keeps the two apart.
+	memoKey := gitSnapshotMemoKey(key, opts)
 
 	if acquirer.snapshot {
-		if result, ok := acquirer.snapshotCache.git(key); ok {
+		if result, ok := acquirer.snapshotCache.git(memoKey); ok {
 			return result, nil
 		}
 	}
@@ -326,8 +331,27 @@ func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source
 		return source.GitResult{}, err
 	}
 	result.Path = snapshot
-	acquirer.snapshotCache.storeGit(key, result)
+	acquirer.snapshotCache.storeGit(memoKey, result)
 	return result, nil
+}
+
+// lockEntry locks the cache entry of a Git request with the locks of the
+// session. A request whose key cannot be computed is not locked.
+func (acquirer cacheSafeGitAcquirer) lockEntry(request source.GitRequest, opts source.GitOptions) func() {
+	key, err := gitCacheLockKey(request, opts)
+	if err != nil {
+		return func() {}
+	}
+	return acquirer.locks.lock(key)
+}
+
+// gitSnapshotMemoKey is the session memo key of a Git request whose cache
+// entry has the lock key key.
+func gitSnapshotMemoKey(key string, opts source.GitOptions) string {
+	if !opts.Submodules {
+		return key
+	}
+	return key + "\x00submodules"
 }
 
 type cacheSafeChartAcquirer struct {
@@ -503,6 +527,8 @@ func (acquirer cacheSafeRemoteAcquirer) Acquire(ctx context.Context, request rem
 		return acquirer.delegate.Acquire(ctx, request, opts)
 	}
 	unlock := acquirer.locks.lock(key)
+	// Submodule fetches lock their own cache entries the same way.
+	opts.LockEntry = acquirer.lockEntry
 
 	result, err := acquirer.delegate.Acquire(ctx, request, opts)
 	if err != nil {
@@ -532,6 +558,16 @@ func (acquirer cacheSafeRemoteAcquirer) Acquire(ctx context.Context, request rem
 	}
 	result.Path = snapshot
 	return result, nil
+}
+
+// lockEntry locks the cache entry of a remote request with the locks of
+// the session. A request whose key cannot be computed is not locked.
+func (acquirer cacheSafeRemoteAcquirer) lockEntry(request remote.Request, opts remote.Options) func() {
+	key, err := remoteCacheLockKey(request, opts)
+	if err != nil {
+		return func() {}
+	}
+	return acquirer.locks.lock(key)
 }
 
 func gitCacheLockKey(request source.GitRequest, opts source.GitOptions) (string, error) {

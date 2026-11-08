@@ -545,11 +545,16 @@ func repositorySecretSettings(path string, doc repositorySecretDocument) (ArgoSe
 	if diag != nil {
 		diags = append(diags, *diag)
 	}
+	enableLFS, diag := secretBoolField(doc.StringData, doc.Data, "enableLfs", path)
+	if diag != nil {
+		diags = append(diags, *diag)
+	}
 	settings.HelmRepositories[url] = RepositorySettings{
 		Name:       secretStringField(doc.StringData, doc.Data, "name"),
 		Type:       secretStringField(doc.StringData, doc.Data, "type"),
 		URL:        url,
 		EnableOCI:  enableOCI,
+		EnableLFS:  enableLFS,
 		Project:    secretStringField(doc.StringData, doc.Data, "project"),
 		Provenance: diagnostic.Provenance{Path: path, Pointer: secretFieldPointer(doc.StringData, "url")},
 	}

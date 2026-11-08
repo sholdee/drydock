@@ -51,6 +51,22 @@ const enableNewGitFileGlobbingKey = "applicationsetcontroller.enable.new.git.fil
 // hidden directories (reposerver/repository/utils.go:90-121).
 const includeHiddenDirectoriesKey = "reposerver.include.hidden.directories"
 
+// enableGitSubmoduleKey sets the repo-server's ARGOCD_GIT_MODULES_ENABLED
+// (Argo CD v3.6.1 cmd/argocd-repo-server/commands/argocd_repo_server.go:50
+// and manifests/base/repo-server/argocd-repo-server-deployment.yaml:268-272).
+// It decides whether the repo-server's checkout of a Git source holds the
+// content of its submodules (util/git/client.go:812-818).
+const enableGitSubmoduleKey = "reposerver.enable.git.submodule"
+
+// appSetEnableGitSubmoduleKey sets the ApplicationSet controller's
+// ARGOCD_GIT_MODULES_ENABLED (Argo CD v3.6.1
+// cmd/argocd-applicationset-controller/commands/applicationset_controller.go:55
+// and manifests/base/applicationset-controller/argocd-applicationset-controller-deployment.yaml:148-152).
+// The controller passes it to the repo-server with each Git generator
+// request (applicationset/services/repo_service.go:85 and 109), so it
+// decides whether the Git generator sees submodule content.
+const appSetEnableGitSubmoduleKey = "applicationsetcontroller.enable.git.submodule"
+
 // ignoreNormalizerJQTimeoutKey sets the application controller flag
 // --ignore-normalizer-jq-execution-timeout-seconds through the environment
 // variable ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT (Argo CD v3.6.1
@@ -233,8 +249,11 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 //     resource.ParseQuantity, which rejects spaces around it;
 //   - reposerver.allow.oob.symlinks,
 //     applicationsetcontroller.enable.progressive.syncs,
-//     applicationsetcontroller.enable.new.git.file.globbing, and
-//     reposerver.include.hidden.directories with env.ParseBoolFromEnv,
+//     applicationsetcontroller.enable.new.git.file.globbing,
+//     reposerver.include.hidden.directories,
+//     reposerver.enable.git.submodule, and
+//     applicationsetcontroller.enable.git.submodule with
+//     env.ParseBoolFromEnv,
 //     which compares the raw value;
 //   - controller.ignore.normalizer.jq.timeout with env.ParseDurationFromEnv;
 //   - application.namespaces and applicationsetcontroller.namespaces with
@@ -251,6 +270,10 @@ func applyCommandParameterValue(settings *ArgoSettings, key string, value Value[
 		settings.EnableNewGitFileGlobbing = value
 	case includeHiddenDirectoriesKey:
 		settings.IncludeHiddenDirectories = value
+	case enableGitSubmoduleKey:
+		settings.EnableGitSubmodules = value
+	case appSetEnableGitSubmoduleKey:
+		settings.AppSetEnableGitSubmodules = value
 	case ignoreNormalizerJQTimeoutKey:
 		settings.IgnoreNormalizerJQTimeout = value
 	case applicationNamespacesKey:
@@ -286,7 +309,7 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			valueMode:      commandParameterSanitizedValue,
 			warnRuntime:    true,
 		}
-	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey, enableProgressiveSyncsKey, enableNewGitFileGlobbingKey, includeHiddenDirectoriesKey, applicationNamespacesKey, applicationSetNamespacesKey:
+	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey, enableProgressiveSyncsKey, enableNewGitFileGlobbingKey, includeHiddenDirectoriesKey, enableGitSubmoduleKey, appSetEnableGitSubmoduleKey, applicationNamespacesKey, applicationSetNamespacesKey:
 		return commandParameterClassification{
 			classification: CommandParameterRendered,
 			valueMode:      commandParameterSanitizedValue,
@@ -297,7 +320,6 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			valueMode:      commandParameterSanitizedValue,
 		}
 	case "controller.diff.server.side",
-		"reposerver.enable.git.submodule",
 		"applicationsetcontroller.enable.scm.providers",
 		"applicationsetcontroller.allowed.scm.providers",
 		"applicationsetcontroller.enable.tokenref.strict.mode":

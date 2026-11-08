@@ -14,10 +14,14 @@ type Value[T comparable] struct {
 }
 
 type RepositorySettings struct {
-	Name       string     `json:"name,omitempty" yaml:"name,omitempty"`
-	Type       string     `json:"type,omitempty" yaml:"type,omitempty"`
-	URL        string     `json:"url,omitempty" yaml:"url,omitempty"`
-	EnableOCI  bool       `json:"enableOCI,omitempty" yaml:"enableOCI,omitempty"`
+	Name      string `json:"name,omitempty" yaml:"name,omitempty"`
+	Type      string `json:"type,omitempty" yaml:"type,omitempty"`
+	URL       string `json:"url,omitempty" yaml:"url,omitempty"`
+	EnableOCI bool   `json:"enableOCI,omitempty" yaml:"enableOCI,omitempty"`
+	// EnableLFS is the enableLfs field of a repository Secret. The Argo CD
+	// repo-server then replaces Git LFS pointer files with their content
+	// in its checkout (util/git/client.go:799-811).
+	EnableLFS  bool       `json:"enableLfs,omitempty" yaml:"enableLfs,omitempty"`
 	Project    string     `json:"project,omitempty" yaml:"project,omitempty"`
 	Provenance Provenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
@@ -238,6 +242,17 @@ type ArgoSettings struct {
 	// decides whether the Git and OCI directory generators see hidden
 	// directories.
 	IncludeHiddenDirectories Value[string] `json:"includeHiddenDirectories,omitempty" yaml:"includeHiddenDirectories,omitempty"`
+	// EnableGitSubmodules is the argocd-cmd-params-cm key
+	// reposerver.enable.git.submodule, as written. The repo-server reads
+	// "true" or "false" in any case; any other value means true. It
+	// decides whether a rendered Git source holds the content of its
+	// submodules. See ParseEnableGitSubmodules.
+	EnableGitSubmodules Value[string] `json:"enableGitSubmodules,omitempty" yaml:"enableGitSubmodules,omitempty"`
+	// AppSetEnableGitSubmodules is the argocd-cmd-params-cm key
+	// applicationsetcontroller.enable.git.submodule, as written, read like
+	// EnableGitSubmodules. It decides whether the Git generator sees the
+	// content of submodules.
+	AppSetEnableGitSubmodules Value[string] `json:"appSetEnableGitSubmodules,omitempty" yaml:"appSetEnableGitSubmodules,omitempty"`
 	// IgnoreNormalizerJQTimeout is the argocd-cmd-params-cm key
 	// controller.ignore.normalizer.jq.timeout, as written. It limits how long
 	// one jq ignore-rule deletion may run. See ParseIgnoreNormalizerJQTimeout.

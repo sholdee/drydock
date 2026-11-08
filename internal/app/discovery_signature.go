@@ -63,6 +63,11 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		// Argo CD reads them, and the defaults leave the list empty, so the
 		// signature of settings without the keys does not change.
 		DisabledSourceTypes []string `json:"disabledSourceTypes,omitempty"`
+		// GitSubmodulesDisabled is reposerver.enable.git.submodule turned
+		// off: a fetched Git source then holds no submodule content. It is
+		// left out at the default, so settings without the key keep their
+		// signature.
+		GitSubmodulesDisabled bool `json:"gitSubmodulesDisabled,omitempty"`
 		// HelmNamespace is the namespace that helm uses without a
 		// --namespace, from the repo-server of a rendered or committed
 		// install. It is left out for "default", so settings without such
@@ -85,6 +90,7 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		ResourceCustomizations:            renderSettingsCustomizations(settings.ResourceCustomizations),
 		MaxCombinedDirectoryManifestsSize: maxCombinedDirectoryManifestsSizeSignature(settings),
 		AllowOutOfBoundsSymlinks:          allowOutOfBoundsSymlinks(settings),
+		GitSubmodulesDisabled:             !config.ParseEnableGitSubmodules(settings.EnableGitSubmodules.Value),
 		DisabledSourceTypes:               settings.DisabledSourceTypeKeys(),
 		HelmNamespace:                     helmNamespaceSignature(settings),
 	}
@@ -133,11 +139,14 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	// renders, so it is signed here as the value the controller parses.
 	progressiveSyncs := config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
 	settings.EnableProgressiveSyncs = config.Value[string]{}
-	// The Git file globbing and hidden directory flags change
+	// renderSig carries the parsed submodule flag.
+	settings.EnableGitSubmodules = config.Value[string]{}
+	// The Git file globbing, hidden directory, and submodule flags change
 	// ApplicationSet generation too, so they are signed the same way.
 	generation := appsetGenerationSettingsFrom(settings)
 	settings.EnableNewGitFileGlobbing = config.Value[string]{}
 	settings.IncludeHiddenDirectories = config.Value[string]{}
+	settings.AppSetEnableGitSubmodules = config.Value[string]{}
 	// Signed below as the parsed duration, so "60s" and "1m" are not a
 	// change.
 	jqTimeout := config.ParseIgnoreNormalizerJQTimeout(settings.IgnoreNormalizerJQTimeout.Value)
@@ -159,6 +168,9 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	// does not change.
 	if generation.NewGitFileGlobbing || generation.IncludeHiddenDirectories {
 		signed = append(signed, generation.NewGitFileGlobbing, generation.IncludeHiddenDirectories)
+	}
+	if generation.SubmodulesDisabled {
+		signed = append(signed, "appset-submodules-disabled")
 	}
 	data, err = json.Marshal(signed)
 	if err != nil {
@@ -210,6 +222,10 @@ type renderSettingsRepository struct {
 	Type      string `json:"type,omitempty"`
 	URL       string `json:"url,omitempty"`
 	EnableOCI bool   `json:"enableOCI,omitempty"`
+	// EnableLFS decides whether a Git source renders Git LFS content or
+	// fails for a missing object. Left out when false, so a repository
+	// without it keeps its signature.
+	EnableLFS bool   `json:"enableLfs,omitempty"`
 	Project   string `json:"project,omitempty"`
 }
 
@@ -242,6 +258,7 @@ func renderSettingsRepositories(input map[string]config.RepositorySettings) map[
 			Type:      repository.Type,
 			URL:       repository.URL,
 			EnableOCI: repository.EnableOCI,
+			EnableLFS: repository.EnableLFS,
 			Project:   repository.Project,
 		}
 	}

@@ -252,16 +252,6 @@ func (w submoduleWalker) openTree(ctx context.Context, ref SubmoduleRef) (*objec
 	return commit.Tree()
 }
 
-// SubmodulePathsBelow reports whether rel lies in one of the gitlinks.
-func SubmodulePathsBelow(gitlinks []string, rel string) bool {
-	for _, link := range gitlinks {
-		if rel == link || strings.HasPrefix(rel, link+"/") {
-			return true
-		}
-	}
-	return false
-}
-
 // ChainOpener tries each opener in turn and returns the first repository
 // that holds the commit. When none does, it fails with the error of the
 // last one.

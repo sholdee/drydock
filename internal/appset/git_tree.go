@@ -16,6 +16,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"golang.org/x/text/unicode/norm"
 )
@@ -30,6 +31,9 @@ import (
 type gitRepositoryTree struct {
 	root     string
 	worktree WorktreeFilter
+	// submodulesDisabled is applicationsetcontroller.enable.git.submodule
+	// turned off: the checkout holds no submodule content.
+	submodulesDisabled bool
 
 	scanned bool
 	scanErr error
@@ -47,9 +51,10 @@ type gitRepositoryTree struct {
 	// directory.
 	gitlinks   []string
 	gitlinkSet map[string]bool
-	// submodules reports a .gitmodules file at the root. Without one, Argo
-	// CD fetches no submodule content (util/git/client.go:812-817), so each
-	// gitlink is an empty directory, and drydock does not look into it.
+	// submodules reports a .gitmodules file at the root, with submodules
+	// enabled. Without one, Argo CD fetches no submodule content
+	// (util/git/client.go:812-817), so each gitlink is an empty directory,
+	// and drydock does not look into it.
 	submodules bool
 	// childSet holds "dir/name" for every entry of children, so a lookup
 	// matches the exact name, also on a file system that ignores case.
@@ -86,6 +91,14 @@ func newGitRepositoryTree(root string, worktree WorktreeFilter) *gitRepositoryTr
 	return &gitRepositoryTree{root: pathsafety.ResolveSymlinkedRoot(root), worktree: worktree}
 }
 
+// newGitGeneratorTree is newGitRepositoryTree with the Git generator
+// options of a run.
+func newGitGeneratorTree(root string, options Options) *gitRepositoryTree {
+	tree := newGitRepositoryTree(root, options.Worktree)
+	tree.submodulesDisabled = options.SubmodulesDisabled
+	return tree
+}
+
 func (t *gitRepositoryTree) skip(rel string, isDir bool) bool {
 	return t.worktree != nil && t.worktree.Skip(rel, isDir)
 }
@@ -101,7 +114,7 @@ func (t *gitRepositoryTree) scan() error {
 	t.contentDirs = map[string]bool{}
 	t.gitlinkSet = map[string]bool{}
 	if info, err := os.Lstat(filepath.Join(t.root, ".gitmodules")); err == nil && info.Mode().IsRegular() {
-		t.submodules = true
+		t.submodules = !t.submodulesDisabled
 	}
 	if lister, ok := t.worktree.(GitlinkLister); ok {
 		for _, link := range lister.Gitlinks() {
@@ -272,10 +285,32 @@ func hiddenPath(rel string) bool {
 	return false
 }
 
-// hasSubmoduleConfig reports whether the tree has gitlinks and a
-// .gitmodules file, so that Argo CD fetches submodule content.
-func (t *gitRepositoryTree) hasSubmoduleConfig() bool {
-	return len(t.gitlinks) > 0 && t.submodules
+// emptySubmodules lists the gitlinks whose directory holds nothing while
+// Argo CD would check their content out: the tree has a .gitmodules file,
+// submodules are enabled, and .gitmodules does not skip the module with
+// update = none. A snapshot of a Git ref holds the content of every such
+// submodule, so only a working tree whose submodule is not initialized has
+// one.
+func (t *gitRepositoryTree) emptySubmodules() []string {
+	if !t.submodules || len(t.gitlinks) == 0 {
+		return nil
+	}
+	modules := map[string]gittree.Module{}
+	if data, err := pathsafety.ReadRegularFile(filepath.Join(t.root, ".gitmodules")); err == nil {
+		if parsed, err := gittree.ParseModules(data); err == nil {
+			modules = parsed
+		}
+	}
+	var out []string
+	for _, link := range t.gitlinks {
+		if module, ok := modules[link]; ok && strings.EqualFold(strings.TrimSpace(module.Update), "none") {
+			continue
+		}
+		if entries, err := os.ReadDir(filepath.Join(t.root, filepath.FromSlash(link))); err != nil || len(entries) == 0 {
+			out = append(out, link)
+		}
+	}
+	return out
 }
 
 // directories mirrors the repo-server's walkDirectoryTree
