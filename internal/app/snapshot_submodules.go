@@ -6,15 +6,21 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
+
+// submoduleMissingCode identifies the run-level warning for submodules that
+// a Git ref snapshot could not check out.
+const submoduleMissingCode = "source.submodule-missing"
 
 // allowFileSubmoduleTransport lets submodule URLs use the file transport,
 // which the Argo CD repo-server's git refuses. Only tests set it, to serve
@@ -61,54 +67,110 @@ func (request DiffRequest) snapshotSubmoduleOptions(repoPath string) *gitref.Sub
 	}
 }
 
-// snapshotFill is the submodule checkout of one snapshot root.
+// snapshotFill is the submodule checkout of one snapshot root. filled
+// reports that the root holds submodule content: the settings of the last
+// provider or discovery run had reposerver.enable.git.submodule on.
 type snapshotFill struct {
-	once   sync.Once
+	mu     sync.Mutex
+	filled bool
 	result gittree.SubmoduleResult
 	err    error
 }
 
-// snapshotFills keeps, per snapshot root, the one submodule checkout of
-// the process.
+// snapshotFills keeps, per snapshot root, the submodule checkout of the
+// process.
 var snapshotFills sync.Map
 
-// fillSnapshotSubmodules checks out the submodules of the snapshot root of
-// request once settings are known, as the Argo CD repo-server does when
-// reposerver.enable.git.submodule is on. With the setting off, it checks
-// out nothing, and each gitlink stays an empty directory. It returns nil
-// when there is nothing to check out. A submodule that drydock cannot find
-// (offline, or unreachable) stays empty and is listed in result.Missing.
-// The snapshot is drydock's own temporary tree, never the repository.
+// fillSnapshotSubmodules makes the snapshot root of request hold the
+// submodule content that the settings ask for, as the Argo CD repo-server
+// does: with reposerver.enable.git.submodule on, the content of every
+// submodule, and with it off, an empty directory for each gitlink. The
+// settings can change while discovery runs, for example when a rendered
+// argocd-cmd-params-cm turns the key off, so each call applies the value
+// it gets: it fills an empty root, or empties a filled one. After a
+// change, the out-of-bounds symlink checks of the root run again. It
+// returns the checkout when the root holds submodule content, else nil. A
+// submodule that drydock cannot find (offline, or unreachable) stays empty
+// and is listed in result.Missing. The snapshot is drydock's own temporary
+// tree, never the repository.
 func fillSnapshotSubmodules(ctx context.Context, root string, request BuildRequest, settings config.ArgoSettings) *snapshotFill {
 	options := request.rootSnapshot.options
 	if options == nil || strings.TrimSpace(request.rootRevision) == "" {
 		return nil
 	}
-	if !config.ParseEnableGitSubmodules(settings.EnableGitSubmodules.Value) {
-		return nil
-	}
+	enabled := config.ParseEnableGitSubmodules(settings.EnableGitSubmodules.Value)
 	value, _ := snapshotFills.LoadOrStore(filepath.Clean(root), &snapshotFill{})
 	fill, _ := value.(*snapshotFill)
-	fill.once.Do(func() {
-		if inside, _, err := pathsafety.IsInsideAny(root, []string{request.rootRepo}); err != nil || inside {
-			fill.err = fmt.Errorf("git ref snapshot %q is inside the repository", root)
-			return
-		}
-		fill.result, fill.err = gitref.FillSnapshotSubmodules(ctx, gitref.FillRequest{
-			Root:                    root,
-			Repo:                    request.rootRepo,
-			Revision:                request.rootRevision,
-			Submodules:              *options,
-			KeepOutOfBoundsSymlinks: true,
-		})
-	})
+	if fill.apply(ctx, root, request, *options, enabled) {
+		request.symlinkBounds.invalidateUnder(root)
+	}
+	if !enabled {
+		return nil
+	}
 	return fill
+}
+
+// apply fills or empties the submodules of root to match enabled, and
+// reports whether it changed the tree.
+func (f *snapshotFill) apply(ctx context.Context, root string, request BuildRequest, options gitref.SubmoduleOptions, enabled bool) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.filled == enabled {
+		return false
+	}
+	if !enabled {
+		f.err = gittree.ClearGitlinkDirs(root, request.rootSnapshot.gitlinks)
+		f.result = gittree.SubmoduleResult{}
+		f.filled = false
+		return true
+	}
+	f.filled = true
+	if inside, _, err := pathsafety.IsInsideAny(root, []string{request.rootRepo}); err != nil || inside {
+		f.err = fmt.Errorf("git ref snapshot %q is inside the repository", root)
+		return false
+	}
+	f.result, f.err = gitref.FillSnapshotSubmodules(ctx, gitref.FillRequest{
+		Root:                    root,
+		Repo:                    request.rootRepo,
+		Revision:                request.rootRevision,
+		Submodules:              options,
+		KeepOutOfBoundsSymlinks: true,
+	})
+	return true
+}
+
+// missingDiagnostic is the run-level warning that lists the submodules
+// that the snapshot could not check out, or false when there is none.
+func (f *snapshotFill) missingDiagnostic() (diagnostic.Diagnostic, bool) {
+	if f == nil {
+		return diagnostic.Diagnostic{}, false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.result.Missing) == 0 {
+		return diagnostic.Diagnostic{}, false
+	}
+	paths := make([]string, 0, len(f.result.Missing))
+	for _, missing := range f.result.Missing {
+		paths = append(paths, strconv.Quote(missing.Path))
+	}
+	return diagnostic.Diagnostic{
+		Code:     submoduleMissingCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "source",
+		Message:  fmt.Sprintf("the Git ref snapshot lacks submodule %s, which drydock could not check out; every source whose path holds or is in one of them fails", strings.Join(paths, ", ")),
+	}, true
 }
 
 // missingDigest keys a snapshot root on the submodules it could not check
 // out, so a later run that finds them renders again.
 func (f *snapshotFill) missingDigest() string {
-	if f == nil || len(f.result.Missing) == 0 {
+	if f == nil {
+		return ""
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.result.Missing) == 0 {
 		return ""
 	}
 	paths := make([]string, 0, len(f.result.Missing))

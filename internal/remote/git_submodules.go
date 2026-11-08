@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	git "github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing/transport"
+
+	"github.com/sholdee/drydock/internal/cache"
 
 	"github.com/sholdee/drydock/internal/gittree"
 )
@@ -45,47 +49,87 @@ func gitRequestURL(request Request) string {
 	return strings.TrimSpace(request.URL)
 }
 
-// submoduleOpener opens the commit of a submodule from the remote Git
-// cache, as the entry of the submodule URL at that commit, and fetches a
-// missing entry unless drydock runs offline. HTTP credentials go only to a
-// submodule on the host of superURL.
+// submoduleStoreRevision is the revision part of the remote cache key of a
+// submodule store, the one entry per submodule URL. A Git revision never
+// holds a NUL, so no Kustomize ref shares the entry.
+const submoduleStoreRevision = "\x00submodule-store"
+
+// submoduleOpener opens the commit of a submodule from its store in the
+// remote cache: one bare clone per submodule URL, which holds every commit
+// drydock fetched for that URL (gittree.OpenSubmoduleStore). It fetches a
+// missing commit unless drydock runs offline. HTTP credentials go only to a
+// submodule in the credential scope of superURL.
 func (acquirer DefaultAcquirer) submoduleOpener(superURL string, opts Options) gittree.SubmoduleOpener {
 	return gittree.SubmoduleOpenerFunc(func(ctx context.Context, ref gittree.SubmoduleRef) (*git.Repository, error) {
 		if ref.Transport == "git" {
 			return nil, fmt.Errorf("submodule %q (%s): drydock does not fetch git:// URLs for remote Kustomize bases, which kustomize's git does; this is a recorded difference", ref.Path, RedactGitRepoURL(ref.URL))
 		}
-		request := Request{Kind: RequestGitRepo, URL: ref.URL, RepoURL: ref.URL, Revision: ref.Commit.String()}
-		entryOpts := opts
-		entryOpts.Refresh = false
-		entryOpts.RequireTransport = ref.Transport
-		entryOpts.GitCredentials = submoduleGitCredentials(opts.GitCredentials, superURL, ref.URL)
-		if opts.LockEntry != nil {
-			unlock := opts.LockEntry(request, entryOpts)
-			defer unlock()
-		}
-		result, err := acquirer.acquireGitRepo(ctx, request, entryOpts)
+		credentials := submoduleGitCredentials(opts.GitCredentials, superURL, ref)
+		repo, err := openRemoteSubmoduleStore(ctx, ref, opts, credentials)
 		if err != nil {
-			return nil, fmt.Errorf("submodule %q (%s at %s): %w", ref.Path, RedactGitRepoURL(ref.URL), ref.Commit, err)
+			return nil, fmt.Errorf("submodule %q (%s at %s): %s", ref.Path, RedactGitRepoURL(ref.URL), ref.Commit, redactGitError(err, ref.URL, credentials))
 		}
-		if result.Release != nil {
-			defer result.Release()
-		}
-		return git.PlainOpen(result.Path)
+		return repo, nil
 	})
+}
+
+// openRemoteSubmoduleStore opens the store of ref under the lock of its
+// cache entry.
+func openRemoteSubmoduleStore(ctx context.Context, ref gittree.SubmoduleRef, opts Options, credentials GitCredentials) (*git.Repository, error) {
+	normalized, err := NormalizeGitRepoCacheURL(ref.URL)
+	if err != nil {
+		return nil, err
+	}
+	cacheDir, err := ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
+	if err != nil {
+		return nil, err
+	}
+	request := Request{Kind: RequestGitRepo, URL: ref.URL, RepoURL: ref.URL, Revision: submoduleStoreRevision}
+	key, err := NewCacheKey(Request{Kind: RequestGitRepo, RepoURL: normalized, Revision: submoduleStoreRevision})
+	if err != nil {
+		return nil, err
+	}
+	path := cache.RemoteGitRepoPath(cacheDir, key)
+	if err := rejectForbiddenCachePath(path, opts.ForbiddenRoots); err != nil {
+		return nil, err
+	}
+	if opts.LockEntry != nil {
+		unlock := opts.LockEntry(request, opts)
+		defer unlock()
+	}
+	var auth transport.AuthMethod
+	if !opts.Offline {
+		if auth, _, err = gitAuthMethod(credentials, ref.URL); err != nil {
+			return nil, err
+		}
+	}
+	repo, fetched, err := gittree.OpenSubmoduleStore(ctx, gittree.StoreRequest{
+		Path: path, URL: ref.URL, Commit: ref.Commit, Transport: ref.Transport, Auth: auth, AllowNetwork: !opts.Offline,
+	})
+	if err == nil && fetched {
+		writeGitRepoMetadata(filepath.Dir(path), key, normalized, ref.Commit.String())
+	}
+	return repo, err
 }
 
 // submoduleGitCredentials returns the credentials of a submodule fetch: git
 // runs kustomize's `git submodule update` with the credentials of its
 // environment for every submodule, but drydock sends a username, password,
-// or bearer token only to a submodule on the host and port of the
-// superproject, and never from https to http.
-func submoduleGitCredentials(credentials GitCredentials, superURL, submoduleURL string) GitCredentials {
-	if gittree.SameCredentialScope(superURL, submoduleURL) {
+// or bearer token only to an http or https submodule on the host and port
+// of the superproject, and never from https to http. Without them, the
+// user and password that the resolved URL carried are used in that scope.
+func submoduleGitCredentials(credentials GitCredentials, superURL string, ref gittree.SubmoduleRef) GitCredentials {
+	httpScope := (ref.Transport == "http" || ref.Transport == "https") && gittree.SameCredentialScope(superURL, ref.URL)
+	if !httpScope {
+		credentials.Username = ""
+		credentials.Password = ""
+		credentials.BearerToken = ""
 		return credentials
 	}
-	credentials.Username = ""
-	credentials.Password = ""
-	credentials.BearerToken = ""
+	if credentials.Username == "" && credentials.Password == "" && credentials.BearerToken == "" {
+		credentials.Username = ref.Userinfo.Username
+		credentials.Password = ref.Userinfo.Password
+	}
 	return credentials
 }
 
@@ -103,9 +147,6 @@ func checkoutOrFetchCommit(ctx context.Context, repo *git.Repository, worktree *
 	if authErr != nil {
 		return "", err
 	}
-	if checkErr := checkFetchTransport(repo, repoURL, opts); checkErr != nil {
-		return "", checkErr
-	}
 	fetchErr := repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: "origin",
 		Auth:       auth,
@@ -118,26 +159,3 @@ func checkoutOrFetchCommit(ctx context.Context, repo *git.Repository, worktree *
 }
 
 var fullCommitSHA = regexp.MustCompile("^[0-9a-f]{40}$")
-
-// checkFetchTransport fails unless go-git fetches repoURL, and every URL
-// of the origin remote of repo when repo is set, over
-// opts.RequireTransport.
-func checkFetchTransport(repo *git.Repository, repoURL string, opts Options) error {
-	if opts.RequireTransport == "" {
-		return nil
-	}
-	urls := []string{repoURL}
-	if repo != nil {
-		remote, err := repo.Remote("origin")
-		if err != nil {
-			return err
-		}
-		urls = append(urls, remote.Config().URLs...)
-	}
-	for _, url := range urls {
-		if err := gittree.CheckEndpointTransport(url, opts.RequireTransport); err != nil {
-			return fmt.Errorf("remote Git repository %s: %w", RedactGitRepoURL(repoURL), err)
-		}
-	}
-	return nil
-}

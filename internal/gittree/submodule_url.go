@@ -90,19 +90,23 @@ func chopLastDir(remote string, relativeRemote bool) (string, bool, error) {
 }
 
 // remoteHelperPattern matches the <transport>:: prefix that makes git run
-// git-remote-<transport>: a URL scheme followed by "::".
-var remoteHelperPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*::`)
+// git-remote-<transport>: letters, digits, "+", ".", and "-", starting with
+// a letter or digit, followed by "::" (transport_get in git's transport.c).
+// So "192.0.2.1::repo" runs the helper "192.0.2.1".
+var remoteHelperPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.-]*::`)
 
 // SubmoduleTransport returns the transport that git uses for a resolved
 // submodule URL: "http", "https", "git", "ssh", "file", another scheme
-// name, or "remote-helper:<name>" for <name>::<address>. An scp-like URL
+// as written, or "remote-helper:<name>" for <name>::<address>. git matches
+// the built-in schemes in lower case only, so "HTTPS://" names a remote
+// helper, which AllowedSubmoduleTransport refuses. An scp-like URL
 // (host:path, with no "/" before the ":") is ssh. A path is file.
 func SubmoduleTransport(value string) string {
 	if helper := remoteHelperPattern.FindString(value); helper != "" {
 		return "remote-helper:" + strings.TrimSuffix(helper, "::")
 	}
 	if i := strings.Index(value, "://"); i > 0 {
-		return strings.ToLower(value[:i])
+		return value[:i]
 	}
 	if !urlIsLocalNotSSH(value) {
 		return "ssh"
@@ -129,14 +133,21 @@ func AllowedSubmoduleTransport(transport string) bool {
 // ClassifySubmoduleURL returns the endpoint that go-git fetches a resolved
 // submodule URL from, and fails when drydock must not fetch it:
 //
+//   - the URL holds a control character;
 //   - git would use a transport that AllowedSubmoduleTransport refuses, or
 //     the file transport without allowFile;
 //   - go-git would use another transport than git, such as a local path
 //     for "x y:/path", which git reads as ssh to the host "x y";
-//   - the host is empty or holds a space, a control character, or a
-//     bracket, which go-git cannot parse in an scp-like URL;
-//   - the path is empty.
+//   - git and go-git read another user, host, port, or path from it
+//     (gitURLParts), such as "host:2222:path", where go-git finds a port
+//     and git a path;
+//   - the host is empty, starts with "-", or holds a space, a control
+//     character, or a bracket, or the path is empty or starts with "-",
+//     which git refuses.
 func ClassifySubmoduleURL(resolved string, allowFile bool) (*transport.Endpoint, error) {
+	if strings.ContainsFunc(resolved, unicode.IsControl) {
+		return nil, fmt.Errorf("submodule URL holds a control character")
+	}
 	gitTransport := SubmoduleTransport(resolved)
 	if !AllowedSubmoduleTransport(gitTransport) && (gitTransport != "file" || !allowFile) {
 		return nil, fmt.Errorf("transport %q not allowed", gitTransport)
@@ -151,13 +162,23 @@ func ClassifySubmoduleURL(resolved string, allowFile bool) (*transport.Endpoint,
 	if endpoint.Protocol == "file" {
 		return endpoint, nil
 	}
+	if err := sameURLParts(resolved, endpoint); err != nil {
+		return nil, err
+	}
+	return endpoint, validEndpoint(endpoint)
+}
+
+func validEndpoint(endpoint *transport.Endpoint) error {
 	if !validEndpointHost(endpoint.Host) {
-		return nil, fmt.Errorf("submodule URL host %q is not valid", endpoint.Host)
+		return fmt.Errorf("submodule URL host %q is not valid", endpoint.Host)
 	}
 	if strings.Trim(endpoint.Path, "/") == "" {
-		return nil, fmt.Errorf("submodule URL has no repository path")
+		return fmt.Errorf("submodule URL has no repository path")
 	}
-	return endpoint, nil
+	if strings.HasPrefix(endpoint.Path, "-") {
+		return fmt.Errorf("submodule URL path %q starts with \"-\"", endpoint.Path)
+	}
+	return nil
 }
 
 // CheckEndpointTransport fails unless go-git fetches url over protocol.
@@ -178,7 +199,7 @@ func CheckEndpointTransport(url, protocol string) error {
 }
 
 func validEndpointHost(host string) bool {
-	if host == "" {
+	if host == "" || strings.HasPrefix(host, "-") {
 		return false
 	}
 	return !strings.ContainsFunc(host, func(r rune) bool {

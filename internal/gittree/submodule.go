@@ -37,6 +37,11 @@ type SubmoduleRef struct {
 	// (ClassifySubmoduleURL). An opener that fetches must fetch over it
 	// only (CheckEndpointTransport).
 	Transport string
+	// Userinfo is the user and password that the resolved URL carried,
+	// such as the token of a relative URL of a superproject cloned with
+	// one. URL never holds them. An opener may use them as credentials
+	// within the credential scope of the superproject only.
+	Userinfo URLUserinfo
 }
 
 // SubmoduleOpener returns a repository that holds the commit of ref. It
@@ -218,10 +223,11 @@ func (w submoduleWalker) prepareLink(level submoduleLevel, link Gitlink) (Submod
 	if !ValidRelPath(fullPath) {
 		return SubmoduleRef{}, false, fmt.Errorf("unsafe submodule path %q", fullPath)
 	}
-	resolved, err := ResolveSubmoduleURL(level.remoteURL, module.URL)
+	withUserinfo, err := ResolveSubmoduleURL(level.remoteURL, module.URL)
 	if err != nil {
 		return SubmoduleRef{}, false, fmt.Errorf("submodule %q: %w", fullPath, err)
 	}
+	resolved, userinfo, _ := SplitURLUserinfo(withUserinfo)
 	endpoint, err := ClassifySubmoduleURL(resolved, w.request.AllowFileTransport)
 	if err != nil {
 		return SubmoduleRef{}, false, fmt.Errorf("submodule %q: %w", fullPath, err)
@@ -235,6 +241,7 @@ func (w submoduleWalker) prepareLink(level submoduleLevel, link Gitlink) (Submod
 		URL:        resolved,
 		Commit:     link.Commit,
 		Transport:  endpoint.Protocol,
+		Userinfo:   userinfo,
 	}, false, nil
 }
 

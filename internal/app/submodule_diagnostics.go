@@ -102,23 +102,42 @@ func (p localProvider) submoduleRenderDiagnostics(ctx context.Context, source re
 
 // sourceError fails a source of a snapshot whose submodules drydock could
 // not check out: every source when git refuses the configuration, and a
-// source whose path is in a missing submodule.
+// source whose path holds a missing submodule or is in one, since a
+// recursive or plain directory source would otherwise drop what the
+// submodule holds without a word.
 func (f *snapshotFill) sourceError(sourcePath string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.err != nil {
 		return fmt.Errorf("check out the submodules of the Git ref snapshot: %w", f.err)
 	}
 	for _, missing := range f.result.Missing {
-		if _, ok := submoduleOfPath([]string{missing.Path}, sourcePath); ok {
+		if pathsOverlap(sourcePath, missing.Path) {
 			return missingSubmoduleError(missing)
 		}
 	}
 	return nil
 }
 
+// pathsOverlap reports whether the source path rel holds the slash path
+// link, or is link, or is below it.
+func pathsOverlap(rel, link string) bool {
+	clean := path.Clean(filepath.ToSlash(rel))
+	if clean == "." || clean == "" {
+		return true
+	}
+	return clean == link || strings.HasPrefix(link, clean+"/") || strings.HasPrefix(clean, link+"/")
+}
+
 // renderError adds the missing submodules of the snapshot to the error of a
 // source that failed: its inputs can be in one of them.
 func (f *snapshotFill) renderError(err error) error {
-	if f == nil || err == nil || len(f.result.Missing) == 0 {
+	if f == nil || err == nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.result.Missing) == 0 {
 		return err
 	}
 	reasons := make([]error, 0, len(f.result.Missing))

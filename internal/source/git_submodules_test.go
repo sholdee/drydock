@@ -2,11 +2,14 @@ package source
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/gittree/submoduletest"
 )
 
@@ -244,4 +247,76 @@ func TestDefaultGitAcquirerFetchesSubmodulesOverGitDaemon(t *testing.T) {
 		t.Fatalf("offline Acquire() error = %v", err)
 	}
 	requireFile(t, result.Path, "mods/child/child/app/cm.yaml")
+}
+
+// TestDefaultGitAcquirerKeepsOneStorePerSubmoduleURL pins that many
+// gitlinks into one repository, each at another commit, share one cache
+// entry instead of one clone per commit.
+func TestDefaultGitAcquirerKeepsOneStorePerSubmoduleURL(t *testing.T) {
+	parentURL := submoduletest.ManyPinsFixture(t, 4)
+	cacheDir := t.TempDir()
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: parentURL, Revision: "main"}, submoduleOptions(cacheDir, true, true))
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	for i := range 4 {
+		data, err := os.ReadFile(filepath.Join(result.Path, fmt.Sprintf("sub%d", i), "app", "cm.yaml"))
+		if err != nil || !strings.Contains(string(data), fmt.Sprintf("name: c%d", i)) {
+			t.Fatalf("sub%d/app/cm.yaml = %q, %v", i, data, err)
+		}
+	}
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("cache entries = %d, want the superproject and one submodule store", len(entries))
+	}
+}
+
+// TestDefaultGitAcquirerStoresNoUserinfo pins that a URL with userinfo,
+// and the relative submodule URLs that inherit it, are cloned without it:
+// no cache entry's .git/config holds the token.
+func TestDefaultGitAcquirerStoresNoUserinfo(t *testing.T) {
+	fixture := submoduletest.New(t)
+	base := submoduletest.ServeGitDaemon(t, fixture.Dir)
+	const token = "SECRET-TOKEN-1234"
+	withUserinfo := strings.Replace(base, "git://", "git://ci-token:"+token+"@", 1) + "/parent.git"
+	cacheDir := t.TempDir()
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), GitRequest{URL: withUserinfo, Revision: "main"}, GitOptions{AllowNetwork: true, CacheDir: cacheDir, Submodules: true}); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	configs := 0
+	err := filepath.WalkDir(cacheDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || entry.Name() != "config" {
+			return err
+		}
+		configs++
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), token) || strings.Contains(string(data), "ci-token") {
+			t.Errorf("%s holds the userinfo: %s", path, data)
+		}
+		return nil
+	})
+	if err != nil || configs < 2 {
+		t.Fatalf("walked %d Git configs, error %v; want the superproject and its stores", configs, err)
+	}
+}
+
+// TestSubmoduleCredentialsUseInheritedUserinfoInScope pins that the user
+// and password a relative URL inherited from its superproject become the
+// credentials of an https submodule in the superproject's scope only.
+func TestSubmoduleCredentialsUseInheritedUserinfoInScope(t *testing.T) {
+	ref := gittree.SubmoduleRef{URL: "https://git.example.test/org/sub.git", Transport: "https", Userinfo: gittree.URLUserinfo{Username: "ci", Password: "tok"}}
+	got := submoduleCredentials(GitCredentials{}, "https://git.example.test/org/repo.git", ref)
+	if got.Username != "ci" || got.Password != "tok" {
+		t.Fatalf("credentials = %+v, want the inherited userinfo", got)
+	}
+	ref.URL = "https://other.example.test/org/sub.git"
+	if got := submoduleCredentials(GitCredentials{}, "https://git.example.test/org/repo.git", ref); got.Username != "" || got.Password != "" {
+		t.Fatalf("credentials = %+v, want none for another host", got)
+	}
 }

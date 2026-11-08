@@ -72,10 +72,6 @@ type Options struct {
 	// AllowFileSubmoduleTransport lets a submodule URL be a local path or a
 	// file URL, which git refuses for submodules. Only tests set it.
 	AllowFileSubmoduleTransport bool
-	// RequireTransport, when set, is the only go-git transport protocol
-	// drydock may clone or fetch over. A submodule fetch sets it to the
-	// protocol that gittree.ClassifySubmoduleURL allowed.
-	RequireTransport string
 }
 
 type Result struct {

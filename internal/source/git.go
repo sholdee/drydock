@@ -45,10 +45,6 @@ type GitOptions struct {
 	// file URL, which the Argo CD repo-server's git refuses. Only tests set
 	// it.
 	AllowFileSubmoduleTransport bool
-	// RequireTransport, when set, is the only go-git transport protocol
-	// drydock may clone or fetch over. A submodule fetch sets it to the
-	// protocol that gittree.ClassifySubmoduleURL allowed.
-	RequireTransport string
 	// LFS lists the Git LFS pointer files of the commit in
 	// GitResult.LFSPointers: the repository's Secret sets enableLfs, so the
 	// Argo CD repo-server replaces them with their content. drydock does
@@ -114,20 +110,16 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 // refreshes it when asked, checks out the revision with its submodules,
 // and fetches what the entry lacks.
 func acquireOnlineGitRepository(ctx context.Context, cachePath, key string, request GitRequest, opts GitOptions) (GitResult, error) {
-	auth, _, err := gitAuthMethod(opts.Credentials, request.URL)
+	cloneURL, credentials := cloneURLAndCredentials(request.URL, opts.Credentials)
+	opts.Credentials = credentials
+	auth, _, err := gitAuthMethod(opts.Credentials, cloneURL)
 	if err != nil {
 		return GitResult{}, err
 	}
 
-	if err := gittree.CheckEndpointTransport(request.URL, opts.RequireTransport); err != nil {
-		return GitResult{}, fmt.Errorf("repository %s: %w", RedactURL(request.URL), err)
-	}
-	repo, cloned, err := openOrCloneGitRepository(ctx, cachePath, request.URL, auth, opts.Credentials)
+	repo, cloned, err := openOrCloneGitRepository(ctx, cachePath, cloneURL, auth, opts.Credentials)
 	if err != nil {
 		return GitResult{}, err
-	}
-	if err := checkOriginTransport(repo, opts.RequireTransport); err != nil {
-		return GitResult{}, fmt.Errorf("repository %s: %w", RedactURL(request.URL), err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -740,20 +732,19 @@ func RedactGitCredentialError(message string, credentials GitCredentials) string
 	return redactGitCredentialError(message, credentials)
 }
 
-// checkOriginTransport fails unless go-git fetches every URL of the origin
-// remote of repo over protocol. Fetches and pulls use those URLs.
-func checkOriginTransport(repo *git.Repository, protocol string) error {
-	if protocol == "" {
-		return nil
+// cloneURLAndCredentials removes the userinfo of repoURL, so the cache
+// entry stores a URL without a token (gittree.SplitURLUserinfo). The user
+// and password become the credentials of an http or https URL unless
+// explicit credentials are set; a git URL has no credentials.
+func cloneURLAndCredentials(repoURL string, credentials GitCredentials) (string, GitCredentials) {
+	clean, info, found := gittree.SplitURLUserinfo(repoURL)
+	if !found {
+		return repoURL, credentials
 	}
-	remote, err := repo.Remote("origin")
-	if err != nil {
-		return err
+	isHTTP := strings.HasPrefix(clean, "http://") || strings.HasPrefix(clean, "https://")
+	if isHTTP && credentials.Username == "" && credentials.Password == "" && credentials.BearerToken == "" {
+		credentials.Username = info.Username
+		credentials.Password = info.Password
 	}
-	for _, url := range remote.Config().URLs {
-		if err := gittree.CheckEndpointTransport(url, protocol); err != nil {
-			return err
-		}
-	}
-	return nil
+	return clean, credentials
 }

@@ -89,9 +89,6 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 		if err != nil {
 			return Result{}, err
 		}
-		if err := checkFetchTransport(repo, repoURL, opts); err != nil {
-			return Result{}, err
-		}
 		if err := refreshGitRepository(ctx, repo, worktree, repoURL, request.Revision, auth, opts.GitCredentials); err != nil {
 			return Result{}, err
 		}
@@ -113,9 +110,6 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 	}
 	auth, _, err := gitAuthMethod(opts.GitCredentials, repoURL)
 	if err != nil {
-		return Result{}, err
-	}
-	if err := checkFetchTransport(nil, repoURL, opts); err != nil {
 		return Result{}, err
 	}
 	repo, err = cloneGitRepository(ctx, cachePath, repoURL, auth, opts.GitCredentials)

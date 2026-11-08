@@ -632,13 +632,21 @@ func (o Orchestrator) discoveryProvider(ctx context.Context, root string, settin
 
 // scanRepositoryWithSubmodules scans the repository at root, and then
 // checks out the submodules of a snapshot root before its ApplicationSets
-// read it (fillSnapshotSubmodulesForDiscovery).
+// read it (fillSnapshotSubmodulesForDiscovery), with a warning for the
+// submodules it could not check out.
 func scanRepositoryWithSubmodules(ctx context.Context, root string, request BuildRequest) (discovery.Result, []diagnostic.Diagnostic, error) {
 	discovered, diags, err := scanRepositoryDiscovery(root, request)
 	if err != nil {
 		return discovered, diags, err
 	}
-	return discovered, diags, fillSnapshotSubmodulesForDiscovery(ctx, root, request, discovered)
+	if request.rootSnapshot.options == nil {
+		return discovered, diags, nil
+	}
+	fill, err := fillSnapshotSubmodulesForDiscovery(ctx, root, request, discovered)
+	if diag, ok := fill.missingDiagnostic(); ok {
+		diags = append(diags, diag)
+	}
+	return discovered, diags, err
 }
 
 // fillSnapshotSubmodulesForDiscovery checks out the submodules of a
@@ -646,14 +654,10 @@ func scanRepositoryWithSubmodules(ctx context.Context, root string, request Buil
 // discovery found (fillSnapshotSubmodules). It fails only when it cannot
 // read the settings: a configuration that git refuses, or a submodule
 // that drydock cannot find, fails the sources that render from it.
-func fillSnapshotSubmodulesForDiscovery(ctx context.Context, root string, request BuildRequest, discovered discovery.Result) error {
-	if request.rootSnapshot.options == nil {
-		return nil
-	}
+func fillSnapshotSubmodulesForDiscovery(ctx context.Context, root string, request BuildRequest, discovered discovery.Result) (*snapshotFill, error) {
 	settings, _, err := loadSettingsFromDiscovery(root, discovered)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	fillSnapshotSubmodules(ctx, root, request, settings)
-	return nil
+	return fillSnapshotSubmodules(ctx, root, request, settings), nil
 }

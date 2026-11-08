@@ -164,6 +164,64 @@ func TestDiffRefOfflineRendersSourcesOutsideMissingSubmodules(t *testing.T) {
 	if !diffHasConfigMap(result, "top-src") {
 		t.Fatalf("Results = %#v, want the top ConfigMap", result.Results)
 	}
+	if !hasDiagnosticCode(result.Diagnostics, submoduleMissingCode) {
+		t.Fatalf("Diagnostics = %#v, want one %s warning for the run", result.Diagnostics, submoduleMissingCode)
+	}
+}
+
+// TestDiffRefFailsDirectorySourceThatHoldsMissingSubmodule pins that a
+// recursive directory source whose path holds a submodule that the
+// snapshot could not check out fails, instead of rendering only the files
+// outside the submodule.
+func TestDiffRefFailsDirectorySourceThatHoldsMissingSubmodule(t *testing.T) {
+	root, base := submoduleApplicationRepoAt(t, false, ".")
+	submoduletest.WriteFile(t, root, "apps/sub.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sub
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+submoduleTestRepoURL+`
+    targetRevision: HEAD
+    path: mods
+    directory:
+      recurse: true
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	submoduletest.WriteFile(t, root, "mods/own.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: own\n")
+	submoduletest.Run(t, root, "add", "-A")
+	submoduletest.Run(t, root, "commit", "-q", "-m", "recurse app")
+	_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base, Offline: true, GitCacheDir: t.TempDir(),
+	})
+	if err == nil || !strings.Contains(err.Error(), `submodule "mods/child" could not be checked out`) {
+		t.Fatalf("DiffApps() error = %v, want the source that holds the missing submodule to fail", err)
+	}
+}
+
+// TestDiffRefEmptiesSubmodulesWhenARenderedSettingTurnsThemOff pins that a
+// reposerver.enable.git.submodule value that only a rendered
+// argocd-cmd-params-cm sets to false wins over the default that discovery
+// saw first: the snapshot holds no submodule content, so the source path in
+// the submodule does not exist, as in the Argo CD repo-server.
+func TestDiffRefEmptiesSubmodulesWhenARenderedSettingTurnsThemOff(t *testing.T) {
+	root, base := submoduleApplicationRepo(t, true)
+	app := submoduletest.Run(t, root, "rev-parse", "HEAD")
+	submoduletest.Run(t, root, "reset", "-q", "--hard", base)
+	submoduletest.WriteFile(t, root, "argocd/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: argocd\ngeneratorOptions:\n  disableNameSuffixHash: true\nconfigMapGenerator:\n- name: argocd-cmd-params-cm\n  literals:\n  - reposerver.enable.git.submodule=false\n")
+	submoduletest.Run(t, root, "add", "argocd")
+	submoduletest.Run(t, root, "commit", "-q", "-m", "rendered settings")
+	base = submoduletest.Run(t, root, "rev-parse", "HEAD")
+	submoduletest.Run(t, root, "cherry-pick", app)
+	request := DiffRequest{RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base, Offline: true, GitCacheDir: t.TempDir(), DiscoverKustomizePaths: []string{"argocd"}}
+	result, err := Orchestrator{}.DiffApps(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), `source path "mods/child/child/app" does not exist`) || diffHasConfigMap(result, "child") {
+		t.Fatalf("DiffApps() error = %v, Results = %#v; want no submodule content with the rendered setting off", err, result.Results)
+	}
 }
 
 // TestDiffRefSkipsSubmodulesWhenDisabled pins that with

@@ -49,7 +49,15 @@ var (
 // (docs/spec.md of git-lfs): a version line first, then key/value lines in
 // key order, with an oid and a size, each line ending in a newline.
 func ParseLFSPointer(data []byte) (LFSPointer, bool) {
-	if len(data) == 0 || len(data) > MaxLFSPointerSize || data[len(data)-1] != '\n' {
+	if len(data) > MaxLFSPointerSize {
+		return LFSPointer{}, false
+	}
+	return parseLFSPointerText(data)
+}
+
+// parseLFSPointerText is ParseLFSPointer without the size limit.
+func parseLFSPointerText(data []byte) (LFSPointer, bool) {
+	if len(data) == 0 || data[len(data)-1] != '\n' {
 		return LFSPointer{}, false
 	}
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")

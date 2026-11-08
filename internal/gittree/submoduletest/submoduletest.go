@@ -259,3 +259,37 @@ func ServeGitDaemon(t testing.TB, dir string) string {
 	t.Skip("git daemon did not start")
 	return ""
 }
+
+// ManyPinsFixture builds a superproject with count gitlinks sub0, sub1,
+// ... into one child repository, each pinned to another commit of it, with
+// the relative URL "../child.git". It returns the file URL of the
+// superproject.
+func ManyPinsFixture(t testing.TB, count int) string {
+	t.Helper()
+	dir := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	NewRepo(t, dir, "child", map[string]string{"app/cm.yaml": configMap("c0")})
+	child := filepath.Join(dir, "child-work")
+	commits := []string{Run(t, child, "rev-parse", "HEAD")}
+	for i := 1; i < count; i++ {
+		WriteFile(t, child, "app/cm.yaml", configMap("c"+strconv.Itoa(i)))
+		Run(t, child, "commit", "-q", "-am", "c"+strconv.Itoa(i))
+		commits = append(commits, Run(t, child, "rev-parse", "HEAD"))
+	}
+	Run(t, child, "push", "-q", filepath.Join(dir, "child.git"), "HEAD:main")
+	NewRepo(t, dir, "parent", map[string]string{"top.yaml": configMap("top")})
+	parent := filepath.Join(dir, "parent-work")
+	var modules strings.Builder
+	for i, commit := range commits {
+		name := "sub" + strconv.Itoa(i)
+		modules.WriteString("[submodule \"" + name + "\"]\n\tpath = " + name + "\n\turl = ../child.git\n")
+		Run(t, parent, "update-index", "--add", "--cacheinfo", "160000,"+commit+","+name)
+	}
+	WriteFile(t, parent, ".gitmodules", modules.String())
+	Run(t, parent, "add", ".gitmodules")
+	Run(t, parent, "commit", "-q", "-m", "many pins")
+	Run(t, parent, "push", "-q", filepath.Join(dir, "parent.git"), "HEAD:main")
+	return FileURL(filepath.Join(dir, "parent.git"))
+}

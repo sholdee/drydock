@@ -2,6 +2,7 @@ package gittree
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,8 +180,19 @@ func TestReadLFSPointerFileNeverFollowsSymlinksOrReadsLargeFiles(t *testing.T) {
 	if _, ok := ReadLFSPointerFile(link); ok {
 		t.Fatal("ReadLFSPointerFile(symlink) = true, want the symlink not followed")
 	}
+	// A valid pointer padded past the size limit with extension lines, so
+	// only the size limit refuses it.
+	var padded strings.Builder
+	padded.WriteString("version https://git-lfs.github.com/spec/v1\n")
+	for i := 0; padded.Len() <= MaxLFSPointerSize; i++ {
+		fmt.Fprintf(&padded, "ext-%03d-x sha256:%064d\n", i, i)
+	}
+	padded.WriteString(strings.TrimPrefix(text, "version https://git-lfs.github.com/spec/v1\n"))
+	if _, ok := parseLFSPointerText([]byte(padded.String())); !ok || padded.Len() <= MaxLFSPointerSize {
+		t.Fatal("padded pointer is not a valid pointer past the size limit")
+	}
 	large := filepath.Join(dir, "large")
-	if err := os.WriteFile(large, []byte(text+strings.Repeat("x", MaxLFSPointerSize)), 0o644); err != nil {
+	if err := os.WriteFile(large, []byte(padded.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := ReadLFSPointerFile(large); ok {
@@ -254,6 +266,51 @@ func sortTreeEntries(entries []object.TreeEntry) {
 	for i := 1; i < len(entries); i++ {
 		for j := i; j > 0 && entries[j].Name < entries[j-1].Name; j-- {
 			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
+// TestClassifySubmoduleURLRefusesFuzzMismatches pins cases from the review
+// fuzz (review-gitsub2/fuzz-abs.txt) where git and go-git read another
+// transport, user, host, port, or path, or where git refuses the URL and
+// go-git does not. Each must be refused.
+func TestClassifySubmoduleURLRefusesFuzzMismatches(t *testing.T) {
+	for _, value := range []string{
+		// Remote helpers and schemes that git matches only in lower case.
+		"192.0.2.1::repo.git",
+		"192.0.2.1::/repo.git",
+		"HTTPS://host/org/repo.git",
+		"Ssh://host/org/repo.git",
+		"GIT://host/repo.git",
+		// scp-like forms where go-git finds a port, or another host.
+		"host:22:path",
+		"host:2222:repo.git",
+		"host:22::repo.git",
+		"user:pass@host:repo.git",
+		"user:pass@192.0.2.1:99999:x",
+		"a@b@host:p",
+		"git@:repo.git",
+		"@höst:22:p",
+		"git@host::~user/repo",
+		"git@host:o~rg/repo.git",
+		"user:pass@[host]/repo.git",
+		"user:pass@[host]:",
+		// URL forms whose authority git and go-git split differently.
+		"ssh://u%40@~user:99999/org/repo",
+		"ssh://@~user/repo.git",
+		"ssh://user:pass@host/repo.git",
+		"ssh://host:99999/repo.git",
+		// Paths and hosts that git refuses.
+		"host:-x",
+		"192.0.2.1:-x",
+		"-oProxyCommand=x@host:repo.git",
+		"ssh://-oProxyCommand=x/repo.git",
+		// Control characters.
+		"h:\x00x",
+		"https:\x00//host/org/repo.git",
+	} {
+		if endpoint, err := ClassifySubmoduleURL(value, false); err == nil {
+			t.Fatalf("ClassifySubmoduleURL(%q) = %+v, want it refused", value, endpoint)
 		}
 	}
 }

@@ -162,3 +162,17 @@ func SyncCacheSubmodules(ctx context.Context, request CacheSubmoduleRequest) err
 	record.Complete = true
 	return writeSubmoduleRecord(request.Root, record)
 }
+
+// ClearGitlinkDirs empties the directory of each gitlink of links below
+// root, so it holds no submodule content. It never follows a symlink.
+func ClearGitlinkDirs(root string, links []string) error {
+	for _, link := range links {
+		if err := removeGitlinkContent(root, link); err != nil {
+			return err
+		}
+		if err := makeGitlinkDir(root, link); err != nil {
+			return err
+		}
+	}
+	return nil
+}
