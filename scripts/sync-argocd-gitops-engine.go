@@ -21,6 +21,12 @@ const (
 	// expressions differently, so drydock would hide fields where Argo CD
 	// fails the comparison, or the reverse.
 	gojqModule = "github.com/itchyny/gojq"
+	// doublestarModule matches the file patterns of the Git generator with
+	// applicationsetcontroller.enable.new.git.file.globbing, the OCI
+	// generator, and Helm value file globs. It must be the version Argo CD
+	// requires: releases change how patterns parse, such as braces in
+	// {c,[a,b]}.yaml.
+	doublestarModule = "github.com/bmatcuk/doublestar/v4"
 )
 
 var argoCompatibilityReplaceModules = []string{
@@ -148,6 +154,13 @@ func syncArgoCompatibilityStack() error {
 	}
 	if err := requireGojqModules(argoGoMod); err != nil {
 		return err
+	}
+	doublestarVersion, err := argoRequirement(argoGoMod, doublestarModule)
+	if err != nil {
+		return err
+	}
+	if err := runGo("mod", "edit", "-require="+doublestarModule+"@"+doublestarVersion); err != nil {
+		return fmt.Errorf("update doublestar requirement: %w", err)
 	}
 
 	replacements, err := compatibilityReplacements(argoGoMod, argoCompatibilityReplaceModules)

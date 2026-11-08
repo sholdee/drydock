@@ -21,7 +21,12 @@
   // versions the selected Argo CD requires: a newer gojq accepts or runs
   // expressions differently. The post-upgrade sync helper owns them too, and
   // TestGojqMatchesSelectedArgoCD lists the module set.
+  // doublestar matches Git generator, OCI generator, and Helm value file
+  // globs, so it must be the version the selected Argo CD requires: releases
+  // parse some patterns differently, such as {c,[a,b]}.yaml. The post-upgrade
+  // sync helper owns it, and TestDoublestarMatchesSelectedArgoCD checks it.
   ignoreDeps: [
+    'github.com/bmatcuk/doublestar/v4',
     'github.com/argoproj/argo-cd/gitops-engine',
     'github.com/argoproj/argo-cd/gitops-engine/v3',
     'github.com/argoproj/pkg',
