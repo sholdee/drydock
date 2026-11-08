@@ -892,6 +892,45 @@ note that the Git generator fails the whole ApplicationSet.
 - A symlinked param file whose target is outside the repository or in
   `.git`. Argo CD reads the target in its own file system, and drydock
   reports the ApplicationSet unsupported.
+- Submodule content in a Git generator. The generator of the smoke reads
+  this fixture directory, which is part of the drydock repository and
+  cannot hold a submodule. Unit tests cover the directories generator, new
+  globbing, `git ls-files`, and
+  `applicationsetcontroller.enable.git.submodule`.
+
+## Git submodule fixture
+
+`submodule-repos/` holds two repositories that the smoke builds and serves
+from its git daemon. `submodule-child.git` comes from `child/`.
+`submodule-parent.git` comes from `parent/` and holds the child as the
+submodule `child`, with the relative URL `../submodule-child.git` in
+`.gitmodules`. The Argo CD repo-server resolves that URL against the
+`git://` URL of the parent and runs `git submodule update --init
+--recursive`, because `reposerver.enable.git.submodule` is on by default
+(`util/git/client.go:783-818`).
+
+| Application | case | result on both sides |
+| --- | --- | --- |
+| `parity-submodule-directory` | a directory source in the submodule, `child/app` | the ConfigMap `parity-submodule-directory` |
+| `parity-submodule-kustomize` | a Kustomize overlay in the parent whose base `../child/base` is in the submodule | the ConfigMap `parity-submodule-kustomize-base` |
+
+drydock reads the local clone of the parent through `--repo-map`. Its
+submodule is initialized, so it holds the content that Argo CD checks out.
+`require_submodule_content` fails the smoke when either side renders a
+capture without a ConfigMap from the submodule. Both Applications render
+nothing from an empty submodule, so the manifest comparison alone would
+pass.
+
+### Deliberately not covered by this fixture
+
+- drydock's own submodule fetch for a fetched Git source or a `--ref`
+  snapshot. drydock runs offline here and reads the parent through
+  `--repo-map`. Unit tests cover the fetch into the Git cache, the offline
+  cache miss, the `.git/modules` store, and the transport and URL rules.
+- `reposerver.enable.git.submodule` set to `false`. The key changes every
+  Application of the cluster. Unit tests cover it.
+- Git LFS. A Git LFS server needs the HTTP batch API, which the git daemon
+  of the smoke does not serve. Unit tests cover `enableLfs`.
 
 ## Helm block scalar fixture
 

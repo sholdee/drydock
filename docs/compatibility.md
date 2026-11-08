@@ -245,8 +245,10 @@ Supported:
   and a doublestar pattern that needs too many lookups make the
   ApplicationSet unsupported instead (`appset.unsupported-generator`).
   drydock models gitlinks as directories of the checkout, from the index
-  or the commit, and does not fetch submodule content, which Argo CD fetches
-  by default. A named AppProject that does not exist in the cluster also fails
+  or the commit. When the repository has a `.gitmodules` file, the
+  generator sees submodule content, as Argo CD does by default
+  (`applicationsetcontroller.enable.git.submodule`). `git ls-files` still
+  lists a gitlink as one entry. A named AppProject that does not exist in the cluster also fails
   the whole ApplicationSet in Argo CD. This is a recorded difference: drydock
   cannot know the AppProjects of the cluster offline, because they can come
   from another repository, a chart, a remote Kustomize base, or the cluster
@@ -254,8 +256,11 @@ Supported:
   AppProjects but not that one, drydock warns `project.missing`.
   In a working tree, drydock skips the paths that Git ignores and does not
   track, and empty directories that are not gitlinks. Without a
-  `.gitmodules` file, it also skips what is in a gitlink, because Argo CD
-  fetches no submodule content then. It keeps untracked paths that Git
+  `.gitmodules` file, or with
+  `applicationsetcontroller.enable.git.submodule` set to `false`, it also
+  skips what is in a gitlink, because Argo CD checks out no submodule
+  content then. A working tree whose submodule is not initialized holds an
+  empty directory, so drydock warns. It keeps untracked paths that Git
   does not ignore. An Argo CD checkout does not hold them, so this is a
   recorded difference. drydock never reads a symlink target outside the
   repository or in the top-level `.git` directory. With default globbing,
@@ -797,6 +802,97 @@ Important boundaries:
 See `site/content/concepts/source-acquisition.md` for cache, auth, and remote
 source details.
 
+### Git Submodules and Git LFS
+
+The Argo CD v3.6.1 repo-server runs `git submodule sync --recursive` and
+`git submodule update --init --recursive` after each checkout when the
+checkout has a `.gitmodules` file and `ARGOCD_GIT_MODULES_ENABLED` is on
+(`util/git/client.go:783-818`). A gitlink is a submodule entry of a Git
+tree. drydock matches the update:
+
+- A tree without a `.gitmodules` file gets no submodule content. Each
+  gitlink stays an empty directory.
+- Each gitlink needs a module in `.gitmodules` with its path and a URL.
+  Without one, the source fails, as `git submodule update` fails with "No
+  url found for submodule path".
+- A module with `update = none` stays an empty directory.
+- A relative URL (`../child.git`) resolves against the repository URL, as
+  git resolves it against `origin`. A nested submodule resolves against
+  the URL of its parent submodule.
+- Only the `http`, `https`, `git`, and `ssh` transports work. The
+  repo-server's git refuses `file` URLs and local paths for submodules
+  (`protocol.file.allow=user`), and drydock refuses them too.
+- drydock follows nested submodules to 8 levels and 256 submodules. git
+  has no such limit. A deeper tree fails.
+
+drydock reads submodule content from these places:
+
+- A fetched Git source checks out its submodules into drydock's Git cache.
+  Each submodule commit is its own cache entry, keyed by the submodule URL
+  and the commit, so `--offline` reads it. With `--offline`, a submodule
+  commit that is not in the cache fails as an offline cache miss.
+- A `--ref` or `--ref-orig` snapshot reads each submodule commit from the
+  repository's own `.git/modules` store first. That needs no network.
+  Then it reads drydock's Git cache, and then, unless `--offline` is set,
+  it fetches the submodule into that cache. With `--offline` and no copy,
+  the snapshot fails as an offline cache miss. drydock never writes to the
+  repository or its `.git` directory.
+- A remote Kustomize Git base checks out its submodules into the remote
+  cache, as kustomize does, unless the ref says `?submodules=false`.
+- A working tree is rendered as it is. A submodule at another commit, or
+  with local edits, is a working-tree preview like any other local edit.
+  A submodule that is not initialized holds an empty directory, so drydock
+  warns `render.submodule-not-initialized` for a source in it. Run
+  `git submodule update --init --recursive`, or diff a Git ref with
+  `--ref`.
+
+The repo-server runs `git submodule update` with the credentials of the
+repository. drydock sends a username, password, or bearer token only to a
+submodule on the same host as the repository. SSH keys work for every
+host. This is a recorded difference: a `.gitmodules` file cannot send
+drydock's HTTP credentials to another host.
+
+drydock takes a `--ref` snapshot before it reads `argocd-cmd-params-cm`,
+so a snapshot always holds submodule content. When
+`reposerver.enable.git.submodule` is `false`, drydock warns
+`render.submodule-content-disabled` and renders that content. This is a
+recorded difference. A fetched Git source follows the setting exactly.
+
+The repo-server also does these things, which drydock does not model:
+
+- It keeps one checkout per repository between requests. With
+  submodules off and no clean, an old submodule directory can stay.
+- It runs `git submodule update` with `GIT_LFS_SKIP_SMUDGE=1` and runs
+  `git lfs checkout` in the top repository only. drydock leaves Git LFS
+  pointer files in submodules as pointers too.
+
+A Git LFS pointer file is a small text file that names the content of a
+large file by its SHA-256. When a repository Secret sets `enableLfs`, the
+repo-server runs `git lfs fetch --all` and `git lfs checkout`, so the
+checkout holds the content (`util/git/client.go:710-719` and `799-811`).
+Without it, every git command runs with `GIT_LFS_SKIP_SMUDGE=1`, so the
+checkout holds the pointer files. drydock reads `enableLfs` from a
+repository Secret like `enableOCI`. drydock does not run git-lfs and does
+not download Git LFS objects:
+
+- A `--ref` snapshot gets the content of each pointer file from the
+  repository's `.git/lfs/objects` store. drydock makes sure that the size
+  and the SHA-256 of the object match the pointer. The render cache keys
+  the snapshot on the objects that are missing, so a render runs again
+  after `git lfs fetch`.
+- A pointer file that drydock cannot fill stays a pointer, and drydock
+  warns `render.lfs-pointer`. This happens for every pointer file of a
+  fetched Git source, for a snapshot whose object is not in `.git/lfs`,
+  and for a working-tree file that still holds the pointer of `HEAD`.
+- drydock never writes a working tree. A working tree with Git LFS content
+  from `git lfs pull` renders that content also without `enableLfs`, where
+  the repo-server renders the pointer. This is a working-tree preview
+  difference.
+
+The render parity smoke renders a directory in a submodule and a Kustomize
+overlay whose base is in a submodule. Its git daemon cannot serve Git LFS,
+so unit tests cover the Git LFS cases.
+
 ## Rendering
 
 Supported:
@@ -1327,6 +1423,14 @@ Supported:
   how the Git files generator matches its patterns. The second adds hidden
   directories to the Git and OCI directory generators. Earlier drydock
   releases read both keys as metadata only.
+- drydock reads `reposerver.enable.git.submodule` and
+  `applicationsetcontroller.enable.git.submodule` the same way. Argo CD
+  passes both to `ARGOCD_GIT_MODULES_ENABLED`, which is `true` unless the
+  value is `false` in any case. The first decides whether a rendered Git
+  source holds submodule content. The second decides whether the Git
+  generator sees it. Earlier drydock releases read the first key as
+  metadata only and never fetched submodule content. See
+  [Git Submodules and Git LFS](#git-submodules-and-git-lfs).
 - An `argocd-cmd-params-cm` from a rendered Application can set the flag
   late, after drydock expanded the ApplicationSets with the earlier value.
   Then drydock runs discovery a second time with the final value, but only

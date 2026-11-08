@@ -63,6 +63,27 @@ DIRECTORY_DECODE_PLUGIN_APPLICATIONS=()
 # never holds it. Its Application lives in the directory decode namespace.
 OOB_SYMLINK_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/oob-symlink.git"
 OOB_SYMLINK_FIXTURE_PATH="${REPO_ROOT}/testdata/argocd-parity/oob-symlink-repo"
+# Two Git repositories for the submodule cases. submodule-parent.git holds
+# the submodule "child" at the commit of submodule-child.git, with the
+# relative URL ../submodule-child.git in .gitmodules, so the Argo CD
+# repo-server resolves it against the parent's git:// URL and runs `git
+# submodule update --init --recursive` (reposerver.enable.git.submodule is
+# on by default). drydock reads the parent's local clone, whose submodule
+# is initialized, through --repo-map.
+SUBMODULE_PARENT_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/submodule-parent.git"
+SUBMODULE_FIXTURE_PATH="${REPO_ROOT}/testdata/argocd-parity/submodule-repos"
+# The Applications that render from submodule-parent.git: a directory in
+# the submodule, and a Kustomize overlay in the parent whose base is in the
+# submodule.
+SUBMODULE_APPLICATIONS=(
+  parity-submodule-directory
+  parity-submodule-kustomize
+)
+# Set by prepare_submodule_repos: the local clone of
+# SUBMODULE_PARENT_REPO_URL, and the --repo-map arguments that point
+# drydock at it.
+SUBMODULE_PARENT_WORK=""
+SUBMODULE_REPO_MAP_ARGS=()
 # The live diff smoke checks drydock's diff normalization against Argo CD
 # sync status. Its Git repository has two tagged commits: live-diff/repo is
 # the first, and live-diff/change holds the files that the second commit
@@ -325,6 +346,8 @@ PORT_FORWARD_PID=""
 REGISTRY_PORT_FORWARD_PID=""
 
 APPLICATIONS=(
+  parity-submodule-directory
+  parity-submodule-kustomize
   parity-oci-config
   parity-oci-helm-nested
   parity-oci-helm-chart-ignored
@@ -797,6 +820,7 @@ for project_policy_phase_dir in "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}" "${PRO
 done
 [[ -f "${DIRECTORY_DECODE_EXPECTED}" ]] || fail "directory decode expected file not found: ${DIRECTORY_DECODE_EXPECTED}"
 [[ -d "${OOB_SYMLINK_FIXTURE_PATH}" ]] || fail "out-of-bounds symlink fixture repo not found: ${OOB_SYMLINK_FIXTURE_PATH}"
+[[ -d "${SUBMODULE_FIXTURE_PATH}/parent" && -d "${SUBMODULE_FIXTURE_PATH}/child" ]] || fail "submodule fixture repos not found: ${SUBMODULE_FIXTURE_PATH}"
 [[ -f "${LIVE_DIFF_EXPECTED}" ]] || fail "live diff expected file not found: ${LIVE_DIFF_EXPECTED}"
 [[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
 [[ -f "${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml" ]] || fail "source type gate Applications not found: ${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml"
@@ -990,6 +1014,38 @@ prepare_oob_symlink_repo() {
   git --git-dir="${WORK_DIR}/oob-symlink.git" update-server-info
 }
 
+# prepare_submodule_repos builds WORK_DIR/submodule-child.git from the
+# child fixture and WORK_DIR/submodule-parent.git from the parent fixture
+# with the child as the submodule "child". The local clone that drydock
+# reads keeps the submodule initialized. Only this local build allows the
+# file transport; the served .gitmodules URL is relative.
+prepare_submodule_repos() {
+  local child_work="${WORK_DIR}/submodule-child-src"
+  SUBMODULE_PARENT_WORK="${WORK_DIR}/submodule-parent-src"
+  mkdir -p "${child_work}" "${SUBMODULE_PARENT_WORK}"
+  cp -R "${SUBMODULE_FIXTURE_PATH}/child/." "${child_work}/"
+  cp -R "${SUBMODULE_FIXTURE_PATH}/parent/." "${SUBMODULE_PARENT_WORK}/"
+  git -C "${child_work}" init --initial-branch=main >/dev/null
+  git -C "${child_work}" config user.email "drydock@example.invalid"
+  git -C "${child_work}" config user.name "drydock render parity smoke"
+  git -C "${child_work}" add .
+  git -C "${child_work}" commit -m "seed submodule child fixture" >/dev/null
+  git clone --bare --no-hardlinks "${child_work}" "${WORK_DIR}/submodule-child.git" >/dev/null
+  git --git-dir="${WORK_DIR}/submodule-child.git" update-server-info
+  git -C "${SUBMODULE_PARENT_WORK}" init --initial-branch=main >/dev/null
+  git -C "${SUBMODULE_PARENT_WORK}" config user.email "drydock@example.invalid"
+  git -C "${SUBMODULE_PARENT_WORK}" config user.name "drydock render parity smoke"
+  git -C "${SUBMODULE_PARENT_WORK}" -c protocol.file.allow=always submodule add -q "${WORK_DIR}/submodule-child.git" child >/dev/null
+  git -C "${SUBMODULE_PARENT_WORK}" config -f .gitmodules submodule.child.url ../submodule-child.git
+  git -C "${SUBMODULE_PARENT_WORK}" add .
+  git -C "${SUBMODULE_PARENT_WORK}" commit -m "seed submodule parent fixture" >/dev/null
+  [[ "$(git -C "${SUBMODULE_PARENT_WORK}" ls-files -s child | cut -d' ' -f1)" == "160000" ]] \
+    || fail "submodule parent fixture lost its gitlink child"
+  git clone --bare --no-hardlinks "${SUBMODULE_PARENT_WORK}" "${WORK_DIR}/submodule-parent.git" >/dev/null
+  git --git-dir="${WORK_DIR}/submodule-parent.git" update-server-info
+  SUBMODULE_REPO_MAP_ARGS=(--repo-map "${SUBMODULE_PARENT_REPO_URL}=${SUBMODULE_PARENT_WORK}")
+}
+
 # prepare_live_diff_repo builds the repository of LIVE_DIFF_REPO_URL as
 # WORK_DIR/live-diff.git: one commit tagged LIVE_DIFF_REVISION_A, and a second
 # commit, with the live-diff/change files copied over it, tagged
@@ -1052,6 +1108,7 @@ prepare_fixture_git_image() {
   git clone --bare --no-hardlinks "${FIXTURE_GIT_WORK}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
   prepare_oob_symlink_repo
+  prepare_submodule_repos
   prepare_live_diff_repo
 
   dockerfile="${WORK_DIR}/Dockerfile.git"
@@ -1066,7 +1123,9 @@ COPY --chown=65534:65534 helm-repo /srv/helm
 COPY --chown=65534:65534 repo.git /srv/git/repo.git
 COPY --chown=65534:65534 oob-symlink.git /srv/git/oob-symlink.git
 COPY --chown=65534:65534 live-diff.git /srv/git/live-diff.git
-RUN touch /srv/git/repo.git/git-daemon-export-ok /srv/git/oob-symlink.git/git-daemon-export-ok /srv/git/live-diff.git/git-daemon-export-ok && chmod -R a+rX /srv/git
+COPY --chown=65534:65534 submodule-parent.git /srv/git/submodule-parent.git
+COPY --chown=65534:65534 submodule-child.git /srv/git/submodule-child.git
+RUN touch /srv/git/repo.git/git-daemon-export-ok /srv/git/oob-symlink.git/git-daemon-export-ok /srv/git/live-diff.git/git-daemon-export-ok /srv/git/submodule-parent.git/git-daemon-export-ok /srv/git/submodule-child.git/git-daemon-export-ok && chmod -R a+rX /srv/git
 EXPOSE 9418
 USER 65534:65534
 ENTRYPOINT ["git", "daemon", "--verbose", "--export-all", "--base-path=/srv/git", "--reuseaddr", "--informative-errors", "/srv/git"]
@@ -2090,11 +2149,29 @@ capture_argocd_manifests() {
     fi
     capture_argocd_manifest "${app}" "${app}" "${output_dir}"
   done
+  # Without this check, both sides rendering empty submodules would pass.
+  for app in "${SUBMODULE_APPLICATIONS[@]}"; do
+    require_submodule_content "Argo CD" "${app}" "${output_dir}/${app}.yaml"
+  done
   # Without this check, both sides rendering main would pass.
   grep -qF "name: ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" "${output_dir}/${SOURCE_HYDRATOR_APPLICATION}.yaml" \
     || fail "Argo CD did not render ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP} from branch ${SOURCE_HYDRATOR_BRANCH} for ${SOURCE_HYDRATOR_APPLICATION}"
   for app in "${TENANT_APPLICATIONS[@]}"; do
     capture_argocd_manifest "${TENANT_NAMESPACE}/${app}" "${app}" "${output_dir}"
+  done
+}
+
+# require_submodule_content fails the smoke when the capture of a
+# SUBMODULE_APPLICATIONS entry lacks a ConfigMap from the submodule. Other
+# Applications pass.
+require_submodule_content() {
+  local side="$1" stem="$2" file="$3" app
+  for app in "${SUBMODULE_APPLICATIONS[@]}"; do
+    if [[ "${stem}" == "${app}" ]]; then
+      grep -qF "source: submodule" "${file}" \
+        || fail "${side} did not render the submodule content for ${stem}; see ${file}"
+      return 0
+    fi
   done
 }
 
@@ -2107,6 +2184,7 @@ drydock_build_args() {
   DRYDOCK_BUILD_ARGS=(build app "${app_ref}"
     --path "${FIXTURE_REPO_PATH}"
     --repo-map "${FIXTURE_REPO_URL}=${repo_map_path}"
+    "${SUBMODULE_REPO_MAP_ARGS[@]}"
     --oci-cache-dir "${OCI_CACHE_DIR}"
     --chart-cache-dir "${CHART_CACHE_DIR}"
     --oci-ca-file "${OCI_CA_FILE}"
@@ -2166,6 +2244,7 @@ capture_drydock_manifest() {
       source.oci-chart-ignored \
       "an oci:// repoURL with chart: set must warn once and render the artifact"
   fi
+  require_submodule_content "drydock" "${stem}" "${output_dir}/${stem}.yaml"
   if [[ "${stem}" == "${SOURCE_HYDRATOR_APPLICATION}" ]]; then
     grep -qF "name: ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" "${output_dir}/${stem}.yaml" \
       || fail "drydock did not render ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP} from branch ${SOURCE_HYDRATOR_BRANCH} for ${app_ref}"
@@ -2442,6 +2521,7 @@ capture_drydock_applications() {
   if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" get apps \
     --path "${FIXTURE_REPO_PATH}" \
     --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    "${SUBMODULE_REPO_MAP_ARGS[@]}" \
     --oci-cache-dir "${OCI_CACHE_DIR}" \
     --chart-cache-dir "${CHART_CACHE_DIR}" \
     --oci-ca-file "${OCI_CA_FILE}" \

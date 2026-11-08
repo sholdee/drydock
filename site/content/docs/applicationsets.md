@@ -76,21 +76,34 @@ The test, diff, and image diff steps all receive them.
 
 drydock lists the repository as the Argo CD v3.6.1 repo-server sees its
 checkout of a commit. A checkout holds no `.git` entry below the top level.
-It holds an empty directory only for a gitlink (a submodule). When drydock
-reads a working tree, it also skips every path that Git ignores and does not
-track. It keeps an untracked path that Git does not ignore, because a commit
-can hold it. A `--ref` snapshot holds committed files only, and an empty
-directory for each gitlink.
+A gitlink is the entry of a submodule in a Git tree. When drydock reads a
+working tree, it also skips every path that Git ignores and does not track.
+It keeps an untracked path that Git does not ignore, because a commit can
+hold it. A `--ref` snapshot holds committed files and the content of each
+submodule.
 
 drydock finds the gitlinks in the index of a working tree, in the commit of
 a `--ref` snapshot, and as directories that hold their own `.git`. A gitlink
 is a directory of the checkout, also when it is not on disk. When the
-repository has no `.gitmodules` file, Argo CD fetches no submodule content,
-so each gitlink is an empty directory, and drydock does not look into it,
-also when a working tree holds content there. When the repository has a
-`.gitmodules` file, Argo CD fetches submodule content by default
-(`ARGOCD_GIT_MODULES_ENABLED`), and drydock does not. drydock then warns and
-sees each submodule as the local tree holds it.
+repository has no `.gitmodules` file, Argo CD checks out no submodule
+content, so each gitlink is an empty directory. drydock then does not look
+into it, also when a working tree holds content there. When the repository
+has a `.gitmodules` file, Argo CD checks out submodule content by default,
+and the Git generators see it. drydock does the same:
+
+- The directories generator and the new globbing see the files of each
+  submodule.
+- `git ls-files` lists a gitlink as one entry and nothing in it, so a Git
+  files pattern without new globbing never matches a file in a submodule.
+- When `applicationsetcontroller.enable.git.submodule` in
+  `argocd-cmd-params-cm` is `false`, each gitlink is an empty directory
+  again.
+- When a working tree does not hold a submodule because it is not
+  initialized, drydock warns. Run `git submodule update --init
+  --recursive`, or diff a Git ref with `--ref`.
+
+See [Git Submodules and Git LFS](/compatibility/#git-submodules-and-git-lfs)
+for where drydock reads submodule content.
 
 When a Git generator defines both `directories` and `files`, Argo CD's
 directory-first dispatch is used and `files` are ignored. `exclude: true`

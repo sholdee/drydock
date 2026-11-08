@@ -92,6 +92,37 @@ emits a `source.self-repo-near-miss` warning and keeps remote acquisition; add
 `--repo-map URL=PATH` if they are the same repository. The warning is advisory
 only: `--strict` neither escalates it nor fails the run on it.
 
+### Git Submodules
+
+A submodule is a Git repository that another repository pins at one
+commit. The Argo CD repo-server checks out submodule content by default
+(`reposerver.enable.git.submodule`). drydock reads that content from these
+places:
+
+- A fetched Git source checks out its submodules into the Git cache. Each
+  submodule commit is its own cache entry, so `--offline` reads it.
+- A `--ref` or `--ref-orig` snapshot reads each submodule commit from the
+  repository's `.git/modules` store first. That needs no network. Then it
+  reads the Git cache, and then, unless `--offline` is set, it fetches the
+  submodule into the Git cache.
+- A remote Kustomize Git base checks out its submodules into the remote
+  cache, unless the ref says `?submodules=false`.
+- A self-repository source in a working tree reads the submodule as the
+  working tree holds it. If the submodule is not initialized, drydock warns.
+
+With `--offline`, a submodule commit that drydock has no copy of fails as
+an offline cache miss. drydock never writes to your repository or its
+`.git` directory. Relative submodule URLs resolve against the repository
+URL. drydock sends HTTP credentials only to a submodule on the same host as
+the repository, and refuses `file` URLs and local paths, as the
+repo-server's git does.
+
+drydock does not download Git LFS objects. When a repository Secret sets
+`enableLfs`, a `--ref` snapshot reads Git LFS content from the repository's
+`.git/lfs` store, and drydock warns `render.lfs-pointer` for each source
+whose tree still holds pointer files. See
+[Compatibility](/compatibility/#git-submodules-and-git-lfs).
+
 ## Helm Sources
 
 Chart-only HTTP(S) and OCI Helm sources may be fetched into the chart cache
