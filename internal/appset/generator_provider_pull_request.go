@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
-	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/gosimple/slug"
+	"github.com/gosimple/unidecode"
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
@@ -258,9 +260,9 @@ func pullRequestParams(input PullRequestInput, values map[string]string, useGoTe
 		"number":             strconv.Itoa(input.Number),
 		"title":              input.Title,
 		"branch":             input.Branch,
-		"branch_slug":        appsetutils.SlugifyName(50, false, input.Branch),
+		"branch_slug":        pullRequestBranchSlug(input.Branch),
 		"target_branch":      input.TargetBranch,
-		"target_branch_slug": appsetutils.SlugifyName(50, false, input.TargetBranch),
+		"target_branch_slug": pullRequestBranchSlug(input.TargetBranch),
 		"head_sha":           input.HeadSHA,
 		"head_short_sha":     shortString(input.HeadSHA, 8),
 		"head_short_sha_7":   shortString(input.HeadSHA, 7),
@@ -273,4 +275,61 @@ func pullRequestParams(input PullRequestInput, values map[string]string, useGoTe
 		return nil, err
 	}
 	return params, nil
+}
+
+// pullRequestSlugMaxLength is the slug.MaxLength that the Argo CD v3.6.1
+// pull request generator sets, to leave room in a 63-character DNS label
+// (applicationset/generators/pull_request.go:84-88).
+const pullRequestSlugMaxLength = 50
+
+var (
+	// pullRequestSlugCustomSub is the slug.CustomSub that the pull request
+	// generator sets (pull_request.go:90-93).
+	pullRequestSlugCustomSub = map[string]string{"_": "-"}
+	// pullRequestSlugEnglishSub is the "en" language table of
+	// github.com/gosimple/slug v1.15.0 (languages_substitution.go), which
+	// slug.Make uses.
+	pullRequestSlugEnglishSub     = map[rune]string{'&': "and", '@': "at"}
+	pullRequestSlugNonAuthorized  = regexp.MustCompile("[^a-zA-Z0-9-_]")
+	pullRequestSlugMultipleDashes = regexp.MustCompile("-+")
+)
+
+// pullRequestBranchSlug computes branch_slug and target_branch_slug as the
+// Argo CD v3.6.1 pull request generator does: slug.Make from
+// github.com/gosimple/slug v1.15.0 with MaxLength 50, "_" substituted by
+// "-", and the library defaults for every other option, so smart
+// truncation cuts after the last whole word and accented letters become
+// plain ASCII ("fix/café-crème" gives "fix-cafe-creme"). It does not call
+// slug.Make, because slug keeps its options in package variables that
+// appsetutils.SlugifyName (the slugify template function) also sets.
+//
+// Argo CD sets MaxLength and CustomSub before each run but leaves
+// EnableSmartTruncate as the last slugify call in the controller process
+// set it. This uses the library default, true, which holds unless a
+// template in the same controller calls slugify with smartTruncate false.
+func pullRequestBranchSlug(branch string) string {
+	out := strings.TrimSpace(branch)
+	out = slug.Substitute(out, pullRequestSlugCustomSub)
+	out = slug.SubstituteRune(out, pullRequestSlugEnglishSub)
+	out = unidecode.Unidecode(out)
+	out = strings.ToLower(out)
+	out = pullRequestSlugNonAuthorized.ReplaceAllString(out, "-")
+	out = pullRequestSlugMultipleDashes.ReplaceAllString(out, "-")
+	out = strings.Trim(out, "-_")
+	return pullRequestSlugSmartTruncate(out)
+}
+
+// pullRequestSlugSmartTruncate mirrors smartTruncate in
+// github.com/gosimple/slug v1.15.0: a slug longer than the limit is cut at
+// the last "-" at or before the limit, or at the limit when there is none.
+func pullRequestSlugSmartTruncate(text string) string {
+	if len(text) <= pullRequestSlugMaxLength {
+		return text
+	}
+	for i := pullRequestSlugMaxLength; i >= 0; i-- {
+		if text[i] == '-' {
+			return text[:i]
+		}
+	}
+	return text[:pullRequestSlugMaxLength]
 }
