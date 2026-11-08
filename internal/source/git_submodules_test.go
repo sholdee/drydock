@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	git "github.com/go-git/go-git/v5"
+	cachepkg "github.com/sholdee/drydock/internal/cache"
 	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/gittree/submoduletest"
 )
@@ -319,5 +321,29 @@ func TestSubmoduleCredentialsUseInheritedUserinfoInScope(t *testing.T) {
 	ref.URL = "https://other.example.test/org/sub.git"
 	if got := submoduleCredentials(GitCredentials{}, "https://git.example.test/org/repo.git", ref); got.Username != "" || got.Password != "" {
 		t.Fatalf("credentials = %+v, want none for another host", got)
+	}
+}
+
+// TestDefaultGitAcquirerScrubsUserinfoFromOldEntries pins that a cache
+// entry that an older drydock cloned from a URL with userinfo loses the
+// userinfo from its .git/config on its next use, offline too.
+func TestDefaultGitAcquirerScrubsUserinfoFromOldEntries(t *testing.T) {
+	fixture := submoduletest.New(t)
+	const token = "SECRET-TOKEN-OLD"
+	withUserinfo := strings.Replace(fixture.ParentURL, "file://", "file://ci-token:"+token+"@", 1)
+	cacheDir := t.TempDir()
+	path := cachepkg.GitEntryPath(cacheDir, GitCacheKey(withUserinfo, "main"))
+	if _, err := git.PlainClone(path, false, &git.CloneOptions{URL: withUserinfo}); err != nil {
+		t.Fatalf("clone the old entry: %v", err)
+	}
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), GitRequest{URL: withUserinfo, Revision: "main"}, GitOptions{CacheDir: cacheDir}); err != nil {
+		t.Fatalf("offline Acquire() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(path, ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), token) {
+		t.Fatalf(".git/config still holds the userinfo: %s", data)
 	}
 }

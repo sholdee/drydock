@@ -157,6 +157,9 @@ func acquireCachedGitRepository(ctx context.Context, cachePath, key string, requ
 	if err != nil {
 		return GitResult{}, fmt.Errorf("offline cache miss for Git repository %s", RedactURL(request.URL))
 	}
+	if err := gittree.ScrubRemoteUserinfo(repo); err != nil {
+		return GitResult{}, err
+	}
 	worktree, err := repo.Worktree()
 	if err != nil {
 		return GitResult{}, fmt.Errorf("open cached repository %s worktree: %w", RedactURL(request.URL), err)
@@ -217,7 +220,9 @@ func openExistingGitRepository(cachePath string) (*git.Repository, error) {
 func openOrCloneGitRepository(ctx context.Context, cachePath, repoURL string, auth transport.AuthMethod, credentials GitCredentials) (*git.Repository, bool, error) {
 	repo, err := git.PlainOpen(cachePath)
 	if err == nil {
-		return repo, false, nil
+		// An entry that an older drydock cloned from a URL with userinfo
+		// loses it now.
+		return repo, false, gittree.ScrubRemoteUserinfo(repo)
 	}
 	if !errors.Is(err, git.ErrRepositoryNotExists) {
 		return nil, false, fmt.Errorf("open cached repository %s: %s", RedactURL(repoURL), redactGitError(err, repoURL, credentials))

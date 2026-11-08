@@ -143,7 +143,9 @@ func writeGitRepoMetadata(entryRoot, key, target, revision string) {
 func openCachedGitRepository(cachePath, repoURL string, credentials GitCredentials) (*git.Repository, bool, error) {
 	repo, err := git.PlainOpen(cachePath)
 	if err == nil {
-		return repo, true, nil
+		// An entry that an older drydock cloned from a URL with userinfo
+		// loses it now.
+		return repo, true, gittree.ScrubRemoteUserinfo(repo)
 	}
 	if errors.Is(err, git.ErrRepositoryNotExists) || errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil

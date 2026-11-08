@@ -42,6 +42,9 @@ type SubmoduleRef struct {
 	// one. URL never holds them. An opener may use them as credentials
 	// within the credential scope of the superproject only.
 	Userinfo URLUserinfo
+	// resolvedURL is URL with its userinfo. git resolves the relative URLs
+	// of a nested submodule against it.
+	resolvedURL string
 }
 
 // SubmoduleOpener returns a repository that holds the commit of ref. It
@@ -241,12 +244,13 @@ func (w submoduleWalker) prepareLink(level submoduleLevel, link Gitlink) (Submod
 		return SubmoduleRef{}, false, fmt.Errorf("checkout has more than %d submodules", MaxSubmodules)
 	}
 	return SubmoduleRef{
-		Path:       fullPath,
-		ModuleDirs: append(append([]string(nil), level.moduleDirs...), module.Name),
-		URL:        resolved,
-		Commit:     link.Commit,
-		Transport:  endpoint.Protocol,
-		Userinfo:   userinfo,
+		Path:        fullPath,
+		ModuleDirs:  append(append([]string(nil), level.moduleDirs...), module.Name),
+		URL:         resolved,
+		Commit:      link.Commit,
+		Transport:   endpoint.Protocol,
+		Userinfo:    userinfo,
+		resolvedURL: withUserinfo,
 	}, false, nil
 }
 
@@ -283,7 +287,7 @@ func (w submoduleWalker) checkoutNested(ctx context.Context, level submoduleLeve
 	return w.checkoutLevel(ctx, submoduleLevel{
 		links:      links,
 		modules:    modules,
-		remoteURL:  ref.URL,
+		remoteURL:  ref.resolvedURL,
 		prefix:     ref.Path,
 		moduleDirs: ref.ModuleDirs,
 		depth:      level.depth + 1,

@@ -127,3 +127,32 @@ func TestDefaultAcquirerStoresNoUserinfo(t *testing.T) {
 		t.Fatalf(".git/config holds the userinfo: %s", data)
 	}
 }
+
+// TestDefaultAcquirerScrubsUserinfoFromOldEntries pins that a remote Git
+// entry whose .git/config an older drydock wrote with userinfo loses it on
+// its next use.
+func TestDefaultAcquirerScrubsUserinfoFromOldEntries(t *testing.T) {
+	fixture := submoduletest.New(t)
+	const token = "SECRET-TOKEN-OLD-REMOTE"
+	cacheDir := t.TempDir()
+	request := Request{Kind: RequestGitRepo, RepoURL: fixture.ParentURL, Revision: "main"}
+	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(result.Path, ".git", "config")
+	data, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := strings.Replace(string(data), "file://", "file://ci-token:"+token+"@", 1)
+	if err := os.WriteFile(config, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{CacheDir: cacheDir, Offline: true}); err != nil {
+		t.Fatalf("offline Acquire() error = %v", err)
+	}
+	if data, _ := os.ReadFile(config); strings.Contains(string(data), token) {
+		t.Fatalf(".git/config still holds the userinfo: %s", data)
+	}
+}

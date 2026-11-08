@@ -9,6 +9,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/gitref"
+	"github.com/sholdee/drydock/internal/render"
 )
 
 // snapshotFillRequest takes a snapshot of the submodule fixture and
@@ -55,17 +56,20 @@ func TestAppsetOCIFetcherLeavesSnapshotSubmodulesAlone(t *testing.T) {
 }
 
 // TestSnapshotFillStateGuardFailsSourcesOnChange pins that a provider whose
-// snapshot root another provider filled or emptied fails its sources
-// loudly instead of reading a tree that changed under it.
+// snapshot root another provider emptied fails its sources loudly, through
+// the render path (submoduleRenderDiagnostics), instead of reading a tree
+// that changed under it.
 func TestSnapshotFillStateGuardFailsSourcesOnChange(t *testing.T) {
 	root, request := snapshotFillRequest(t)
 	fill := fillSnapshotSubmodules(context.Background(), root, request, config.ArgoSettings{})
-	if err := fill.checkState(true); err != nil {
-		t.Fatalf("checkState(true) after a fill = %v", err)
+	provider := localProvider{repoRoot: root, gitSubmodules: true, submodules: newRootSubmodules(root, request, fill)}
+	source := render.ResolvedSource{RepoRoot: root, Path: "apps"}
+	if _, err := provider.submoduleRenderDiagnostics(context.Background(), source); err != nil {
+		t.Fatalf("submoduleRenderDiagnostics() before the change = %v", err)
 	}
 	fillSnapshotSubmodules(context.Background(), root, request, submodulesOff())
-	err := fill.checkState(true)
+	_, err := provider.submoduleRenderDiagnostics(context.Background(), source)
 	if err == nil || !strings.Contains(err.Error(), "changed while drydock rendered") {
-		t.Fatalf("checkState(true) after another provider emptied the root = %v, want a clear failure", err)
+		t.Fatalf("submoduleRenderDiagnostics() after another provider emptied the root = %v, want a clear failure", err)
 	}
 }

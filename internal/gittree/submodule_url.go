@@ -171,13 +171,13 @@ func ClassifySubmoduleURL(resolved string, allowFile bool) (*transport.Endpoint,
 
 func validEndpoint(endpoint *transport.Endpoint) error {
 	if !validEndpointHost(endpoint.Host) {
-		return fmt.Errorf("submodule URL host %q is not valid", endpoint.Host)
+		return fmt.Errorf("submodule URL host %q is not valid", hostOnly(endpoint.Host))
 	}
 	if strings.Trim(endpoint.Path, "/") == "" {
 		return fmt.Errorf("submodule URL has no repository path")
 	}
 	if strings.HasPrefix(endpoint.Path, "-") {
-		return fmt.Errorf("submodule URL path %q starts with \"-\"", endpoint.Path)
+		return fmt.Errorf("submodule URL path starts with \"-\"")
 	}
 	return nil
 }

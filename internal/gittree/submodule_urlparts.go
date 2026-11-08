@@ -18,8 +18,11 @@ type urlParts struct {
 	path string
 }
 
+// String names the host and port only. A user, a password, or a path can
+// hold a token (in a misread URL, the path can hold the password), so a
+// refusal never shows them.
 func (p urlParts) String() string {
-	return fmt.Sprintf("user %q, host %q, port %d, path %q", p.user, p.host, p.port, p.path)
+	return fmt.Sprintf("host %q, port %d", hostOnly(p.host), p.port)
 }
 
 // sameURLParts fails unless git and go-git read the same user, host, port,
@@ -32,7 +35,7 @@ func sameURLParts(value string, endpoint *transport.Endpoint) error {
 	goGitParts := urlParts{user: endpoint.User, host: endpoint.Host, port: normalPort(endpoint.Protocol, endpoint.Port), path: requestPath(endpoint)}
 	gitParts.port = normalPort(endpoint.Protocol, gitParts.port)
 	if gitParts != goGitParts {
-		return fmt.Errorf("git reads the submodule URL as %s, but drydock's Git client reads it as %s", gitParts, goGitParts)
+		return fmt.Errorf("git reads the submodule URL as %s, but drydock's Git client reads it as %s, or another user or path", gitParts, goGitParts)
 	}
 	return nil
 }
@@ -92,14 +95,15 @@ func gitURLParts(value, protocol string) (urlParts, error) {
 //     the authority as the host (host_end in connect.c);
 //   - a user in a git URL, which git reads as part of the host.
 func checkURLForm(scheme, value, authority string) error {
-	if strings.ContainsAny(authority, "%[]#?\\") {
-		return fmt.Errorf("submodule URL host %q holds a percent sign, a bracket, \"#\", \"?\", or \"\\\" in its authority", hostOnly(authority))
+	if strings.ContainsAny(authority, "[]#?\\") || strings.Contains(hostOnly(authority), "%") {
+		return fmt.Errorf("submodule URL authority holds a bracket, \"#\", \"?\", or \"\\\", or its host a percent sign")
 	}
 	switch scheme {
 	case "http", "https":
 		if strings.ContainsAny(value, "#?") {
 			return fmt.Errorf("submodule URL holds a query or a fragment, which drydock does not fetch")
 		}
+		return checkHTTPPath(value[len(scheme)+len("://")+len(authority):])
 	case "ssh", "git":
 		if strings.ContainsAny(value, "[]") {
 			return fmt.Errorf("submodule URL holds a bracket")
@@ -107,6 +111,18 @@ func checkURLForm(scheme, value, authority string) error {
 	}
 	if scheme == "git" && strings.Contains(authority, "@") {
 		return fmt.Errorf("submodule URL has a user, which the git transport does not take")
+	}
+	return nil
+}
+
+// checkHTTPPath refuses an http path whose decoded form holds "?", "#",
+// or "%": git sends the path as written, and go-git decodes it and
+// escapes it again, which turns "%3F" into a query, "%23" into a
+// fragment, and "%25" into another escape.
+func checkHTTPPath(path string) error {
+	decoded, err := url.PathUnescape(path)
+	if err != nil || strings.ContainsAny(decoded, "?#%") {
+		return fmt.Errorf("submodule URL path holds an escape that drydock's Git client sends differently")
 	}
 	return nil
 }
@@ -122,7 +138,7 @@ func scpURLParts(value string) (urlParts, error) {
 	}
 	hostPart, path, _ := strings.Cut(value, ":")
 	if strings.HasPrefix(path, ":") || strings.Contains(strings.TrimPrefix(path, "~"), "~") {
-		return urlParts{}, fmt.Errorf("submodule URL path %q is not supported", path)
+		return urlParts{}, fmt.Errorf("submodule URL path is not supported")
 	}
 	parts, err := splitUserHost(hostPart, false)
 	parts.path = path
@@ -146,9 +162,13 @@ func splitUserHost(value string, password bool) (urlParts, error) {
 	}
 	if strings.Contains(user, ":") {
 		if !password {
-			return urlParts{}, fmt.Errorf("submodule URL user %q holds a \":\"", user)
+			return urlParts{}, fmt.Errorf("submodule URL has a password, which only http and https take")
 		}
 		user, _, _ = strings.Cut(user, ":")
+	}
+	if password {
+		// go-git decodes the user of an http URL.
+		user = unescapeUserinfo(user)
 	}
 	return urlParts{user: user, host: host}, nil
 }
@@ -161,7 +181,7 @@ func splitPort(parts urlParts, protocol string) (urlParts, error) {
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {
-		return urlParts{}, fmt.Errorf("submodule URL port %q is not valid for %s", portText, protocol)
+		return urlParts{}, fmt.Errorf("submodule URL port is not a number from 1 to 65535 for %s", protocol)
 	}
 	parts.host = host
 	parts.port = port
