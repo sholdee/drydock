@@ -811,17 +811,86 @@ generator ones. Its output lands in `compare-applications/`.
 
 ### Deliberately not covered by this fixture
 
-- A param file that is not valid YAML or JSON. Argo CD fails the whole
-  ApplicationSet on it: the generator returns the error
-  (`applicationset/generators/repo_path_utils.go:183-186` and `:364-367`),
-  and the controller sets `ErrorOccurred` and returns before it creates or
-  updates any Application, even from other generators
-  (`applicationset/controllers/applicationset_controller.go:199-216`).
-  drydock reports a diagnostic and skips the file.
-  That difference is documented, and a fixture for it fails the comparison.
-- `reposerver.include.hidden.directories`: drydock does not read that
-  repo-server setting, and the smoke keeps the default.
+- A param file that is not valid YAML or JSON. Argo CD and drydock both
+  fail the whole ApplicationSet on it. The Git generator fixture covers that
+  failure with a Git param file, because the code is the same for both
+  generators (`applicationset/generators/repo_path_utils.go:363-367`).
+- `reposerver.include.hidden.directories: "true"`. drydock reads the key,
+  and unit tests cover it. The smoke keeps the default for the whole install,
+  because the key changes every directory generator.
 - `requeueAfterSeconds` and semver revisions on the generator.
+
+## Git generator fixture
+
+The ApplicationSets `git-*.yaml` in `repo/applicationsets/` pin the Argo CD
+v3.6.1 Git generator. Their param files and directories are in
+`repo/workloads/appset/git-parity/`. The smoke keeps the defaults of
+`applicationsetcontroller.enable.new.git.file.globbing` and
+`reposerver.include.hidden.directories`. Unit tests cover both keys set to
+`true`.
+
+| ApplicationSet | case | result on both sides |
+| --- | --- | --- |
+| `parity-git-files-pathspec` | `pathspec/*/config.yaml` and the directory `prefix` as file patterns | `parity-git-ps-{a,a-b,c,linked,p-one,p-two}` |
+| `parity-git-directories-as-written` | `./...`, a trailing `/`, a malformed `[`, a plain path, and `dirs/*` with a hidden directory | `parity-git-written-{alpha,visible}` |
+| `parity-git-bad-param` | a param file that is a list of strings | no Applications, `ErrorOccurred` |
+| `parity-git-outside-pattern` | the file pattern `../outside.yaml` | no Applications, `ErrorOccurred` |
+| `parity-git-symlinked-directory` | a file pattern that matches a symlink to a directory | no Applications, `ErrorOccurred` |
+
+The default Git files generator runs `git ls-files -- <pattern>`
+(`util/git/client.go:763-770`). In a git pathspec, `*` also matches `/`, so
+`pathspec/*/config.yaml` matches `pathspec/a/b/config.yaml`. A pattern that
+names a directory matches every file below it, so `prefix` matches
+`prefix/one.yaml` and `prefix/deep/two.json`. `pathspec/link/config.yaml` is
+a symlink to `targets/linked.yaml`. `git ls-files` lists the symlink, and the
+repo-server reads it through to its target
+(`reposerver/repository/repository.go:3363-3369`). Earlier drydock releases
+matched doublestar globs and skipped every symlink, so they generated only
+`a` and `c`.
+
+Directory patterns match with `path.Match` as written
+(`applicationset/generators/repo_path_utils.go:70-101`). So
+`./workloads/appset/git/*` and `workloads/appset/git/*/` match nothing, and
+Argo CD logs and skips `workloads/appset/git/[`. Earlier drydock releases
+cleaned the patterns and failed the whole run on the malformed one. The
+repo-server walk skips `dirs/.hidden`.
+
+Each of the failing ApplicationSets also has a list generator. Argo CD
+fails the whole ApplicationSet, so the list element creates no Application
+either (`applicationset/controllers/applicationset_controller.go:199-216`).
+The smoke waits for the `ErrorOccurred` message of each one in
+`APPLICATIONSET_ERRORS`. Then `compare_applicationset_errors` requires the
+drydock warning `appset.generator-failed` for the same file, with the same
+text. git refuses `../outside.yaml`
+with "is outside repository". The repo-server cannot read the symlink to a
+directory, so it fails with "is a directory".
+
+`git-missing-project/` holds a Git generator ApplicationSet whose template
+names the AppProject `parity-missing-project`, which does not exist, and one
+AppProject. The Git generator gets that AppProject before it lists anything
+and fails the whole ApplicationSet (`applicationset/generators/git.go:93-111`).
+drydock cannot know the AppProjects of the cluster offline. They can come
+from another repository, a chart, a remote Kustomize base, or the cluster
+itself. So drydock keeps the Applications and warns `project.missing`. This
+is a recorded difference, and the case has its own directory, out of the
+main inventory. `run_git_missing_project_smoke` applies the directory after
+the main comparisons. Argo CD must report the `ErrorOccurred` condition and
+create no Application. drydock, run on the directory alone, must keep the
+Application of the list generator and the one that the Git generator
+generates from `workloads/appset/git/alpha` in the directory. `diag` and
+`build` must warn `project.missing` exactly once for each of them, with the
+note that the Git generator fails the whole ApplicationSet.
+
+### Deliberately not covered by this fixture
+
+- Paths that Git ignores and does not track. An Argo CD checkout never holds
+  them, and drydock skips them in a working tree. A smoke case would have to
+  write an ignored file into the drydock checkout. Unit tests cover it.
+- Untracked paths that Git does not ignore. drydock keeps them in a working
+  tree, and an Argo CD checkout does not hold them. This is a recorded
+  difference.
+- A symlinked param file whose target is outside the repository or in
+  `.git`. Argo CD reads the target, and drydock warns and skips the file.
 
 ## Helm block scalar fixture
 

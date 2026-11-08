@@ -255,6 +255,15 @@ CRD_REJECTED_DIR="${REPO_ROOT}/testdata/argocd-parity/crd-rejected"
 MISSING_PROJECT_DIR="${REPO_ROOT}/testdata/argocd-parity/missing-project"
 MISSING_PROJECT_APPLICATIONSET="parity-validation-missing-project"
 MISSING_PROJECT_MESSAGE="application references project parity-missing-project which does not exist"
+# A Git generator ApplicationSet whose template names a missing AppProject.
+# Argo CD fails it, but drydock cannot know the AppProjects of the cluster,
+# so it keeps the Applications and warns. The two sides differ on purpose,
+# so the case has its own directory, out of the main inventory
+# (run_git_missing_project_smoke).
+GIT_MISSING_PROJECT_DIR="${REPO_ROOT}/testdata/argocd-parity/git-missing-project"
+GIT_MISSING_PROJECT_APPLICATIONSET="parity-git-missing-project"
+GIT_MISSING_PROJECT_MESSAGE="error getting project parity-missing-project"
+GIT_MISSING_PROJECT_WARNING="references missing AppProject \"parity-missing-project\"; ApplicationSet argocd/parity-git-missing-project generates it, and its Git generator looks that AppProject up first, so the Argo CD ApplicationSet controller fails the whole ApplicationSet"
 CRD_REJECTED_APPLICATION="parity-crd-sync-path-dot"
 CRD_REJECTED_MESSAGE="Invalid value: \".\": spec.sourceHydrator.syncSource.path in body should match"
 # The HTTP Helm repository fixture. A second container in the registry Pod
@@ -343,6 +352,21 @@ APPLICATIONS=(
   parity-git-beta
   parity-git-file-alpha
   parity-git-file-beta
+  # The Git files generator matches git pathspecs, as `git ls-files` does:
+  # "*" matches "/" (parity-git-ps-a-b), a directory matches every file
+  # below it (parity-git-ps-p-one and -p-two), and a symlinked param file is
+  # read through to its target (parity-git-ps-linked).
+  parity-git-ps-a
+  parity-git-ps-a-b
+  parity-git-ps-c
+  parity-git-ps-linked
+  parity-git-ps-p-one
+  parity-git-ps-p-two
+  # Git directory patterns match as written: "./" and a trailing "/" match
+  # nothing, a malformed pattern is skipped, and hidden directories are not
+  # listed.
+  parity-git-written-alpha
+  parity-git-written-visible
   parity-list-alpha
   parity-list-beta
   parity-merge-alpha
@@ -551,6 +575,12 @@ APP_REVISION_TAG_OBJECT_ABSENT=(
 # Applications are in APPLICATIONS. run_missing_project_smoke checks the
 # missing AppProject case on its own.
 #
+# The parity-git-* entries each fail in their Git generator. Argo CD then
+# generates nothing for the whole ApplicationSet, the Applications of its
+# list generator included, so none of their Applications are in
+# APPLICATIONS. run_git_missing_project_smoke checks the missing AppProject
+# of a Git generator on its own.
+#
 # A matrix or merge param type clash cannot be listed here. Argo CD v3.6.1
 # panics in that merge, and Reconcile recovers the panic and returns before
 # it sets any condition
@@ -565,6 +595,9 @@ APPLICATIONSET_ERRORS=(
   "parity-gen-error-merge-keys|error getting param sets by merge key: the parameters from a generator were not unique by the given mergeKeys, Merge requires all param sets to be unique. Duplicate key was {\"suffix\":\"merged\"}|appset.generator-failed|applicationsets/generator-error-merge-keys.yaml"
   "parity-gen-error-matrix-count|found less than two generators, Matrix support only two|appset.generator-failed|applicationsets/generator-error-matrix-count.yaml"
   "parity-gen-error-cluster-selector|error getting cluster secrets: error converting label selector: values[0][parity.drydock.dev/role]: Invalid value: \"https://alpha.parity-clusters.invalid\"|appset.generator-failed|applicationsets/generator-error-cluster-selector.yaml"
+  "parity-git-bad-param|unable to process file 'workloads/appset/git-parity/bad-param/list-of-strings.yaml'|appset.generator-failed|applicationsets/git-bad-param.yaml"
+  "parity-git-outside-pattern|is outside repository|appset.generator-failed|applicationsets/git-outside-pattern.yaml"
+  "parity-git-symlinked-directory|is a directory|appset.generator-failed|applicationsets/git-symlinked-directory.yaml"
 )
 
 # RollingSync ApplicationSets, as "name|type|status|reason|message|code"
@@ -1765,6 +1798,66 @@ wait_for_applicationset_errors() {
     IFS='|' read -r appset expected _code _path <<< "${entry}"
     wait_for_applicationset_error "${appset}" "${expected}"
   done
+}
+
+# run_git_missing_project_smoke applies GIT_MISSING_PROJECT_DIR after the
+# main comparisons, so its ApplicationSet stays out of the main inventory.
+# Argo CD must report the missing AppProject in an ErrorOccurred condition
+# and create no Application, also not the one of its list generator. This is
+# a recorded difference: drydock cannot know the AppProjects of the cluster
+# offline, so drydock, run on the directory alone, must keep the Application
+# of the list generator and the one that the Git generator generates from
+# workloads/appset/git/alpha in the directory. diag and build must warn
+# project.missing once for each, with the Git generator note.
+run_git_missing_project_smoke() {
+  local output_dir stdout_file stderr_file diag_stderr build_stderr names app count
+  log_step "Checking a Git generator whose AppProject is missing"
+  kubectl apply -f "${GIT_MISSING_PROJECT_DIR}" >/dev/null
+  wait_for_applicationset_error "${GIT_MISSING_PROJECT_APPLICATIONSET}" "${GIT_MISSING_PROJECT_MESSAGE}"
+  names="$(kubectl -n argocd get applications.argoproj.io -o name | grep '/parity-git-missing-project-' || true)"
+  [[ -z "${names}" ]] \
+    || fail "Argo CD created ${names} for ${GIT_MISSING_PROJECT_APPLICATIONSET}, whose AppProject does not exist"
+  output_dir="$(artifact_dir git-missing-project)"
+  stdout_file="${output_dir}/drydock.txt"
+  stderr_file="${output_dir}/drydock.stderr"
+  diag_stderr="${output_dir}/drydock-diag.stderr"
+  build_stderr="${output_dir}/drydock-build.stderr"
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" get apps \
+    --path "${GIT_MISSING_PROJECT_DIR}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --offline > "${stdout_file}" 2> "${stderr_file}"); then
+    cat "${stderr_file}" >&2 || true
+    fail "drydock get apps on ${GIT_MISSING_PROJECT_DIR} failed; see ${stderr_file}"
+  fi
+  names="$(awk 'NR > 1 { print $2 }' "${stdout_file}" | sort | tr '\n' ' ')"
+  [[ "${names}" == "parity-git-missing-project-alpha parity-git-missing-project-from-list " ]] \
+    || fail "drydock listed '${names}' for ${GIT_MISSING_PROJECT_DIR}; want parity-git-missing-project-alpha and parity-git-missing-project-from-list; see ${stdout_file}"
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diag \
+    --path "${GIT_MISSING_PROJECT_DIR}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --offline > "${output_dir}/drydock-diag.txt" 2> "${diag_stderr}"); then
+    cat "${diag_stderr}" >&2 || true
+    fail "drydock diag on ${GIT_MISSING_PROJECT_DIR} failed; see ${diag_stderr}"
+  fi
+  # build validates the AppProject before and after rendering. Both checks
+  # give the same text, so exactly one warning must remain for each
+  # Application.
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build apps \
+    --path "${GIT_MISSING_PROJECT_DIR}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --offline > "${output_dir}/drydock-build.yaml" 2> "${build_stderr}"); then
+    cat "${build_stderr}" >&2 || true
+    fail "drydock build apps on ${GIT_MISSING_PROJECT_DIR} failed; see ${build_stderr}"
+  fi
+  for app in parity-git-missing-project-alpha parity-git-missing-project-from-list; do
+    grep -F "warning project.missing: Application argocd/${app} ${GIT_MISSING_PROJECT_WARNING}" "${diag_stderr}" >/dev/null \
+      || fail "drydock diag did not warn project.missing for ${app} with the Git generator note; see ${diag_stderr}"
+    count="$(grep -cF "warning project.missing: Application argocd/${app} " "${build_stderr}" || true)"
+    [[ "${count}" == "1" ]] \
+      || fail "drydock build apps gave ${count} project.missing warnings for ${app}; want exactly one; see ${build_stderr}"
+  done
+  kubectl delete -f "${GIT_MISSING_PROJECT_DIR}" --wait=false >/dev/null || true
+  echo "Missing AppProject in a Git generator: Argo CD fails the ApplicationSet, and drydock keeps its Applications with one warning each (recorded divergence)" >&2
 }
 
 # compare_applicationset_errors checks the drydock side of
@@ -3325,6 +3418,7 @@ main() {
   run_source_type_gates_smoke
   run_kustomize_build_options_smoke
   run_missing_project_smoke
+  run_git_missing_project_smoke
   echo "Argo CD render parity smoke complete: ${OUT_DIR}" >&2
 }
 
