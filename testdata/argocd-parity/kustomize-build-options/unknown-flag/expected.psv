@@ -1,0 +1,2 @@
+# fail|Application|text of the Argo CD ComparisonError|text of the drydock error
+fail|parity-kbuild-unknown-flag|Error: unknown flag: --no-such-flag|kustomize build: unknown flag: --no-such-flag

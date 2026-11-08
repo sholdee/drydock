@@ -262,7 +262,10 @@ func (o Orchestrator) applyExplicitKustomizeDiscovery(ctx context.Context, root 
 
 func (o Orchestrator) discoverRenderedKustomize(ctx context.Context, root string, settings config.ArgoSettings, request BuildRequest) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {
 	recorder := cacheevent.NewRecorder(request.RecordCacheEvents)
-	provider, cleanup, err := o.discoveryProvider(ctx, root, settings, request, recorder)
+	// A --discover-kustomize path is not an Argo CD source, so
+	// kustomize.buildOptions does not decide its flags. It is usually the
+	// install that a bootstrap builds with --enable-helm.
+	provider, cleanup, err := o.discoveryProvider(ctx, root, settings.WithKustomizeHelmAssumed(), request, recorder)
 	if err != nil {
 		return discovery.Result{}, nil, recorder.Events(), err
 	}
@@ -478,7 +481,11 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 	}
 
 	recorder := cacheevent.NewRecorder(request.RecordCacheEvents)
-	provider, cleanup, err := o.discoveryProvider(ctx, root, settings, request, recorder)
+	// The render reads the settings that the install creates, so the
+	// settings found so far must not stop it (WithKustomizeHelmAssumed).
+	// Its cache key starts with "settings-install", apart from the keys of
+	// the final render, which uses the found settings as Argo CD does.
+	provider, cleanup, err := o.discoveryProvider(ctx, root, settings.WithKustomizeHelmAssumed(), request, recorder)
 	if err != nil {
 		return discovery.Result{}, true, nil, recorder.Events(), err
 	}

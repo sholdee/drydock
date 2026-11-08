@@ -9,6 +9,7 @@ import (
 
 func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePointer string) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
+	settings.ArgoCDConfigMapFound = true
 	if values == nil {
 		return diags
 	}
@@ -28,6 +29,7 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 		settings.HelmValuesFileSchemesSource = provenance
 	}
 	diags = appendVersionedKustomizeDiagnostics(values, path, basePointer, diags)
+	diags = append(diags, applyKustomizeVersionKeys(settings, values, path, basePointer)...)
 	applySourceTypeEnableKeys(settings, values, path, basePointer)
 	if raw := values["application.resourceTrackingMethod"]; raw != "" {
 		settings.TrackingMethod = Value[string]{
@@ -127,14 +129,19 @@ func applySourceTypeEnableKeys(settings *ArgoSettings, values map[string]string,
 func appendVersionedKustomizeDiagnostics(values map[string]string, path, basePointer string, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 	keys := make([]string, 0)
 	for key := range values {
-		if isVersionedKustomizeBuildOptionsKey(key) || isVersionedKustomizePathKey(key) {
+		if isVersionedKustomizeBuildOptionsKey(key) || isVersionedKustomizePathKey(key) || isVersionedKustomizeVersionKey(key) {
 			keys = append(keys, key)
 		}
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		message := key + " parsed but not applied: drydock uses embedded Kustomize libraries and does not select external Kustomize versions"
-		if isVersionedKustomizePathKey(key) {
+		// Argo CD v3.6.1 stores the value with the version but never
+		// reads it again: kustomize build gets kustomize.buildOptions,
+		// whichever kustomize version runs (util/kustomize/kustomize.go:
+		// 391-392).
+		message := key + " parsed but not applied: Argo CD v3.6.1 passes only kustomize.buildOptions to kustomize build, whichever kustomize version runs"
+		// Argo CD registers a kustomize binary for both key forms.
+		if isVersionedKustomizePathKey(key) || isVersionedKustomizeVersionKey(key) {
 			message = key + " parsed but not applied: drydock uses embedded Kustomize libraries and does not select external Kustomize binary paths"
 		}
 		diags = append(diags, diagnostic.Diagnostic{
@@ -152,6 +159,10 @@ func appendVersionedKustomizeDiagnostics(values map[string]string, path, basePoi
 
 func isVersionedKustomizeBuildOptionsKey(key string) bool {
 	return strings.HasPrefix(key, "kustomize.buildOptions.") && strings.TrimPrefix(key, "kustomize.buildOptions.") != ""
+}
+
+func isVersionedKustomizeVersionKey(key string) bool {
+	return strings.HasPrefix(key, "kustomize.version.") && strings.TrimPrefix(key, "kustomize.version.") != ""
 }
 
 func isVersionedKustomizePathKey(key string) bool {

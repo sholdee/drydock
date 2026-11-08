@@ -1,0 +1,4 @@
+helmCharts:
+  - name: probe
+    releaseName: parity-kbuild-alpha-helm
+    namespace: parity-kbuild-alpha

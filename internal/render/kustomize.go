@@ -30,13 +30,30 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, opts.KustomizeSpecError
 	}
 	diags := sourceKustomizeDiagnostics(opts)
-	buildSettings, err := parseKustomizeBuildOptions(opts.BuildOptions)
+	buildSettings, err := kustomizeBuildSettingsFor(opts)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(buildSettings.APIVersions) != 0 {
-		opts.APIVersions = append(append([]string(nil), buildSettings.APIVersions...), opts.APIVersions...)
+	manifests, renderDiags, err := renderKustomizeBuild(ctx, source, opts, buildSettings)
+	if err != nil {
+		return nil, nil, err
 	}
+	diags = append(diags, renderDiags...)
+	discarded, err := kustomizeOutputDiscarded(buildSettings)
+	if err != nil {
+		return nil, nil, err
+	}
+	if discarded {
+		// kustomize builds first and then writes, so a build error still
+		// fails the source.
+		return nil, append(diags, kustomizeOutputDiscardedDiagnostic(buildSettings)), nil
+	}
+	return manifests, diags, nil
+}
+
+// renderKustomizeBuild runs the build of a source with its flags.
+func renderKustomizeBuild(ctx context.Context, source ResolvedSource, opts RenderOptions, buildSettings kustomizeBuildSettings) ([]Manifest, []diagnostic.Diagnostic, error) {
+	var diags []diagnostic.Diagnostic
 
 	root, err := sourceRoot(source)
 	if err != nil {
@@ -50,7 +67,7 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	// Generator-bearing kustomizations always take the prepared-workspace
 	// path: generator classification and ksops-compat emulation happen in
 	// prepareKustomizationDir, so the plain path must be unreachable for them.
-	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) || kustomizeGraphHasGenerators(graph) {
+	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) || kustomizeGraphHasGenerators(graph) || needsKustomizeTransformerPrep(graph, opts, buildSettings) {
 		manifests, renderDiags, err := renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
 		return manifests, append(diags, renderDiags...), err
 	}
@@ -87,9 +104,17 @@ func renderPlainKustomize(ctx context.Context, source ResolvedSource, root strin
 
 	options := krusty.MakeDefaultOptions()
 	options.LoadRestrictions = settings.LoadRestrictions
+	// Without --reorder, the kustomize binary sorts in the legacy order
+	// (getFlagReorderOutput). krusty.MakeDefaultOptions keeps the resource
+	// order instead.
+	options.Reorder = settings.Reorder
+	options.AddManagedbyLabel = settings.AddManagedbyLabel
 	kustomizer := krusty.MakeKustomizer(options)
 	resMap, err := kustomizer.Run(filesys.MakeFsOnDisk(), root)
 	if err != nil {
+		return nil, nil, fmt.Errorf("kustomize build %s: %w", root, kustomizeDirectoryPluginError(err, opts, settings))
+	}
+	if err := setKustomizeManagedByLabel(resMap, root, settings); err != nil {
 		return nil, nil, fmt.Errorf("kustomize build %s: %w", root, err)
 	}
 
@@ -203,7 +228,7 @@ func isAcquirableRemoteKustomizePathRef(ref string) bool {
 	return err == nil && ok
 }
 
-func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback, chartHome string, graphIndex int, helmCharts []types.HelmChart, opts RenderOptions) ([]string, error) {
+func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback, chartHome string, graphIndex int, helmCharts []types.HelmChart, buildSettings kustomizeBuildSettings, opts RenderOptions) ([]string, error) {
 	acquirer := opts.ChartAcquirer
 	if acquirer == nil {
 		acquirer = chart.DefaultAcquirer{}
@@ -213,15 +238,10 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 	// runs any (KustTarget.runGenerators, api/internal/target/kusttarget.go
 	// at kustomize/api v0.21.3), so the argument checks of every entry come
 	// before the chart and values errors of the first one.
-	buildSettings, err := parseKustomizeBuildOptions(opts.BuildOptions)
+	loader := kustomizeValuesFileLoader{repoRoot: tempRepoRoot, dir: tempSourceRoot, rootOnly: buildSettings.LoadRestrictions != types.LoadRestrictionsNone}
+	capabilities, err := configureKustomizeHelmCharts(loader, buildSettings, helmCharts)
 	if err != nil {
 		return nil, err
-	}
-	loader := kustomizeValuesFileLoader{repoRoot: tempRepoRoot, dir: tempSourceRoot, rootOnly: buildSettings.LoadRestrictions != types.LoadRestrictionsNone}
-	for _, helmChart := range helmCharts {
-		if err := validateKustomizeHelmChartArgs(loader, helmChart); err != nil {
-			return nil, err
-		}
 	}
 	generatedResources := make([]string, 0, len(helmCharts))
 	for i, helmChart := range helmCharts {
@@ -246,7 +266,7 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 			return nil, err
 		}
 
-		helmOpts, err := renderOptionsForKustomizeHelmChart(ctx, helmChart, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName, opts, acquirer)
+		helmOpts, err := renderOptionsForKustomizeHelmChart(ctx, helmChart, *capabilities[i], tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName, opts, acquirer)
 		if err != nil {
 			return nil, err
 		}
@@ -349,7 +369,7 @@ func localKustomizeHelmChartPath(kustomizationDir, chartHome string, helmChart t
 	return filepath.Join(kustomizationDir, filepath.FromSlash(chartHome), chartPath)
 }
 
-func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.HelmChart, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName string, opts RenderOptions, acquirer chart.Acquirer) (RenderOptions, error) {
+func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.HelmChart, capabilities kustomizeHelmCapabilities, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName string, opts RenderOptions, acquirer chart.Acquirer) (RenderOptions, error) {
 	valueFiles := make([]string, 0, 1+len(helmChart.AdditionalValuesFiles))
 	valuesObject := cloneValues(helmChart.ValuesInline)
 	valuesMergeMode := helmChart.ValuesMerge
@@ -377,8 +397,8 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 		ReleaseName:            helmChart.ReleaseName,
 		Namespace:              namespace,
 		HelmDefaultNamespace:   opts.HelmDefaultNamespace,
-		KubeVersion:            kustomizeHelmKubeVersion(helmChart, opts),
-		APIVersions:            kustomizeHelmAPIVersions(helmChart, opts),
+		KubeVersion:            capabilities.KubeVersion,
+		APIVersions:            append([]string(nil), capabilities.APIVersions...),
 		ValueFiles:             valueFiles,
 		ValueFilesBaseDir:      valueFilesBaseDir,
 		ValueFilesBoundaryRoot: ".",
@@ -416,34 +436,6 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 		SkipTests:                    helmChart.SkipTests,
 		helmOutputForKustomize:       true,
 	}, nil
-}
-
-// kustomizeHelmKubeVersion and kustomizeHelmAPIVersions pick the kube
-// version and API versions of a helmCharts entry as kustomize does.
-// HelmChartInflationGeneratorPlugin.Config sets them from --helm-kube-version
-// and --helm-api-versions and then decodes the entry over them
-// (api/internal/builtins/HelmChartInflationGenerator.go:58-70 at
-// kustomize/api v0.21.3). The entry's kubeVersion and apiVersions are
-// omitted when empty, so a set field replaces the flag values and an empty
-// one keeps them. The two lists are never merged.
-//
-// drydock does not model one kustomize defect: Config copies the slice of
-// flag values without its backing array, so decoding the apiVersions of an
-// entry writes them over the flag values that every other entry of the same
-// build holds. An entry without apiVersions then sees the apiVersions of
-// another entry in place of the first flag values.
-func kustomizeHelmKubeVersion(helmChart types.HelmChart, opts RenderOptions) string {
-	if helmChart.KubeVersion != "" {
-		return helmChart.KubeVersion
-	}
-	return opts.KubeVersion
-}
-
-func kustomizeHelmAPIVersions(helmChart types.HelmChart, opts RenderOptions) []string {
-	if len(helmChart.ApiVersions) != 0 {
-		return append([]string(nil), helmChart.ApiVersions...)
-	}
-	return append([]string(nil), opts.APIVersions...)
 }
 
 // validateKustomizeHelmChartArgs runs the checks of

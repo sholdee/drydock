@@ -17,15 +17,28 @@ type kustomizeWorkspace struct {
 	tempRepoRoot     string
 	sourceRoot       string
 	opts             RenderOptions
-	visited          map[string]struct{}
-	nextGraphIndex   int
-	nextPathIndex    int
+	// buildSettings are the flags of the build. All the helmCharts entries
+	// of the build share the slice of their --helm-api-versions values
+	// (configureKustomizeHelmCapabilities).
+	buildSettings  kustomizeBuildSettings
+	visited        map[string]struct{}
+	nextGraphIndex int
+	nextPathIndex  int
 	// ksopsSubstitutedFiles counts sops files substituted by ksops-compat
 	// emulation. Per-write counting equals unique-file counting: the same
 	// sops file referenced by two generators (or twice in one files: list)
 	// emits duplicate resource IDs, which kustomize accumulation rejects
 	// before any diagnostic is surfaced.
 	ksopsSubstitutedFiles int
+	// skippedExecFunctions counts the generator and transformer
+	// configurations with an exec function that kustomize skips without
+	// --enable-exec, and skippedEmptyFunctions the ones whose function
+	// annotation names no program.
+	skippedExecFunctions  int
+	skippedEmptyFunctions int
+	// rewrittenEntries maps the generated files that stand for generators:
+	// and transformers: entries to the entries.
+	rewrittenEntries map[string]string
 	// sourceOptionDiagnostics holds the warnings from merging the
 	// spec.source.kustomize options into the source kustomization.
 	sourceOptionDiagnostics []diagnostic.Diagnostic
@@ -38,6 +51,9 @@ func (w *kustomizeWorkspace) diagnostics() []diagnostic.Diagnostic {
 	diags := append([]diagnostic.Diagnostic(nil), w.sourceOptionDiagnostics...)
 	if w.ksopsSubstitutedFiles != 0 {
 		diags = append(diags, ksopsCompatDiagnostic(w.ksopsSubstitutedFiles))
+	}
+	if w.skippedExecFunctions+w.skippedEmptyFunctions != 0 {
+		diags = append(diags, skippedFunctionsDiagnostic(w.skippedExecFunctions, w.skippedEmptyFunctions))
 	}
 	return diags
 }
@@ -72,16 +88,18 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 		tempRepoRoot:     tempRepoRoot,
 		sourceRoot:       filepath.Clean(tempRoot),
 		opts:             opts,
+		buildSettings:    buildSettings,
 		visited:          make(map[string]struct{}),
 	}
 	if err := workspace.prepareKustomizationDir(ctx, tempRoot, tempRepoRoot, ""); err != nil {
-		return nil, nil, err
+		return nil, nil, workspace.restoreErrorPaths(err)
 	}
 
 	manifests, renderDiags, err := renderPlainKustomize(ctx, tempSource, tempRoot, buildSettings, opts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, workspace.restoreErrorPaths(err)
 	}
+	workspace.restoreRewrittenEntryPaths(manifests)
 	return manifests, append(workspace.diagnostics(), renderDiags...), nil
 }
 
@@ -151,6 +169,8 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 	kustomization.Resources = resources
+	// The steps of the generators, for checkKustomizeGeneratorOrder.
+	generationSteps := kustomizeFieldGeneratorSteps(&kustomization)
 
 	if len(kustomization.HelmCharts) != 0 {
 		if err := missingKustomizeResourceError(dir, kustomization.Resources); err != nil {
@@ -160,12 +180,15 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		if err != nil {
 			return err
 		}
-		generatedResources, err := renderKustomizeHelmCharts(ctx, w.tempRepoRoot, dir, nodeRelDir, childInheritedHelmNamespace, kustomizationChartHome(kustomization), graphIndex, kustomization.HelmCharts, w.opts)
+		generatedResources, err := renderKustomizeHelmCharts(ctx, w.tempRepoRoot, dir, nodeRelDir, childInheritedHelmNamespace, kustomizationChartHome(kustomization), graphIndex, kustomization.HelmCharts, w.buildSettings, w.opts)
 		if err != nil {
 			return err
 		}
 		kustomization.HelmCharts = nil
 		kustomization.Resources = append(kustomization.Resources, generatedResources...)
+		if ids, ok := kustomizeResourceFileIDs(dir, generatedResources); ok {
+			generationSteps = append(generationSteps, kustomizeGenerationStep{creates: ids, behavior: "unspecified", moved: true})
+		}
 	}
 
 	components, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "components", graphIndex, kustomization.Components, childInheritedHelmNamespace, false)
@@ -186,7 +209,15 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 	// Generator classification runs after the path-ref rewrite above so
 	// remote-acquired generator manifests are materialized in the workspace
 	// before they are classified.
-	if err := w.prepareKustomizeGenerators(ctx, dir, boundaryRoot, graphIndex, &kustomization); err != nil {
+	entrySteps, err := w.prepareKustomizeGenerators(ctx, dir, boundaryRoot, graphIndex, &kustomization)
+	if err != nil {
+		return fmt.Errorf("%s: %w", manifestPath, err)
+	}
+	generationSteps = append(generationSteps, entrySteps...)
+	if err := checkKustomizeGeneratorOrder(generationSteps); err != nil {
+		return fmt.Errorf("%s: %w", manifestPath, err)
+	}
+	if err := w.prepareKustomizeTransformers(ctx, dir, boundaryRoot, graphIndex, &kustomization); err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 

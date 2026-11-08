@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-kustomize-helm-shared-api-versions-{{ .Release.Name }}
+data:
+  kubeVersion: {{ .Capabilities.KubeVersion.Version | quote }}
+  hasEntryAPI: {{ .Capabilities.APIVersions.Has "entry.parity.example.com/v1" | quote }}
+  hasFlagOneAPI: {{ .Capabilities.APIVersions.Has "flag.parity.example.com/one" | quote }}
+  hasFlagTwoAPI: {{ .Capabilities.APIVersions.Has "flag.parity.example.com/two" | quote }}

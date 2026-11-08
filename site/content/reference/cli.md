@@ -269,9 +269,10 @@ tracks a real cluster version. Use `--kube-version` to set the version of
 the destination cluster. A per-app `kubeVersion` wins over it, as in Argo CD.
 drydock checks a chart `kubeVersion` constraint only against an explicit
 version. Use repeatable
-`--api-versions` to add API versions for capability-gated rendering, unioned
-(deduped and sorted) with each app's per-app `apiVersions` rather than replacing
-them. Values accept the `group/version` form (`monitoring.coreos.com/v1`) or the
+`--api-versions` to give the API versions of the destination cluster for
+capability-gated rendering. The values are deduped and sorted. An app with
+per-app `apiVersions` uses only those, as Argo CD does
+(`GetAPIVersionsOrDefault`). Values accept the `group/version` form (`monitoring.coreos.com/v1`) or the
 full `group/version/Kind` form (`monitoring.coreos.com/v1/ServiceMonitor`); many
 charts check the `group/version/Kind` form against `.Capabilities.APIVersions`,
 so pass that form when a gated resource still does not render. Both flags are
@@ -300,7 +301,11 @@ a deterministic placeholder (`drydock-ksops-redacted-<12hex>`), with Secret
 `data:`/`binaryData:` and ConfigMap `binaryData:` values encoded as valid
 base64 (plain elsewhere). No decryption key, network call, or exec is
 involved. Pair with `--skip-secrets` to suppress placeholder Secrets from diff
-output.
+output. When drydock finds an `argocd-cm`, a KSOPS generator also needs
+`--enable-alpha-plugins` in `kustomize.buildOptions`, as in kustomize, and a
+KSOPS exec function needs `--enable-exec` too. Without that flag, kustomize
+skips the function, and drydock adds only the configuration of the
+generator, which kustomize drops at the end of the build, with a warning.
 
 ```bash
 drydock diff apps --repo . --ref HEAD --ref-orig origin/main --enable-ksops-compat --skip-secrets

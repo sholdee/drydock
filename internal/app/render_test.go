@@ -245,9 +245,34 @@ func TestRenderOptionsAppliesCapabilityOverride(t *testing.T) {
 	if withoutPerApp.KubeVersion != "1.34.0" {
 		t.Fatalf("KubeVersion = %q, want --kube-version 1.34.0 without a per-app value", withoutPerApp.KubeVersion)
 	}
-	want := []string{"gateway.networking.k8s.io/v1", "monitoring.coreos.com/v1", "per-app.example.com/v1"}
+	// --api-versions stands for the cluster API versions, and per-app
+	// apiVersions replace them, in their order (GetAPIVersionsOrDefault).
+	want := []string{"per-app.example.com/v1", "monitoring.coreos.com/v1"}
 	if !reflect.DeepEqual(opts.APIVersions, want) {
-		t.Fatalf("APIVersions = %v, want deduped+sorted union %v", opts.APIVersions, want)
+		t.Fatalf("APIVersions = %v, want the per-app %v", opts.APIVersions, want)
+	}
+	for _, kustomize := range []bool{false, true} {
+		source := argoappv1.ApplicationSource{}
+		if kustomize {
+			source.Kustomize = &argoappv1.ApplicationSourceKustomize{}
+		} else {
+			source.Helm = &argoappv1.ApplicationSourceHelm{}
+		}
+		clusterOnly, err := renderOptions(application, source, CapabilityOptions{APIVersions: []string{"monitoring.coreos.com/v1", "gateway.networking.k8s.io/v1", "monitoring.coreos.com/v1"}}, defaultTrackingOptions())
+		if err != nil {
+			t.Fatalf("renderOptions() error = %v", err)
+		}
+		if want := []string{"gateway.networking.k8s.io/v1", "monitoring.coreos.com/v1"}; !reflect.DeepEqual(clusterOnly.APIVersions, want) {
+			t.Fatalf("APIVersions = %v, want the deduped and sorted --api-versions %v", clusterOnly.APIVersions, want)
+		}
+	}
+	kustomizeSource := argoappv1.ApplicationSource{Kustomize: &argoappv1.ApplicationSourceKustomize{APIVersions: []string{"per-app.example.com/v1"}}}
+	kustomizeOpts, err := renderOptions(application, kustomizeSource, CapabilityOptions{APIVersions: []string{"monitoring.coreos.com/v1"}}, defaultTrackingOptions())
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if want := []string{"per-app.example.com/v1"}; !reflect.DeepEqual(kustomizeOpts.APIVersions, want) {
+		t.Fatalf("Kustomize APIVersions = %v, want the per-app %v", kustomizeOpts.APIVersions, want)
 	}
 }
 

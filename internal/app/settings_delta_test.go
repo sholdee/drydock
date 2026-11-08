@@ -33,7 +33,14 @@ const (
 var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	// Render: Kustomize build, Helm value files, tracking metadata, plugin
 	// discovery and renders.
-	"KustomizeBuildOptions":    settingsRenderAll,
+	"KustomizeBuildOptions": settingsRenderAll,
+	// Whether kustomize.buildOptions decide the flags of every Kustomize
+	// build, and which kustomize versions a source may name.
+	"ArgoCDConfigMapFound": settingsRenderAll,
+	"KustomizeVersions":    settingsRenderAll,
+	// Set only on the settings of the renders that read an install
+	// (WithKustomizeHelmAssumed), never on the settings of a diff side.
+	"KustomizeHelmAssumed":     settingsNoEffect,
 	"HelmValuesFileSchemes":    settingsRenderAll,
 	"HelmValuesFileSchemesSet": settingsRenderAll,
 	"TrackingMethod":           settingsRenderAll,

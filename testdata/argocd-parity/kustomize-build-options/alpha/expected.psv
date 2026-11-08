@@ -1,0 +1,12 @@
+# kind|Application|text that the capture must hold|text that it must not hold
+# Every Application of the phase carries the managed-by label of
+# --enable-managedby-label, so the label proves that Argo CD rendered it
+# with the kustomize.buildOptions of the phase.
+render|parity-kbuild-alpha-helm|app.kubernetes.io/managed-by: kustomize-v5.8.3|
+render|parity-kbuild-alpha-shared|app.kubernetes.io/managed-by: kustomize-v5.8.3|
+render|parity-kbuild-alpha-plain|app.kubernetes.io/managed-by: kustomize-v5.8.3|
+render|parity-kbuild-alpha-ksops|app.kubernetes.io/managed-by: kustomize-v5.8.3|
+render|parity-kbuild-alpha-exec-transformer|app.kubernetes.io/managed-by: kustomize-v5.8.3|
+render|parity-kbuild-alpha-replacement|value: from-generator-config|
+# fail|Application|text of the Argo CD ComparisonError|text of the drydock error
+fail|parity-kbuild-alpha-merge|does not exist; cannot merge or replace|does not exist; cannot merge or replace

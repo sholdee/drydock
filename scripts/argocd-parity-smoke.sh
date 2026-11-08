@@ -116,6 +116,20 @@ SOURCE_TYPE_GATES_STATE_CHANGED="false"
 # Set by save_source_type_gate_keys: the merge patch that restores the live
 # values of the keys.
 SOURCE_TYPE_GATES_RESTORE=""
+# The kustomize build options phases set kustomize.buildOptions on the live
+# argocd-cm to the value in the argocd-cm.yaml of each phase repo, apply the
+# Applications of that repo, and check them against the expected.psv of the
+# phase: a render line compares the manifests, and a fail line compares the
+# ComparisonError of Argo CD and the drydock error. drydock reads the same
+# argocd-cm.yaml. The phases run after the source type gate phase, and the
+# last one restores the value of the fixture install.
+KUSTOMIZE_BUILD_OPTIONS_PATH="${REPO_ROOT}/testdata/argocd-parity/kustomize-build-options"
+KUSTOMIZE_BUILD_OPTIONS_PHASES=(alpha no-helm unknown-flag output-file)
+# The value that install_argocd sets.
+KUSTOMIZE_BUILD_OPTIONS_DEFAULT="--enable-helm"
+# Set to "true" while the live argocd-cm holds the value of a phase. The
+# cleanup trap reads it.
+KUSTOMIZE_BUILD_OPTIONS_STATE_CHANGED="false"
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_APPSET_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-appset-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
@@ -358,6 +372,7 @@ APPLICATIONS=(
   parity-kustomize-helm-capabilities
   parity-kustomize-helm-cross-namespace
   parity-kustomize-helm-defaults
+  parity-kustomize-helm-shared-api-versions
   parity-ft-alpha
   parity-ft-beta
   parity-fn-gamma-one
@@ -723,6 +738,10 @@ done
 [[ -f "${LIVE_DIFF_EXPECTED}" ]] || fail "live diff expected file not found: ${LIVE_DIFF_EXPECTED}"
 [[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
 [[ -f "${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml" ]] || fail "source type gate Applications not found: ${SOURCE_TYPE_GATES_MANIFESTS}/applications.yaml"
+for kustomize_build_options_phase in "${KUSTOMIZE_BUILD_OPTIONS_PHASES[@]}"; do
+  [[ -f "${KUSTOMIZE_BUILD_OPTIONS_PATH}/${kustomize_build_options_phase}/expected.psv" ]] \
+    || fail "kustomize build options phase not found: ${KUSTOMIZE_BUILD_OPTIONS_PATH}/${kustomize_build_options_phase}/expected.psv"
+done
 
 OUT_DIR="$(mkdir -p "${OUT_DIR}" && cd "${OUT_DIR}" && pwd)"
 # Each run has its own kubeconfig. kind create cluster and kind export
@@ -800,6 +819,10 @@ cleanup() {
   # the tools on again unless --keep-cluster keeps the state.
   if [[ "${SOURCE_TYPE_GATES_STATE_CHANGED}" == "true" && "${CREATE_CLUSTER}" != "true" && "${KEEP_CLUSTER}" != "true" ]]; then
     remove_source_type_gates_state >/dev/null 2>&1 || true
+  fi
+  # The same for the kustomize build options phases.
+  if [[ "${KUSTOMIZE_BUILD_OPTIONS_STATE_CHANGED}" == "true" && "${CREATE_CLUSTER}" != "true" && "${KEEP_CLUSTER}" != "true" ]]; then
+    remove_kustomize_build_options_state >/dev/null 2>&1 || true
   fi
   rm -rf "${WORK_DIR}"
   if [[ "${CREATE_CLUSTER}" == "true" && "${KEEP_CLUSTER}" != "true" ]]; then
@@ -928,7 +951,7 @@ prepare_live_diff_repo() {
 }
 
 prepare_fixture_git_image() {
-  local bare image dockerfile
+  local bare image dockerfile phase
   # Script-scoped: this repo is also the trusted plugin policy repo for the
   # plugin Application's drydock capture.
   FIXTURE_GIT_WORK="${WORK_DIR}/fixture-src"
@@ -940,6 +963,9 @@ prepare_fixture_git_image() {
   cp -R "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}/repo/." "${FIXTURE_GIT_WORK}/"
   cp -R "${PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR}/repo/." "${FIXTURE_GIT_WORK}/"
   cp -R "${SOURCE_TYPE_GATES_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
+  for phase in "${KUSTOMIZE_BUILD_OPTIONS_PHASES[@]}"; do
+    cp -R "${KUSTOMIZE_BUILD_OPTIONS_PATH}/${phase}/repo/." "${FIXTURE_GIT_WORK}/"
+  done
   pin_container_policy_image "${FIXTURE_GIT_WORK}/.drydock/plugins.yaml"
   package_helm_repo
   # Vendored archive of an older parity-range version that matches the
@@ -2936,6 +2962,156 @@ run_source_type_gates_smoke() {
   SOURCE_TYPE_GATES_STATE_CHANGED="false"
 }
 
+# set_kustomize_build_options sets kustomize.buildOptions on the live
+# argocd-cm. Other argocd-cm keys keep their values.
+set_kustomize_build_options() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  kubectl --request-timeout=30s -n argocd patch configmap argocd-cm --type merge \
+    -p "{\"data\":{\"kustomize.buildOptions\":\"${value}\"}}" >/dev/null
+}
+
+# remove_kustomize_build_options_state deletes the Applications of every
+# kustomize build options phase and sets kustomize.buildOptions back to the
+# value of the fixture install. The Applications have no resources
+# finalizer, so the delete does not wait for a prune.
+remove_kustomize_build_options_state() {
+  local phase
+  for phase in "${KUSTOMIZE_BUILD_OPTIONS_PHASES[@]}"; do
+    kubectl --request-timeout=30s -n argocd delete \
+      -f "${KUSTOMIZE_BUILD_OPTIONS_PATH}/${phase}/repo/kbuild-${phase}/applications.yaml" --ignore-not-found >/dev/null
+  done
+  set_kustomize_build_options "${KUSTOMIZE_BUILD_OPTIONS_DEFAULT}"
+}
+
+# capture_kustomize_build_options_manifest captures one render Application
+# of a phase. `argocd app manifests` asks the API server, whose settings
+# manager reads argocd-cm through an informer, so a capture can still use
+# the value of the earlier phase. The capture is retried with a hard
+# refresh until it holds the present text and not the absent text of the
+# expected.psv line. An empty text is not checked, and a capture may be
+# empty when the phase sends the build elsewhere.
+capture_kustomize_build_options_manifest() {
+  local app="$1"
+  local present="$2"
+  local absent="$3"
+  local output_dir="$4"
+  local capture="${output_dir}/${app}.yaml"
+  for _ in {1..60}; do
+    if argocd app manifests "${app}" > "${capture}" 2> "${OUT_DIR}/argocd-${app}.stderr" \
+      && { [[ -z "${present}" ]] || grep -qF -- "${present}" "${capture}"; } \
+      && { [[ -z "${absent}" ]] || ! grep -qF -- "${absent}" "${capture}"; }; then
+      rm -f "${OUT_DIR}/argocd-${app}.stderr"
+      return 0
+    fi
+    argocd app get "${app}" --hard-refresh >/dev/null 2>&1 || true
+    sleep 2
+  done
+  fail "Argo CD did not render ${app} with the kustomize.buildOptions of its phase (want \"${present}\", not \"${absent}\"); see ${capture} and ${OUT_DIR}/argocd-${app}.stderr"
+}
+
+# wait_for_kustomize_build_options_failure waits until the Application has
+# a ComparisonError condition that contains the expected text. The message
+# can span lines, because it quotes the kustomize error. The controller
+# reads argocd-cm through its own informer, so the loop asks for a hard
+# refresh while the condition differs.
+wait_for_kustomize_build_options_failure() {
+  local app="$1"
+  local message="$2"
+  local failure_dir messages
+  for _ in {1..90}; do
+    messages="$(kubectl -n argocd get application "${app}" \
+      -o jsonpath='{range .status.conditions[?(@.type=="ComparisonError")]}{.message}{"\n"}{end}' 2>/dev/null || true)"
+    if [[ "${messages}" == *"${message}"* ]]; then
+      return 0
+    fi
+    argocd app get "${app}" --hard-refresh >/dev/null 2>&1 || true
+    sleep 2
+  done
+  failure_dir="$(artifact_dir kustomize-build-options)"
+  kubectl -n argocd get application "${app}" -o yaml > "${failure_dir}/${app}.yaml" 2>&1 || true
+  fail "Application argocd/${app} did not report a ComparisonError that contains \"${message}\"; see ${failure_dir}/${app}.yaml"
+}
+
+# drydock_kustomize_build_options builds one Application of a phase repo
+# offline. Its stdout and stderr go to the two files.
+drydock_kustomize_build_options() {
+  local repo="$1"
+  local app="$2"
+  local stdout_file="$3"
+  local stderr_file="$4"
+  (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${app}" \
+    --path "${repo}" \
+    --repo-map "${FIXTURE_REPO_URL}=${repo}" \
+    --offline > "${stdout_file}" 2> "${stderr_file}")
+}
+
+run_kustomize_build_options_phase() {
+  local phase="$1"
+  local phase_dir="${KUSTOMIZE_BUILD_OPTIONS_PATH}/${phase}"
+  local repo="${phase_dir}/repo"
+  local manifests="${repo}/kbuild-${phase}"
+  local argocd_dir drydock_dir kind app first second stderr_file renders=0
+  log_step "Setting kustomize.buildOptions for the ${phase} phase"
+  KUSTOMIZE_BUILD_OPTIONS_STATE_CHANGED="true"
+  kubectl --request-timeout=30s -n argocd patch configmap argocd-cm --type merge \
+    --patch-file "${manifests}/argocd-cm.yaml" >/dev/null
+  kubectl -n argocd apply -f "${manifests}/applications.yaml" >/dev/null
+  argocd_dir="$(artifact_dir "kustomize-build-options/${phase}/argocd-manifests")"
+  drydock_dir="$(artifact_dir "kustomize-build-options/${phase}/drydock-manifests")"
+  # The loop reads the file on descriptor 3, so the commands in it cannot
+  # read its lines from stdin.
+  while IFS='|' read -r -u 3 kind app first second; do
+    [[ -z "${kind}" || "${kind}" == \#* ]] && continue
+    wait_for_application argocd "${app}"
+    stderr_file="${OUT_DIR}/drydock-${app}.stderr"
+    case "${kind}" in
+      render)
+        capture_kustomize_build_options_manifest "${app}" "${first}" "${second}" "${argocd_dir}"
+        if ! drydock_kustomize_build_options "${repo}" "${app}" "${drydock_dir}/${app}.yaml" "${stderr_file}"; then
+          echo "argocd render parity smoke: drydock capture of ${app} failed; its stderr follows" >&2
+          cat "${stderr_file}" >&2 || true
+          fail "drydock capture of ${app} failed; see ${stderr_file}"
+        fi
+        renders=$((renders + 1))
+        ;;
+      fail)
+        wait_for_kustomize_build_options_failure "${app}" "${first}"
+        if drydock_kustomize_build_options "${repo}" "${app}" /dev/null "${stderr_file}"; then
+          fail "drydock rendered ${app}, want it to fail with \"${second}\""
+        fi
+        grep -qF -- "${second}" "${stderr_file}" \
+          || fail "drydock failed ${app} without \"${second}\"; see ${stderr_file}"
+        echo "kustomize build options ${phase}: ${app} fails on both sides" >&2
+        ;;
+      *)
+        fail "unknown line kind ${kind} in ${phase_dir}/expected.psv"
+        ;;
+    esac
+    rm -f "${stderr_file}"
+  done 3< "${phase_dir}/expected.psv"
+  if [[ "${renders}" -gt 0 ]]; then
+    log_step "Comparing the kustomize build options ${phase} manifests"
+    (cd "${REPO_ROOT}" && go run ./scripts/argocd-parity-compare \
+      --argocd-dir "${argocd_dir}" \
+      --drydock-dir "${drydock_dir}" \
+      --out-dir "${OUT_DIR}/compare-kustomize-build-options-${phase}" \
+      --ignore-file "${IGNORE_FILE}")
+  fi
+  kubectl --request-timeout=30s -n argocd delete -f "${manifests}/applications.yaml" --ignore-not-found >/dev/null
+}
+
+run_kustomize_build_options_smoke() {
+  local phase
+  for phase in "${KUSTOMIZE_BUILD_OPTIONS_PHASES[@]}"; do
+    run_kustomize_build_options_phase "${phase}"
+  done
+  log_step "Restoring kustomize.buildOptions in argocd-cm"
+  remove_kustomize_build_options_state
+  KUSTOMIZE_BUILD_OPTIONS_STATE_CHANGED="false"
+}
+
 main() {
   local argocd_version
   argocd_version="$(resolve_argocd_version)"
@@ -2987,6 +3163,9 @@ main() {
   login_argocd
   log_step "Removing source type gate keys that an earlier run left in argocd-cm"
   reset_source_type_gate_keys
+  # A run that failed under --keep-cluster can leave the value of a
+  # kustomize build options phase, which changes every Kustomize render.
+  set_kustomize_build_options "${KUSTOMIZE_BUILD_OPTIONS_DEFAULT}"
   log_step "Applying parity fixture Applications"
   apply_fixture_apps
   log_step "Waiting for the OCI generator ApplicationSets"
@@ -3031,6 +3210,7 @@ main() {
     log_step "Skipping project-policy smoke"
   fi
   run_source_type_gates_smoke
+  run_kustomize_build_options_smoke
   echo "Argo CD render parity smoke complete: ${OUT_DIR}" >&2
 }
 

@@ -2486,7 +2486,7 @@ func TestOrchestratorBuildRejectsUnsafeAutoNativeKustomizePlugins(t *testing.T) 
 				writePluginBuildApplication(t, root, "plugin", "kustomize-build")
 			},
 			writeCMP: func(t *testing.T, root string) {
-				writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build", "", "kustomize, build", "--network")
+				writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build", "", "kustomize, build", "--no-such-flag")
 			},
 			writeSource: func(t *testing.T, root string) {
 				writeNativeKustomizeSource(t, root, "plugin", "should-not-render")
@@ -2749,7 +2749,35 @@ func TestNativeKustomizePluginBuildOptionsFailClosed(t *testing.T) {
 			plugin: config.ConfigManagementPlugin{
 				Name:            "kustomize-build",
 				GenerateCommand: []string{"kustomize", "build"},
-				GenerateArgs:    []string{"--network"},
+				GenerateArgs:    []string{"--no-such-flag"},
+			},
+			wantErr: true,
+		},
+		{
+			// kustomize reads --network only for KRM functions, which
+			// drydock never runs, so the build output is the same.
+			name: "function option accepted",
+			plugin: config.ConfigManagementPlugin{
+				Name:            "kustomize-build",
+				GenerateCommand: []string{"kustomize", "build"},
+				GenerateArgs:    []string{"--network", "."},
+			},
+		},
+		{
+			name: "help option rejected",
+			plugin: config.ConfigManagementPlugin{
+				Name:            "kustomize-build",
+				GenerateCommand: []string{"kustomize", "build"},
+				GenerateArgs:    []string{"--help"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "second path rejected",
+			plugin: config.ConfigManagementPlugin{
+				Name:            "kustomize-build",
+				GenerateCommand: []string{"kustomize", "build"},
+				GenerateArgs:    []string{".", "--load-restrictor", "LoadRestrictionsNone", "other"},
 			},
 			wantErr: true,
 		},

@@ -1,0 +1,10 @@
+# An exec function that no repo-server has. Without --enable-exec,
+# kustomize skips it, so it changes nothing.
+apiVersion: parity.example.com/v1
+kind: Rename
+metadata:
+  name: rename
+  annotations:
+    config.kubernetes.io/function: |
+      exec:
+        path: ./rename.sh

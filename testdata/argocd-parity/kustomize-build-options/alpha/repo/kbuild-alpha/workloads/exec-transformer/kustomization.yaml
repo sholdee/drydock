@@ -1,0 +1,4 @@
+resources:
+  - configmap.yaml
+transformers:
+  - transformer.yaml

@@ -61,6 +61,12 @@ type localProvider struct {
 	pluginExecRunner             pluginexec.Runner
 	pluginContainerRunner        plugincontainer.Runner
 	kustomizeBuildOptions        []string
+	// kustomizeCaller says whether kustomizeBuildOptions come from a found
+	// argocd-cm (see render.KustomizeBuildCaller).
+	kustomizeCaller render.KustomizeBuildCaller
+	// kustomizeSettings gives the kustomize versions that argocd-cm
+	// registers.
+	kustomizeSettings config.ArgoSettings
 	// maxCombinedDirectoryManifestsSize is the repo-server limit on the
 	// combined size of the files of one directory source, in bytes. Zero
 	// means no limit.
@@ -218,6 +224,10 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		return manifests, append(nearMissDiags, diags...), err
 	}
 	opts.BuildOptions = append(opts.BuildOptions, p.kustomizeBuildOptions...)
+	opts.KustomizeCaller = p.kustomizeCaller
+	if err := kustomizeVersionError(p.kustomizeSettings, opts.Kustomize); err != nil {
+		opts.KustomizeSpecError = err
+	}
 	if source.Path != "" {
 		renderer, err := selectLocalRenderer(source, p.sourceTypes)
 		if err != nil {

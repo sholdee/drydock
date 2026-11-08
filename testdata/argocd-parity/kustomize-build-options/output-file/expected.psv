@@ -1,0 +1,4 @@
+# kind|Application|text that the capture must hold|text that it must not hold
+# The render is empty on both sides. The ConfigMap of the source must be
+# gone from the capture, so Argo CD rendered it with this phase.
+render|parity-kbuild-output-file||name: parity-kbuild-output-file

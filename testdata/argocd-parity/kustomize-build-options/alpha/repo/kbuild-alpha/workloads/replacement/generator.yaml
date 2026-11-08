@@ -1,0 +1,10 @@
+apiVersion: parity.example.com/v1
+kind: Probe
+metadata:
+  name: probe
+  annotations:
+    config.kubernetes.io/function: |
+      exec:
+        path: ./probe.sh
+spec:
+  value: from-generator-config
