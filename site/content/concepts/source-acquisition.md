@@ -832,6 +832,14 @@ holds the lock on the lists for more than 5 seconds, or when the write fails. `c
 and `cache prune` reports how many it removed. A list keeps its fetch time
 apart from its last use, and `--chart-cache-max-age` judges that fetch time.
 
+A submodule store clones into a temporary `<entry>.clone-*` directory and
+moves it into place when the clone is complete. A drydock process that is
+killed during a clone leaves that directory behind. `cache prune` removes
+such a directory in the Git and remote caches when nothing in it changed
+for one hour, so it never removes a clone that another process is still
+writing. `cache delete` of a Git entry removes the stale clones of that
+entry the same way. Both commands report how many they removed.
+
 ### Pruning by size (`--max-size`)
 
 `--max-size QUANTITY` evicts the least-recently-used entries from the selected

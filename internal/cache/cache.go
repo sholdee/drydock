@@ -88,6 +88,10 @@ type OperationResult struct {
 	// VersionRecordsRemoved counts the recorded chart version lists that an
 	// age prune removed, or would remove on a dry run.
 	VersionRecordsRemoved int `json:"versionRecordsRemoved,omitempty" yaml:"versionRecordsRemoved,omitempty"`
+	// StaleClonesRemoved counts the temporary submodule store clones that
+	// a killed process left and that nothing changed for an hour, which
+	// the command removed, or would remove on a dry run.
+	StaleClonesRemoved int `json:"staleClonesRemoved,omitempty" yaml:"staleClonesRemoved,omitempty"`
 }
 
 func List(opts Options) ([]Entry, error) {
@@ -144,6 +148,9 @@ func Prune(opts OperationOptions) (OperationResult, error) {
 		return OperationResult{}, err
 	}
 	selected, result := buildPruneResult(entries, opts)
+	if result.StaleClonesRemoved, err = removeStaleClones(opts, nil); err != nil {
+		return OperationResult{}, err
+	}
 	if opts.DryRun {
 		records, err := pruneChartVersionRecords(opts)
 		if err != nil {
@@ -371,6 +378,24 @@ func Delete(opts OperationOptions) (OperationResult, error) {
 	if err != nil {
 		return OperationResult{}, err
 	}
+	selected := selectDeleteEntries(entries, opts)
+	result := OperationResult{Entries: selected, DryRun: opts.DryRun}
+	if result.StaleClonesRemoved, err = removeStaleClones(opts, deleteCloneKeys(opts)); err != nil {
+		return OperationResult{}, err
+	}
+	if opts.DryRun {
+		return result, nil
+	}
+	if err := removeEntries(selected); err != nil {
+		return OperationResult{}, err
+	}
+	result.RemovedCount = len(selected)
+	return result, nil
+}
+
+// selectDeleteEntries returns the entries that a delete removes: all of
+// them with --all, else the one with the source, key, and kind of opts.
+func selectDeleteEntries(entries []Entry, opts OperationOptions) []Entry {
 	selected := make([]Entry, 0, len(entries))
 	for _, entry := range entries {
 		if !opts.All {
@@ -383,15 +408,17 @@ func Delete(opts OperationOptions) (OperationResult, error) {
 		}
 		selected = append(selected, entry)
 	}
-	result := OperationResult{Entries: selected, DryRun: opts.DryRun}
-	if opts.DryRun {
-		return result, nil
+	return selected
+}
+
+// deleteCloneKeys limits the stale clone sweep of a delete to the deleted
+// Git entry. --all sweeps every entry. A remote entry holds its clones, so
+// deleting it removes them.
+func deleteCloneKeys(opts OperationOptions) map[string]bool {
+	if opts.All {
+		return nil
 	}
-	if err := removeEntries(selected); err != nil {
-		return OperationResult{}, err
-	}
-	result.RemovedCount = len(selected)
-	return result, nil
+	return map[string]bool{strings.TrimSpace(opts.Key): true}
 }
 
 func listSimpleEntries(source Source, kind, root string, forbiddenRoots []string) ([]Entry, error) {
