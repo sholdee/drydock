@@ -110,11 +110,13 @@ places:
 - A self-repository source in a working tree reads the submodule as the
   working tree holds it. If the submodule is not initialized, drydock warns.
 
-With `--offline`, a submodule commit that drydock has no copy of fails as
-an offline cache miss. drydock never writes to your repository or its
-`.git` directory. Relative submodule URLs resolve against the repository
-URL. drydock sends HTTP credentials only to a submodule on the same host as
-the repository, and refuses `file` URLs and local paths, as the
+With `--offline`, a submodule commit that drydock has no copy of is an
+offline cache miss. A fetched Git source then fails. A `--ref` snapshot
+keeps the submodule empty and fails only the sources in it. drydock never
+writes to your repository or its `.git` directory. Relative submodule URLs
+resolve against the repository URL. drydock sends HTTP credentials only to
+a submodule on the same host and port as the repository, never from
+`https` to `http`. It refuses `file` URLs and local paths, as the
 repo-server's git does.
 
 drydock does not download Git LFS objects. When a repository Secret sets

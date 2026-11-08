@@ -925,8 +925,12 @@ pass.
 
 - drydock's own submodule fetch for a fetched Git source or a `--ref`
   snapshot. drydock runs offline here and reads the parent through
-  `--repo-map`. Unit tests cover the fetch into the Git cache, the offline
-  cache miss, the `.git/modules` store, and the transport and URL rules.
+  `--repo-map`. To fetch from the in-cluster git daemon, drydock would need
+  the cluster Service name in `/etc/hosts`, which needs `sudo`. Instead,
+  `TestDefaultGitAcquirerFetchesSubmodulesOverGitDaemon` serves the
+  submodule fixture with a local `git daemon` and fetches it over
+  `git://`, then offline. Unit tests cover the offline cache miss, the
+  `.git/modules` store, and the transport and URL rules.
 - `reposerver.enable.git.submodule` set to `false`. The key changes every
   Application of the cluster. Unit tests cover it.
 - Git LFS. A Git LFS server needs the HTTP batch API, which the git daemon

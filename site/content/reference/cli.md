@@ -547,9 +547,8 @@ drydock render behavior. There are seven exceptions:
   OCI directory generators also list hidden directories. See
   [Git Generators](/docs/applicationsets/#git-generators).
 - `reposerver.enable.git.submodule`: unless it is `false`, a fetched Git
-  source holds the content of its submodules, as the repo-server checkout
-  does. A `--ref` snapshot always holds it, and drydock warns when the key
-  is `false`. See
+  source and a `--ref` snapshot hold the content of their submodules, as
+  the repo-server checkout does. See
   [Git submodules and Git LFS](/compatibility/#git-submodules-and-git-lfs).
 - `applicationsetcontroller.enable.git.submodule`: unless it is `false`,
   the Git generators see submodule content. Both keys read `false` in any
