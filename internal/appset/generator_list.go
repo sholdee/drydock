@@ -17,13 +17,12 @@ func evaluateListGenerator(ctx generatorContext, generator argoappv1.Application
 	if err != nil {
 		return nil, nil, true, err
 	}
-	paramSets, diags, err := listGeneratorParamSets(ctx.ManifestPath, generator.List, ctx.AppSet.Spec.GoTemplate)
+	paramSets, err := listGeneratorParamSets(generator.List, ctx.AppSet.Spec.GoTemplate)
 	if err != nil {
-		return nil, diags, true, err
+		return nil, nil, true, err
 	}
 	paramSets = setGeneratorTemplate(paramSets, template)
-	paramSets, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, generator.Selector, paramSets)
-	diags = append(diags, selectorDiags...)
+	paramSets, diags, err := applyGeneratorSelector(ctx.ManifestPath, generator.Selector, paramSets)
 	return paramSets, diags, true, err
 }
 
@@ -35,17 +34,17 @@ func evaluateListGenerator(ctx generatorContext, generator argoappv1.Application
 // non-mapping values field without goTemplate, and an elementsYaml that is
 // not a YAML list of mappings. An elementsYaml entry written as null is one
 // empty param set.
-func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator, useGoTemplate bool) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+func listGeneratorParamSets(list *argoappv1.ListGenerator, useGoTemplate bool) ([]generatorParamSet, error) {
 	out := make([]generatorParamSet, 0, len(list.Elements))
 	for _, element := range list.Elements {
 		var params map[string]any
 		if err := json.Unmarshal(element.Raw, &params); err != nil {
-			return nil, nil, &generatorParamsError{err: fmt.Errorf("error unmarshling list element %w", err)}
+			return nil, &generatorParamsError{err: fmt.Errorf("error unmarshling list element %w", err)}
 		}
 		if !useGoTemplate {
 			normalized, err := normalizeListElementParams(params)
 			if err != nil {
-				return nil, nil, &generatorParamsError{err: err}
+				return nil, &generatorParamsError{err: err}
 			}
 			params = normalized
 		}
@@ -55,11 +54,11 @@ func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator, 
 		})
 	}
 	if list.ElementsYaml == "" {
-		return out, nil, nil
+		return out, nil
 	}
 	var elements []map[string]any
 	if err := sigsyaml.Unmarshal([]byte(list.ElementsYaml), &elements); err != nil {
-		return nil, nil, &generatorParamsError{err: fmt.Errorf("error unmarshling decoded ElementsYaml %w", err)}
+		return nil, &generatorParamsError{err: fmt.Errorf("error unmarshling decoded ElementsYaml %w", err)}
 	}
 	for _, params := range elements {
 		out = append(out, generatorParamSet{
@@ -67,7 +66,7 @@ func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator, 
 			Generator: "list",
 		})
 	}
-	return out, nil, nil
+	return out, nil
 }
 
 // errListValueNotString is the text of the Argo CD v3.6.1 list generator

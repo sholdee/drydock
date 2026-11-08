@@ -549,3 +549,34 @@ spec:
 		}
 	}
 }
+
+// Argo CD keeps only the first generator error, and the controller sets one
+// ErrorOccurred condition with it (applicationset_controller.go:199-215).
+// drydock stops at that error, so it reports that one error only.
+func TestGenerateStopsAtFirstGeneratorError(t *testing.T) {
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: error-text
+spec:
+  generators:
+    - list: {elementsYaml: "- scalar"}
+    - matrix:
+        generators:
+          - list: {elements: [{name: a}]}
+  template:
+    metadata:
+      name: 'app-{{name}}'
+`)
+	apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+	if err != nil || len(apps) != 0 {
+		t.Fatalf("GenerateFromYAML() = %#v, %v; want no Applications and no error", generatedNames(apps), err)
+	}
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want only the first generator error", diags)
+	}
+	if got := generatorFailedMessage(t, diags); !strings.HasPrefix(got, "error unmarshling decoded ElementsYaml ") {
+		t.Fatalf("message = %q, want the elementsYaml error", got)
+	}
+}

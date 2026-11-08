@@ -88,10 +88,17 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 				continue
 			}
 			if _, ok := errors.AsType[*generatorParamsError](err); ok {
+				// Argo CD runs the later generators too, but it keeps only
+				// the first error, and the controller then sets one
+				// ErrorOccurred condition and creates no Applications
+				// (applicationset_controller.go:199-215). Stopping here
+				// gives the same outcome, reports the condition's error,
+				// and keeps a later drydock-only fatal error from failing
+				// the run.
 				templateRenderFailed = true
 				diags = append(diags, generatorDiags...)
 				diags = append(diags, appsetGeneratorFailedDiagnostic(manifestPath, err))
-				continue
+				break
 			}
 			return out, append(diags, generatorDiags...), err
 		}
