@@ -257,6 +257,19 @@ Repository resolution and cache behavior are documented in
 All renderers implement an internal renderer interface and return manifests,
 diagnostics, and errors without writing generated output into the source tree.
 
+A prepared Kustomize workspace is a temporary copy of the source tree. It holds
+most files as hard links to the repository, to the Git cache, or to a
+`--repo-map` folder. A hard link shares its data with the original file, so a
+write in place changes the original. Each write in place goes through
+`writeWorkspaceFile`, which first removes the workspace path and then creates a
+new file. Each copy step writes a temporary file and renames it over the
+destination. A copy step never writes under a workspace folder that is a
+symlink, and it never copies a repository path that goes through a symlinked
+folder. The workspace also copies each kustomization file that drydock
+rewrites. drydock finds these files, and the folders that it already copied, by
+the file on disk, not by the path text. A case-insensitive file system gives
+one file more than one name.
+
 Supported render paths:
 
 - Directory manifests.

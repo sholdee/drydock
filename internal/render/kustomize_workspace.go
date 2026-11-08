@@ -232,7 +232,9 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 	if err != nil {
 		return fmt.Errorf("encode temp kustomization %s: %w", manifestPath, err)
 	}
-	if err := os.WriteFile(kustomizationFile, data, 0o644); err != nil {
+	// The kustomization file may be a hard link to the repository file
+	// (see writeWorkspaceFile), so it is never written in place.
+	if err := writeWorkspaceFile(w.tempRepoRoot, kustomizationFile, data); err != nil {
 		return fmt.Errorf("write temp kustomization %s: %w", manifestPath, err)
 	}
 	return nil

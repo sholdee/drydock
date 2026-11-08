@@ -169,3 +169,85 @@ func assertDifferentFile(t *testing.T, left, right string) {
 		t.Fatalf("%s and %s are the same file", left, right)
 	}
 }
+
+func TestReplaceFileBreaksHardlinkWithoutMutatingPeer(t *testing.T) {
+	root := t.TempDir()
+	peer := filepath.Join(root, "peer.txt")
+	dst := filepath.Join(root, "dst.txt")
+	if err := os.WriteFile(peer, []byte("peer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(peer, dst); err != nil {
+		t.Skipf("hardlink unavailable: %v", err)
+	}
+	before, err := os.Stat(peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReplaceFile(dst, []byte("replacement"), 0o644); err != nil {
+		t.Fatalf("ReplaceFile() error = %v", err)
+	}
+	peerData, err := os.ReadFile(peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(peerData) != "peer" {
+		t.Fatalf("peer content = %q, want unchanged", peerData)
+	}
+	after, err := os.Stat(peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) || after.Mode() != before.Mode() {
+		t.Fatalf("peer metadata changed: mtime %v -> %v, mode %v -> %v", before.ModTime(), after.ModTime(), before.Mode(), after.Mode())
+	}
+	dstData, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(dstData) != "replacement" {
+		t.Fatalf("dst content = %q, want replacement", dstData)
+	}
+	assertDifferentFile(t, peer, dst)
+}
+
+func TestReplaceFileCreatesMissingFile(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "nested", "dst.txt")
+	if err := ReplaceFile(dst, []byte("new"), 0o644); err != nil {
+		t.Fatalf("ReplaceFile() error = %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new" {
+		t.Fatalf("dst content = %q, want new", data)
+	}
+}
+
+func TestReplaceFileRejectsSymlinkAndDirectory(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.txt")
+	if err := os.WriteFile(target, []byte("target"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "dir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReplaceFile(link, []byte("through"), 0o644); err == nil || !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("ReplaceFile(symlink) error = %v, want symlink rejection", err)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "target" {
+		t.Fatalf("symlink target = %q, %v; want unchanged", data, err)
+	}
+	if err := ReplaceFile(dir, []byte("over"), 0o644); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("ReplaceFile(directory) error = %v, want non-regular rejection", err)
+	}
+}

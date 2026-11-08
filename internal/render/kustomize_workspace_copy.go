@@ -37,11 +37,12 @@ func copyRegularTree(srcRoot, dstRoot string) error {
 }
 
 type preparedKustomizeWorkspaceCopier struct {
-	repoRoot   string
-	dstRoot    string
-	copiedDirs []string
+	repoRoot string
+	dstRoot  string
+	// copiedDirs holds the Lstat of each folder copied as a whole tree.
+	copiedDirs []os.FileInfo
 	copied     map[string]struct{}
-	forceCopy  map[string]struct{}
+	forceCopy  workspaceCopyFiles
 }
 
 func copyPreparedKustomizeWorkspaceTree(ctx context.Context, repoRoot, sourceRoot, dstRoot string, graph []kustomizeGraphNode, opts RenderOptions) error {
@@ -88,17 +89,9 @@ func copyPreparedKustomizeWorkspaceTree(ctx context.Context, repoRoot, sourceRoo
 
 func (c *preparedKustomizeWorkspaceCopier) copyPath(path string) error {
 	path = filepath.Clean(path)
-	rel, err := filepath.Rel(c.repoRoot, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("copy source path %q escapes source root %q", path, c.repoRoot)
-	}
-	// Render input never lives in a .git directory; copying one would put
-	// repository metadata (credentials included) where kustomize can read it.
-	if pathsafety.RelEntersGit(rel) {
-		return fmt.Errorf("copy source path %q enters a .git directory", path)
-	}
-	if c.pathCovered(path) {
-		return nil
+	rel, skip, err := c.sourceRel(path)
+	if err != nil || skip {
+		return err
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -112,31 +105,67 @@ func (c *preparedKustomizeWorkspaceCopier) copyPath(path string) error {
 	if err != nil || dstRel == ".." || strings.HasPrefix(dstRel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("copy destination path %q escapes destination root %q", dstPath, c.dstRoot)
 	}
+	if dstRel != "." {
+		if err := rejectSymlinkedDestination(c.dstRoot, filepath.Dir(dstPath)); err != nil {
+			return err
+		}
+	}
 	if info.IsDir() {
 		if err := copyWorkspaceTreeWithForceCopy(path, dstPath, c.forceCopy); err != nil {
 			return err
 		}
-		c.copiedDirs = append(c.copiedDirs, path)
+		c.copiedDirs = append(c.copiedDirs, info)
 		return nil
 	}
 	if _, ok := c.copied[path]; ok {
 		return nil
 	}
-	if err := copyWorkspaceFile(path, dstPath, c.forceCopy); err != nil {
+	if err := copyWorkspaceFile(path, dstPath, info, c.forceCopy); err != nil {
 		return err
 	}
 	c.copied[path] = struct{}{}
 	return nil
 }
 
-func mutableKustomizationFiles(sourceRoot string, graph []kustomizeGraphNode, extraPaths []string) (map[string]struct{}, error) {
-	out := map[string]struct{}{}
+// workspaceCopyFiles holds the repository files that a prepared workspace
+// must copy and never hard-link: the kustomization files that
+// prepareKustomizationDir rewrites. It matches a file by the file on disk
+// (os.SameFile), not by its path text. The graph walk names a kustomization
+// file by the name it looked up, under the directory name written in the
+// reference, while the tree copy walks the names on disk. On a
+// case-insensitive file system the two differ for one file, for example
+// base/kustomization.yaml and base/Kustomization.yaml, or BASE and base.
+type workspaceCopyFiles struct {
+	files []os.FileInfo
+}
+
+func (f *workspaceCopyFiles) add(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	f.files = append(f.files, info)
+	return nil
+}
+
+// contains reports whether info, the Lstat of a repository file, is one
+// of the files f holds.
+func (f workspaceCopyFiles) contains(info os.FileInfo) bool {
+	return slices.ContainsFunc(f.files, func(file os.FileInfo) bool {
+		return os.SameFile(file, info)
+	})
+}
+
+func mutableKustomizationFiles(sourceRoot string, graph []kustomizeGraphNode, extraPaths []string) (workspaceCopyFiles, error) {
+	var out workspaceCopyFiles
 	for _, dir := range append([]string{sourceRoot}, kustomizeGraphDirs(graph)...) {
 		file, err := findKustomizationFile(dir)
 		if err != nil {
-			return nil, err
+			return workspaceCopyFiles{}, err
 		}
-		out[filepath.Clean(file)] = struct{}{}
+		if err := out.add(file); err != nil {
+			return workspaceCopyFiles{}, err
+		}
 	}
 	for _, path := range extraPaths {
 		info, err := os.Lstat(path)
@@ -144,7 +173,7 @@ func mutableKustomizationFiles(sourceRoot string, graph []kustomizeGraphNode, ex
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, err
+			return workspaceCopyFiles{}, err
 		}
 		if !info.IsDir() {
 			continue
@@ -153,7 +182,9 @@ func mutableKustomizationFiles(sourceRoot string, graph []kustomizeGraphNode, ex
 		if err != nil {
 			continue
 		}
-		out[filepath.Clean(file)] = struct{}{}
+		if err := out.add(file); err != nil {
+			return workspaceCopyFiles{}, err
+		}
 	}
 	return out, nil
 }
@@ -166,14 +197,107 @@ func kustomizeGraphDirs(graph []kustomizeGraphNode) []string {
 	return out
 }
 
-func (c *preparedKustomizeWorkspaceCopier) pathCovered(path string) bool {
-	for _, dir := range c.copiedDirs {
-		rel, err := filepath.Rel(dir, path)
-		if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
-			return true
+// sourceRel checks the repository path that the copier is asked to copy
+// and returns it relative to the repository root. skip is true when the
+// copier must not copy it.
+func (c *preparedKustomizeWorkspaceCopier) sourceRel(path string) (rel string, skip bool, err error) {
+	rel, err = filepath.Rel(c.repoRoot, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false, fmt.Errorf("copy source path %q escapes source root %q", path, c.repoRoot)
+	}
+	// Render input never lives in a .git directory; copying one would put
+	// repository metadata (credentials included) where kustomize can read it.
+	if pathsafety.RelEntersGit(rel) {
+		return "", false, fmt.Errorf("copy source path %q enters a .git directory", path)
+	}
+	// A path through a symlinked folder is never copied. The render
+	// rejects such a path later, with the error of the field that names
+	// it. A copy could put files outside the workspace: the tree copy
+	// keeps symlinks, so the destination can resolve through one. The
+	// repository root itself has no folder to check: a remote Git base can
+	// be the whole acquired repository.
+	if rel != "." {
+		symlink, err := firstSymlinkedFolder(c.repoRoot, filepath.Dir(path))
+		if err != nil {
+			return "", false, err
+		}
+		if symlink != "" {
+			return "", true, nil
 		}
 	}
-	return false
+	if c.pathCovered(path) {
+		return "", true, nil
+	}
+	return rel, false, nil
+}
+
+// pathCovered reports whether path, or a folder above it inside the
+// repository, is a folder already copied as a whole tree. It compares
+// folders on disk (os.SameFile), not path text: on a case-insensitive file
+// system APP/lnk and app/lnk name one folder, and a second copy of it
+// could fail on a symlink it already made.
+func (c *preparedKustomizeWorkspaceCopier) pathCovered(path string) bool {
+	if len(c.copiedDirs) == 0 {
+		return false
+	}
+	for current := path; ; current = filepath.Dir(current) {
+		rel, err := filepath.Rel(c.repoRoot, current)
+		if err != nil || pathsafety.RelEscapes(rel) {
+			return false
+		}
+		if info, err := os.Lstat(current); err == nil && info.IsDir() && slices.ContainsFunc(c.copiedDirs, func(dir os.FileInfo) bool {
+			return os.SameFile(dir, info)
+		}) {
+			return true
+		}
+		if rel == "." {
+			return false
+		}
+	}
+}
+
+// firstSymlinkedFolder returns the first folder from root down to dir,
+// dir included and root not, that is a symlink, or "" when there is none.
+// A missing folder ends the walk.
+func firstSymlinkedFolder(root, dir string) (string, error) {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || pathsafety.RelEscapes(rel) {
+		return "", fmt.Errorf("path %q escapes root %q", dir, root)
+	}
+	if rel == "." {
+		return "", nil
+	}
+	current := root
+	for component := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", nil
+			}
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return current, nil
+		}
+	}
+	return "", nil
+}
+
+// rejectSymlinkedDestination fails when dir, a folder of the workspace
+// under root, or a folder between root and dir, is a symlink. The tree copy
+// keeps symlinks, and a copy through one would write outside the
+// workspace. A missing folder is fine: the copy creates it as a real
+// folder.
+func rejectSymlinkedDestination(root, dir string) error {
+	symlink, err := firstSymlinkedFolder(root, dir)
+	if err != nil {
+		return fmt.Errorf("copy destination: %w", err)
+	}
+	if symlink != "" {
+		return fmt.Errorf("copy destination %q goes through symlink %q", dir, symlink)
+	}
+	return nil
 }
 
 //nolint:gocyclo // Kustomize local-reference collection mirrors the schema fields that can point at files.
@@ -466,10 +590,10 @@ func appendGeneratorWorkspaceRefs(appendLocalRef func(string), sources types.KvP
 type copyTreeOptions struct {
 	preserveSymlinks bool
 	linkRegularFiles bool
-	forceCopy        map[string]struct{}
+	forceCopy        workspaceCopyFiles
 }
 
-func copyWorkspaceTreeWithForceCopy(srcRoot, dstRoot string, forceCopy map[string]struct{}) error {
+func copyWorkspaceTreeWithForceCopy(srcRoot, dstRoot string, forceCopy workspaceCopyFiles) error {
 	return copyTree(srcRoot, dstRoot, copyTreeOptions{
 		preserveSymlinks: true,
 		linkRegularFiles: true,
@@ -482,6 +606,9 @@ func copyTree(srcRoot, dstRoot string, options copyTreeOptions) error {
 	srcRoot = filepath.Clean(srcRoot)
 	dstRoot = filepath.Clean(dstRoot)
 
+	// The walk goes top-down and checks each destination folder before it
+	// writes under it, so no copy goes through a symlink, also not one this
+	// walk or an earlier copy made at a colliding name.
 	return filepath.WalkDir(srcRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -517,13 +644,20 @@ func copyTree(srcRoot, dstRoot string, options copyTreeOptions) error {
 		}
 
 		if entry.IsDir() {
+			if err := rejectSymlinkedDestination(filepath.Dir(dstRoot), dstPath); err != nil {
+				return err
+			}
 			return os.MkdirAll(dstPath, 0o755)
 		}
 		if !entry.Type().IsRegular() {
 			return fmt.Errorf("copy source path %q is not a regular file", path)
 		}
 		if options.linkRegularFiles {
-			return copyWorkspaceFile(path, dstPath, options.forceCopy)
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			return copyWorkspaceFile(path, dstPath, info, options.forceCopy)
 		}
 		return copyRegularFile(path, dstPath)
 	})
@@ -533,8 +667,13 @@ func copyRegularFile(src, dst string) error {
 	return filecopy.CopyRegularFile(src, dst, 0o644)
 }
 
-func copyWorkspaceFile(src, dst string, forceCopy map[string]struct{}) error {
-	if _, ok := forceCopy[filepath.Clean(src)]; ok {
+// copyWorkspaceFile puts the repository file src, whose Lstat is info, at
+// dst in a prepared workspace: as a copy when forceCopy holds it, else as a
+// hard link when it can. writeWorkspaceFile already breaks a hard link
+// before it writes. The copy of a rewritten file is a second guard: a
+// write in place at dst would still not reach src.
+func copyWorkspaceFile(src, dst string, info os.FileInfo, forceCopy workspaceCopyFiles) error {
+	if forceCopy.contains(info) {
 		return copyRegularFile(src, dst)
 	}
 	return filecopy.LinkOrCopyRegularFile(src, dst, 0o644)
