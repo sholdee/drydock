@@ -100,7 +100,8 @@ commit. The Argo CD repo-server checks out submodule content by default
 places:
 
 - A fetched Git source checks out its submodules into the Git cache. Each
-  submodule commit is its own cache entry, so `--offline` reads it.
+  submodule URL has one cache entry that holds every commit drydock
+  fetched for it, so `--offline` reads it.
 - A `--ref` or `--ref-orig` snapshot reads each submodule commit from the
   repository's `.git/modules` store first. That needs no network. Then it
   reads the Git cache, and then, unless `--offline` is set, it fetches the
@@ -112,7 +113,9 @@ places:
 
 With `--offline`, a submodule commit that drydock has no copy of is an
 offline cache miss. A fetched Git source then fails. A `--ref` snapshot
-keeps the submodule empty and fails only the sources in it. drydock never
+keeps the submodule empty, warns once, and fails only the sources whose
+path holds the submodule or is in it. drydock removes a user and password
+from submodule URLs before it fetches, so no cache entry stores a token. drydock never
 writes to your repository or its `.git` directory. Relative submodule URLs
 resolve against the repository URL. drydock sends HTTP credentials only to
 a submodule on the same host and port as the repository, never from

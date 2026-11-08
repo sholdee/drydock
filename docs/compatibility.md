@@ -828,12 +828,25 @@ tree. drydock matches the update:
   (`<scheme>::<address>`) for submodules (`protocol.file.allow=user`), and
   drydock refuses them too. drydock also refuses `git+ssh` and `ssh+git`,
   which its Git client does not support.
-- drydock classifies each URL as git does and also as its Git client
-  reads it. It refuses a URL that the two read differently, such as
-  `x y:/path`, which git reads as ssh to the host `x y`. It also refuses
-  an empty host, a host with a space, a control character, or a bracket,
-  and an empty path. Right before each clone or fetch, drydock checks the
-  transport again.
+- drydock reads each URL with a model of git's rules and with its own Git
+  client, and refuses it unless both find the same transport, user, host,
+  port, and path. For example, git reads `x y:/path` as ssh to the host
+  `x y`, and `host:2222:path` as ssh with the path `2222:path`. git
+  matches `http`, `https`, `git`, and `ssh` in lower case only, so drydock
+  refuses `HTTPS://`, and it reads `192.0.2.1::repo` as a remote helper.
+  drydock also refuses forms that the two can read differently: a control
+  character, a bracket, more than one `@`, a `:` in an ssh user, a percent
+  sign in the host part, an empty or bad port, a host, user, or path that
+  starts with `-`, and an empty path. The model is drydock's own, tested
+  against git, and it refuses rather than guesses. Right before each clone
+  or fetch, drydock checks the transport again.
+- drydock removes a user and password from each submodule URL before it
+  clones or fetches, so no cache entry stores a token. This matters for a
+  relative URL of a repository cloned with a token, such as
+  `https://gitlab-ci-token:TOKEN@host/...` in GitLab CI. drydock uses the
+  removed user and password as credentials only within the credential
+  scope of the repository. A fetched Git source loses its own user and
+  password from the stored URL the same way.
 - A pinned commit that no branch or tag holds is fetched by its SHA, as
   `git submodule update` does. This needs the network and a server that
   serves such a commit.
@@ -843,8 +856,9 @@ tree. drydock matches the update:
 drydock reads submodule content from these places:
 
 - A fetched Git source checks out its submodules into drydock's Git cache.
-  Each submodule commit is its own cache entry, keyed by the submodule URL
-  and the commit, so `--offline` reads it. With `--offline`, a submodule
+  Each submodule URL has one cache entry, a bare clone that holds every
+  commit drydock fetched for it, so `--offline` reads it and many gitlinks
+  into one repository share one clone. With `--offline`, a submodule
   commit that is not in the cache fails as an offline cache miss.
 - A `--ref` or `--ref-orig` snapshot gets submodule content after drydock
   reads `argocd-cmd-params-cm` from it, and only when
@@ -854,9 +868,11 @@ drydock reads submodule content from these places:
   is set, it fetches the submodule into that cache. drydock never writes
   to the repository or its `.git` directory.
 - When drydock cannot find a submodule commit for a snapshot, for example
-  offline, the submodule stays an empty directory. Only a source whose
-  path is in that submodule fails, with an error that names the submodule
-  and the offline cache miss. A source that fails for another reason gets
+  offline, the submodule stays an empty directory, and drydock warns
+  `source.submodule-missing` once for the run. A source whose path is in
+  that submodule, or holds it, such as a recursive directory source of a
+  parent directory, fails with an error that names the submodule and the
+  offline cache miss. A source that fails for another reason gets
   the missing submodules in its error, because its inputs can be in one
   of them. The render cache keys the snapshot on the missing submodules.
 - A remote Kustomize Git base checks out its submodules into the remote
@@ -882,8 +898,10 @@ The Git generator follows `applicationsetcontroller.enable.git.submodule`,
 but a snapshot holds submodule content only when
 `reposerver.enable.git.submodule` is on. When only the generator key is
 on, the generator of a snapshot sees empty submodules and warns. When a
-discovery run changes `reposerver.enable.git.submodule` after drydock
-filled a snapshot, the snapshot keeps the content of the first value.
+discovery run changes `reposerver.enable.git.submodule`, for example
+through an `argocd-cmd-params-cm` that `--discover-kustomize` renders,
+drydock fills or empties the snapshot again before it renders, so a
+render never sees content that the final value turns off.
 
 The repo-server also does these things, which drydock does not model:
 
