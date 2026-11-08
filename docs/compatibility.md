@@ -229,15 +229,46 @@ Supported:
   `controller.extraArgs`, `applicationSet.extraArgs`, or extra environment
   variables.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
-  generators.
+  generators. The Git generator follows the Argo CD v3.6.1 repo-server
+  checkout. Git files patterns are `git ls-files` pathspecs, so `*` matches
+  `/` and a directory name matches every file below it.
+  `applicationsetcontroller.enable.new.git.file.globbing` switches them to
+  doublestar globs. Git directory patterns match with `path.Match` as
+  written, and a malformed one is skipped. Hidden directories are listed only
+  with `reposerver.include.hidden.directories`. These fail the whole
+  ApplicationSet with `appset.generator-failed`: a param file that does not
+  decode, a pattern that git refuses or that drydock does not evaluate, a
+  listed symlink to a directory, to a missing target, or through a file,
+  a listed gitlink, a doublestar pattern that matches `.git` or a directory
+  in it, and an empty AppProject name in the ApplicationSet template. The
+  `attr` pathspec magic, a doublestar pattern that matches a file in `.git`,
+  and a doublestar pattern that needs too many lookups make the
+  ApplicationSet unsupported instead (`appset.unsupported-generator`).
+  drydock models gitlinks as directories of the checkout, from the index
+  or the commit, and does not fetch submodule content, which Argo CD fetches
+  by default. A named AppProject that does not exist in the cluster also fails
+  the whole ApplicationSet in Argo CD. This is a recorded difference: drydock
+  cannot know the AppProjects of the cluster offline, because they can come
+  from another repository, a chart, a remote Kustomize base, or the cluster
+  itself. So drydock keeps the Applications. When the repository declares
+  AppProjects but not that one, drydock warns `project.missing`.
+  In a working tree, drydock skips the paths that Git ignores and does not
+  track, and empty directories that are not gitlinks. It keeps untracked paths that Git
+  does not ignore. An Argo CD checkout does not hold them, so this is a
+  recorded difference. drydock never reads a symlink target outside the
+  repository or in `.git`. It warns and skips that param file, but Argo CD
+  reads it. The render parity smoke covers these cases. See
+  [ApplicationSets](/docs/applicationsets/#git-generators).
 - The Argo CD v3.6.1 OCI ApplicationSet generator (`generators[].oci`),
   top-level and nested in matrix/merge, with directories and files, `exclude`,
   `pathParamPrefix`, `values`, and the same path params as the Git generator.
   The artifact is acquired like an `oci://` Application source (`--repo-map`,
   `--offline`, the OCI cache, `--registry-config`, and `--oci-*` flags).
   Directory and file matching follow the v3.6.1 repo-server: hidden
-  directories are skipped, file patterns are always doublestar (`.` means
-  `**`), and files resolving outside the artifact are skipped.
+  directories are skipped unless `reposerver.include.hidden.directories` is
+  `true`, file patterns are always doublestar (`.` means `**`), and files
+  resolving outside the artifact are skipped. A param file that does not
+  decode fails the whole ApplicationSet.
   The directory walk never lists a symlink to a directory, but file patterns
   follow symlinks that stay inside the artifact. The Argo CD render parity
   smoke tests the generator against an in-cluster registry. Its fixtures use
@@ -1278,6 +1309,13 @@ Supported:
   through `applicationSet.extraEnv` too
   (`ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS`). drydock does
   not see a value set on the Deployment, and treats progressive syncs as off.
+- drydock reads `applicationsetcontroller.enable.new.git.file.globbing` and
+  `reposerver.include.hidden.directories` the same way, from a discovered or
+  rendered `argocd-cmd-params-cm` only, as Argo CD parses them: `true` or
+  `false` in any case, and `false` for any other value. The first chooses
+  how the Git files generator matches its patterns. The second adds hidden
+  directories to the Git and OCI directory generators. Earlier drydock
+  releases read both keys as metadata only.
 - An `argocd-cmd-params-cm` from a rendered Application can set the flag
   late, after drydock expanded the ApplicationSets with the earlier value.
   Then drydock runs discovery a second time with the final value, but only
@@ -1297,6 +1335,11 @@ Supported:
   cycle, the settings that drydock reports show the final value of the
   second run, which is not the value its generation used. The warning names
   both values.
+- The two Git generator keys use the same second run. For the globbing key,
+  the run needs an ApplicationSet with a Git files generator. For the hidden
+  directories key, it needs an ApplicationSet with a Git or OCI directory
+  generator. Their cycle warning is `settings.appset-generation-cycle`, which
+  `--strict` also fails on.
 - A directory source follows file symlinks as the Argo CD v3.6.1
   repo-server does (`getPotentiallyValidManifestFile`). The walk never
   enters a symlinked directory. The extension filter, `include`, and
