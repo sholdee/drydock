@@ -1,6 +1,10 @@
 package gittree
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/go-git/go-git/v5/plumbing/object"
+)
 
 // TestResolveSubmoduleURLMatchesGit pins relative URL resolution against
 // the cases of git's t/t0060-path-utils.sh (submodule--helper
@@ -105,5 +109,17 @@ func TestParseModulesSkipsWhatGitIgnores(t *testing.T) {
 	}
 	if _, ok := modules["-d"]; ok {
 		t.Fatal("module with an option-like path kept, want it ignored")
+	}
+}
+
+// TestWriteTreeRefusesGitPathsInSubmodules pins that a submodule tree that
+// names a .git path fails instead of writing it into the checkout.
+func TestWriteTreeRefusesGitPathsInSubmodules(t *testing.T) {
+	files := []object.File{{Name: "sub/.GIT/config"}}
+	if err := rejectGitPaths(files); err == nil {
+		t.Fatal("rejectGitPaths() error = nil, want the .git path refused")
+	}
+	if err := rejectGitPaths([]object.File{{Name: "sub/.github/x"}}); err != nil {
+		t.Fatalf("rejectGitPaths(.github) error = %v", err)
 	}
 }

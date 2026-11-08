@@ -45,6 +45,11 @@ func WriteTree(ctx context.Context, tree *object.Tree, opts WriteOptions) ([]Git
 		return nil, err
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	if opts.Prefix != "" {
+		if err := rejectGitPaths(files); err != nil {
+			return nil, err
+		}
+	}
 	if err := rejectOverlappingTreePaths(files); err != nil {
 		return nil, err
 	}
@@ -205,6 +210,21 @@ func writeTreeSymlink(root, target string, file *object.File, keepOutOfBoundsSym
 		}
 	}
 	return os.Symlink(body, target)
+}
+
+// rejectGitPaths fails for a submodule tree that names a path with a .git
+// component, in any letter case. git refuses to check such a path out
+// (verify_path), and a .git file would turn a directory of the checkout
+// into a pointer to another repository.
+func rejectGitPaths(files []object.File) error {
+	for i := range files {
+		for component := range strings.SplitSeq(files[i].Name, "/") {
+			if strings.EqualFold(component, ".git") {
+				return fmt.Errorf("unsafe Git tree path %q", files[i].Name)
+			}
+		}
+	}
+	return nil
 }
 
 // rejectOverlappingTreePaths fails for a malformed Git tree that names one
