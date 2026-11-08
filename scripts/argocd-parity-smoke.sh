@@ -250,9 +250,8 @@ NAMESPACE_DISABLED_APPLICATIONSET="parity-appset-namespace-disabled"
 # spec.sourceHydrator.syncSource.path is ".". It lives outside repo/, so the
 # main inventory never sees it (assert_crd_rejected_application).
 CRD_REJECTED_DIR="${REPO_ROOT}/testdata/argocd-parity/crd-rejected"
-# A generated Application whose AppProject is missing. drydock drops it only
-# when discovery saw every AppProject, which the main fixture repository
-# does not allow, so it has its own directory (run_missing_project_smoke).
+# A generated Application whose AppProject is missing, a recorded
+# divergence that run_missing_project_smoke checks on its own directory.
 MISSING_PROJECT_DIR="${REPO_ROOT}/testdata/argocd-parity/missing-project"
 MISSING_PROJECT_APPLICATIONSET="parity-validation-missing-project"
 MISSING_PROJECT_MESSAGE="application references project parity-missing-project which does not exist"
@@ -1772,14 +1771,16 @@ wait_for_applicationset_errors() {
 # APPLICATIONSET_ERRORS: for each entry with a code, the get apps stderr
 # that capture_drydock_applications keeps must hold a warning with that
 # code for the ApplicationSet file, with the Argo CD text in it.
-# run_missing_project_smoke applies MISSING_PROJECT_DIR after the main
-# comparisons, so its Applications stay out of the main inventory. Argo CD
-# must report the missing AppProject in an ErrorOccurred condition, create
-# parity-missing-project-kept, and not create parity-missing-project-dropped.
-# drydock, run on the directory alone, must list the same Applications and
-# warn appset.application-validation-failed with the Argo CD message.
+# run_missing_project_smoke checks a recorded divergence. It applies
+# MISSING_PROJECT_DIR after the main comparisons, so its Applications stay
+# out of the main inventory. Argo CD must report the missing AppProject in an
+# ErrorOccurred condition, create parity-missing-project-kept, and not
+# create parity-missing-project-dropped. drydock does not know the AppProjects
+# of the cluster offline, so it must keep both Applications and warn
+# project.missing for parity-missing-project-dropped, with the note that the
+# ApplicationSet controller does not create it.
 run_missing_project_smoke() {
-  local output_dir stdout_file stderr_file names
+  local output_dir list_file list_stderr diag_file diag_stderr names
   log_step "Checking a generated Application whose AppProject is missing"
   kubectl apply -f "${MISSING_PROJECT_DIR}" >/dev/null
   wait_for_applicationset_error "${MISSING_PROJECT_APPLICATIONSET}" "${MISSING_PROJECT_MESSAGE}"
@@ -1788,22 +1789,34 @@ run_missing_project_smoke() {
     fail "Argo CD created parity-missing-project-dropped, whose AppProject does not exist"
   fi
   output_dir="$(artifact_dir missing-project)"
-  stdout_file="${output_dir}/drydock.txt"
-  stderr_file="${output_dir}/drydock.stderr"
+  list_file="${output_dir}/drydock-apps.txt"
+  list_stderr="${output_dir}/drydock-apps.stderr"
+  diag_file="${output_dir}/drydock-diag.txt"
+  diag_stderr="${output_dir}/drydock-diag.stderr"
   if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" get apps \
     --path "${MISSING_PROJECT_DIR}" \
     --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
-    --offline > "${stdout_file}" 2> "${stderr_file}"); then
-    cat "${stderr_file}" >&2 || true
-    fail "drydock get apps on ${MISSING_PROJECT_DIR} failed; see ${stderr_file}"
+    --offline > "${list_file}" 2> "${list_stderr}"); then
+    cat "${list_stderr}" >&2 || true
+    fail "drydock get apps on ${MISSING_PROJECT_DIR} failed; see ${list_stderr}"
   fi
-  names="$(awk 'NR > 1 { print $2 }' "${stdout_file}" | sort | tr '\n' ' ')"
-  [[ "${names}" == "parity-missing-project-kept " ]] \
-    || fail "drydock listed '${names}' for ${MISSING_PROJECT_DIR}; want only parity-missing-project-kept; see ${stdout_file}"
-  grep -F "warning appset.application-validation-failed: " "${stderr_file}" | grep -F "(path: applicationset.yaml," | grep -qF "${MISSING_PROJECT_MESSAGE}" \
-    || fail "drydock did not warn appset.application-validation-failed with \"${MISSING_PROJECT_MESSAGE}\"; see ${stderr_file}"
+  names="$(awk 'NR > 1 { print $2 }' "${list_file}" | sort | tr '\n' ' ')"
+  [[ "${names}" == "parity-missing-project-dropped parity-missing-project-kept " ]] \
+    || fail "drydock listed '${names}' for ${MISSING_PROJECT_DIR}; want both Applications (recorded divergence); see ${list_file}"
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diag \
+    --path "${MISSING_PROJECT_DIR}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --offline > "${diag_file}" 2> "${diag_stderr}"); then
+    cat "${diag_stderr}" >&2 || true
+    fail "drydock diag on ${MISSING_PROJECT_DIR} failed; see ${diag_stderr}"
+  fi
+  grep -F "warning project.missing: Application argocd/parity-missing-project-dropped references missing AppProject \"parity-missing-project\"; ApplicationSet argocd/${MISSING_PROJECT_APPLICATIONSET} generates it, and the Argo CD ApplicationSet controller does not create or update it unless that AppProject exists in the cluster" "${diag_file}" >/dev/null \
+    || fail "drydock did not warn project.missing for parity-missing-project-dropped with the ApplicationSet controller note; see ${diag_file}"
+  if grep -qF "parity-missing-project-kept" "${diag_file}"; then
+    fail "drydock warned for parity-missing-project-kept, whose AppProject exists; see ${diag_file}"
+  fi
   kubectl delete -f "${MISSING_PROJECT_DIR}" --wait=false >/dev/null || true
-  echo "Missing AppProject: Argo CD and drydock keep the same Application" >&2
+  echo "Missing AppProject: Argo CD drops the Application, drydock keeps it and warns project.missing (recorded divergence)" >&2
 }
 
 compare_applicationset_errors() {

@@ -150,18 +150,18 @@ project `parity-missing-project`. No AppProject has that name. The
 ApplicationSet controller does not create the second Application, and it
 sets an `ErrorOccurred` condition with the message `application references
 project parity-missing-project which does not exist`
-(`applicationset_controller.go:627-633`). drydock drops such an Application
-only when it knows every AppProject. This repository has chart-only Helm and
-OCI sources that fleet discovery does not render, so drydock would keep the
-Application here. The fixture therefore lives in its own directory with one
-AppProject, `../missing-project/project.yaml`.
+(`applicationset_controller.go:626-633`). This is a recorded divergence.
+drydock does not know the AppProjects of the cluster offline, so it keeps
+the second Application and warns `project.missing` for it, with a note that
+the ApplicationSet controller does not create it. The fixture lives in its
+own directory with one AppProject, `../missing-project/project.yaml`, so
+that the kept Application stays out of the main inventory comparison.
 `run_missing_project_smoke` applies the directory after the main
-comparisons, so its Applications stay out of the main inventory. It waits
-for the condition, requires `parity-missing-project-kept` and no
-`parity-missing-project-dropped` in Argo CD, and runs `drydock get apps` on
-the directory alone with the fixture URL mapped to this repository. drydock
-must list only `parity-missing-project-kept` and warn
-`appset.application-validation-failed` with the same message.
+comparisons. It waits for the condition, and it requires
+`parity-missing-project-kept` and no `parity-missing-project-dropped` in
+Argo CD. Then it runs `drydock get apps` and `drydock diag` on the directory
+alone, with the fixture URL mapped to this repository. drydock must list
+both Applications and warn `project.missing` for the second one only.
 
 `../crd-rejected/apps/parity-crd-sync-path-dot.yaml` sets
 `syncSource.path: "."`. The CRD schema rejects it, so Argo CD never holds it.

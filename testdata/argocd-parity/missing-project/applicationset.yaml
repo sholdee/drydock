@@ -4,12 +4,12 @@
 # and still creates the first one
 # (applicationset/controllers/applicationset_controller.go:627-633).
 #
-# drydock drops such an Application only when it knows every AppProject:
-# fleet discovery rendered everything that can hold one. The main fixture
-# repository has chart-only Helm and OCI sources that discovery does not
-# render, so this fixture lives in its own directory with one AppProject,
-# project.yaml. run_missing_project_smoke applies both files after the
-# main comparisons and runs drydock on this directory alone.
+# This is a recorded divergence. drydock does not know the AppProjects of
+# the cluster offline, so it keeps the second Application and warns
+# project.missing with a note that the ApplicationSet controller does not
+# create it. run_missing_project_smoke applies this directory after the
+# main comparisons, so its Applications stay out of the main inventory, and
+# runs drydock on this directory alone.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

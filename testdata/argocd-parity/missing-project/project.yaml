@@ -1,7 +1,8 @@
-# The one AppProject of this fixture directory. With it, drydock knows the
-# repository declares AppProjects, so a project that it does not declare is
-# missing. The smoke applies it to Argo CD too, so both sides hold the same
-# AppProjects apart from the built-in default project.
+# The one AppProject of this fixture directory. With it, the repository
+# declares AppProjects, so drydock reports a project that it does not
+# declare with the actionable project.missing warning. The smoke applies it
+# to Argo CD too, so both sides hold the same AppProjects apart from the
+# built-in default project.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
