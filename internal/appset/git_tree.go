@@ -609,15 +609,15 @@ func (f *gitGlobFS) resolve(name string) gitGlobNode {
 		}
 		return f.gitNode(resolution.gitRest)
 	}
-	real := resolution.path
-	if real == "." || f.tree.contentDirs[real] {
-		return gitGlobNode{exists: true, dir: true, real: real, hops: hops}
+	resolvedPath := resolution.path
+	if resolvedPath == "." || f.tree.contentDirs[resolvedPath] {
+		return gitGlobNode{exists: true, dir: true, real: resolvedPath, hops: hops}
 	}
-	info, err = os.Lstat(filepath.Join(f.tree.root, filepath.FromSlash(real)))
+	info, err = os.Lstat(filepath.Join(f.tree.root, filepath.FromSlash(resolvedPath)))
 	if err != nil || !info.Mode().IsRegular() {
 		return gitGlobNode{}
 	}
-	return gitGlobNode{exists: true, real: real, hops: hops}
+	return gitGlobNode{exists: true, real: resolvedPath, hops: hops}
 }
 
 // gitNode is the node of rel in the .git directory of the checkout.

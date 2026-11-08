@@ -554,9 +554,8 @@ func at(s string, i int) byte {
 }
 
 // gitDowild is dowild (wildmatch.c), with indexes into the strings in place
-// of C pointers. at returns the terminating NUL past the end.
-//
-//nolint:gocyclo // A copy of git dowild keeps its shape.
+// of C pointers. at returns the terminating NUL past the end. The '*' and
+// '[' branches are in gitDowildStar and gitDowildBracket.
 func gitDowild(pattern string, p int, text string, t int, flags int) int {
 	for ; at(pattern, p) != 0; t, p = t+1, p+1 {
 		pCh := at(pattern, p)
@@ -569,216 +568,274 @@ func gitDowild(pattern string, p int, text string, t int, flags int) int {
 			pCh = gitToLower(pCh)
 		}
 		switch pCh {
-		case '\\':
-			// Literal match with the following character. wildmatch does
-			// not fold the case of an escaped character.
-			p++
-			pCh = at(pattern, p)
-			if tCh != pCh {
-				return wmNoMatch
-			}
-			continue
-		case '?':
-			// Match anything but '/' with WM_PATHNAME.
-			if flags&wmPathname != 0 && tCh == '/' {
-				return wmNoMatch
-			}
-			continue
 		case '*':
-			var matchSlash bool
-			p++
-			if at(pattern, p) == '*' {
-				prevP := p - 2
-				for {
-					p++
-					if at(pattern, p) != '*' {
-						break
-					}
-				}
-				switch {
-				case flags&wmPathname == 0:
-					// Without WM_PATHNAME, '*' == '**'.
-					matchSlash = true
-				case (prevP < 0 || pattern[prevP] == '/') &&
-					(at(pattern, p) == 0 || at(pattern, p) == '/' ||
-						(at(pattern, p) == '\\' && at(pattern, p+1) == '/')):
-					// "**/" matches no directory or several.
-					if at(pattern, p) == '/' && gitDowild(pattern, p+1, text, t, flags) == wmMatch {
-						return wmMatch
-					}
-					matchSlash = true
-				default:
-					matchSlash = false
-				}
-			} else {
-				matchSlash = flags&wmPathname == 0
+			result, nextP, nextT, done := gitDowildStar(pattern, p, text, t, tCh, flags)
+			if done {
+				return result
 			}
-			if at(pattern, p) == 0 {
-				// A trailing "**" matches everything. A trailing "*"
-				// matches only without more slashes.
-				if !matchSlash && strings.IndexByte(text[t:], '/') >= 0 {
-					return wmNoMatch
-				}
-				return wmMatch
-			} else if !matchSlash && at(pattern, p) == '/' {
-				// One asterisk followed by a slash with WM_PATHNAME
-				// matches the next directory.
-				slash := strings.IndexByte(text[t:], '/')
-				if slash < 0 {
-					return wmNoMatch
-				}
-				t += slash
-				// The slash is consumed by the loop.
-				break
-			}
-			for tCh != 0 {
-				// Advance faster when an asterisk is followed by a
-				// literal: the text before the literal belongs to "*".
-				if !gitIsGlobSpecial(at(pattern, p)) {
-					pLit := at(pattern, p)
-					if flags&wmCaseFold != 0 {
-						pLit = gitToLower(pLit)
-					}
-					for {
-						tCh = at(text, t)
-						if tCh == 0 || (!matchSlash && tCh == '/') {
-							break
-						}
-						if flags&wmCaseFold != 0 {
-							tCh = gitToLower(tCh)
-						}
-						if tCh == pLit {
-							break
-						}
-						t++
-					}
-					if tCh != pLit {
-						if matchSlash {
-							return wmAbortAll
-						}
-						return wmAbortToStarStar
-					}
-				}
-				matched := gitDowild(pattern, p, text, t, flags)
-				if matched != wmNoMatch {
-					if !matchSlash || matched != wmAbortToStarStar {
-						return matched
-					}
-				} else if !matchSlash && tCh == '/' {
-					return wmAbortToStarStar
-				}
-				t++
-				tCh = at(text, t)
-				if flags&wmCaseFold != 0 {
-					tCh = gitToLower(tCh)
-				}
-			}
-			return wmAbortAll
+			p, t = nextP, nextT
 		case '[':
-			p++
-			pCh = at(pattern, p)
-			if pCh == '^' {
-				pCh = '!'
+			nextP, result, done := gitDowildBracket(pattern, p, tCh, flags)
+			if done {
+				return result
 			}
-			negated := pCh == '!'
-			if negated {
-				p++
-				pCh = at(pattern, p)
-			}
-			var prevCh byte
-			matched := false
-			for {
-				if pCh == 0 {
-					return wmAbortAll
-				}
-				switch {
-				case pCh == '\\':
-					p++
-					pCh = at(pattern, p)
-					if pCh == 0 {
-						return wmAbortAll
-					}
-					if tCh == pCh {
-						matched = true
-					}
-				case pCh == '-' && prevCh != 0 && at(pattern, p+1) != 0 && at(pattern, p+1) != ']':
-					p++
-					pCh = at(pattern, p)
-					if pCh == '\\' {
-						p++
-						pCh = at(pattern, p)
-						if pCh == 0 {
-							return wmAbortAll
-						}
-					}
-					if tCh <= pCh && tCh >= prevCh {
-						matched = true
-					} else if flags&wmCaseFold != 0 && gitIsLower(tCh) {
-						upper := gitToUpper(tCh)
-						if upper <= pCh && upper >= prevCh {
-							matched = true
-						}
-					}
-					pCh = 0 // This makes prevCh 0.
-				case pCh == '[' && at(pattern, p+1) == ':':
-					p += 2
-					s := p
-					for {
-						pCh = at(pattern, p)
-						if pCh == 0 || pCh == ']' {
-							break
-						}
-						p++
-					}
-					if pCh == 0 {
-						return wmAbortAll
-					}
-					i := p - s - 1
-					if i < 0 || pattern[p-1] != ':' {
-						// No ":]", so a plain '['.
-						p = s - 2
-						pCh = '['
-						if tCh == pCh {
-							matched = true
-						}
-						break
-					}
-					class := pattern[s : s+i]
-					ok, known := gitCharClass(class, tCh, flags)
-					if !known {
-						return wmAbortAll
-					}
-					if ok {
-						matched = true
-					}
-					pCh = 0 // This makes prevCh 0.
-				default:
-					if tCh == pCh {
-						matched = true
-					}
-				}
-				prevCh = pCh
-				p++
-				pCh = at(pattern, p)
-				if pCh == ']' {
-					break
-				}
-			}
-			if matched == negated || (flags&wmPathname != 0 && tCh == '/') {
-				return wmNoMatch
-			}
-			continue
+			p = nextP
 		default:
-			if tCh != pCh {
+			var ok bool
+			if p, ok = gitDowildChar(pattern, p, pCh, tCh, flags); !ok {
 				return wmNoMatch
 			}
-			continue
 		}
 	}
 	if t < len(text) {
 		return wmNoMatch
 	}
 	return wmMatch
+}
+
+// gitDowildChar matches one pattern character other than '*' and '['. p
+// points at it, and nextP at its last byte.
+func gitDowildChar(pattern string, p int, pCh, tCh byte, flags int) (nextP int, ok bool) {
+	switch pCh {
+	case '\\':
+		// Literal match with the following character. wildmatch does not
+		// fold the case of an escaped character.
+		p++
+		return p, tCh == at(pattern, p)
+	case '?':
+		// Match anything but '/' with WM_PATHNAME.
+		return p, flags&wmPathname == 0 || tCh != '/'
+	default:
+		return p, tCh == pCh
+	}
+}
+
+// gitDowildStar is the '*' branch of dowild. p points at the first '*'.
+// When done is false, the match goes on at nextP and nextT, which point at
+// the '/' after one asterisk and the next '/' of the text.
+func gitDowildStar(pattern string, p int, text string, t int, tCh byte, flags int) (result, nextP, nextT int, done bool) {
+	p, matchSlash, matched := gitStarSpan(pattern, p+1, text, t, flags)
+	if matched {
+		return wmMatch, p, t, true
+	}
+	if at(pattern, p) == 0 {
+		// A trailing "**" matches everything. A trailing "*" matches only
+		// without more slashes.
+		if !matchSlash && strings.IndexByte(text[t:], '/') >= 0 {
+			return wmNoMatch, p, t, true
+		}
+		return wmMatch, p, t, true
+	}
+	if !matchSlash && at(pattern, p) == '/' {
+		// One asterisk followed by a slash with WM_PATHNAME matches the
+		// next directory. The slash is consumed by the caller's loop.
+		slash := strings.IndexByte(text[t:], '/')
+		if slash < 0 {
+			return wmNoMatch, p, t, true
+		}
+		return 0, p, t + slash, false
+	}
+	return gitDowildStarScan(pattern, p, text, t, tCh, matchSlash, flags), p, t, true
+}
+
+// gitStarSpan reads the asterisks that start before p and tells whether
+// they match '/'. matched is true when "**/" already matched the rest.
+func gitStarSpan(pattern string, p int, text string, t int, flags int) (nextP int, matchSlash, matched bool) {
+	if at(pattern, p) != '*' {
+		return p, flags&wmPathname == 0, false
+	}
+	prevP := p - 2
+	for {
+		p++
+		if at(pattern, p) != '*' {
+			break
+		}
+	}
+	switch {
+	case flags&wmPathname == 0:
+		// Without WM_PATHNAME, '*' == '**'.
+		return p, true, false
+	case (prevP < 0 || pattern[prevP] == '/') &&
+		(at(pattern, p) == 0 || at(pattern, p) == '/' ||
+			(at(pattern, p) == '\\' && at(pattern, p+1) == '/')):
+		// "**/" matches no directory or several.
+		if at(pattern, p) == '/' && gitDowild(pattern, p+1, text, t, flags) == wmMatch {
+			return p, true, true
+		}
+		return p, true, false
+	default:
+		return p, false, false
+	}
+}
+
+// gitDowildStarScan tries the rest of the pattern at each text position
+// that the asterisks can reach.
+func gitDowildStarScan(pattern string, p int, text string, t int, tCh byte, matchSlash bool, flags int) int {
+	for tCh != 0 {
+		// Advance faster when an asterisk is followed by a literal: the
+		// text before the literal belongs to "*".
+		if !gitIsGlobSpecial(at(pattern, p)) {
+			var found bool
+			t, tCh, found = gitSkipToLiteral(at(pattern, p), text, t, matchSlash, flags)
+			if !found {
+				if matchSlash {
+					return wmAbortAll
+				}
+				return wmAbortToStarStar
+			}
+		}
+		matched := gitDowild(pattern, p, text, t, flags)
+		if matched != wmNoMatch {
+			if !matchSlash || matched != wmAbortToStarStar {
+				return matched
+			}
+		} else if !matchSlash && tCh == '/' {
+			return wmAbortToStarStar
+		}
+		t++
+		tCh = at(text, t)
+		if flags&wmCaseFold != 0 {
+			tCh = gitToLower(tCh)
+		}
+	}
+	return wmAbortAll
+}
+
+// gitSkipToLiteral moves t to the next text character equal to pLit. It
+// stops at the end, and at '/' when the asterisks do not match '/'.
+func gitSkipToLiteral(pLit byte, text string, t int, matchSlash bool, flags int) (nextT int, tCh byte, found bool) {
+	if flags&wmCaseFold != 0 {
+		pLit = gitToLower(pLit)
+	}
+	for {
+		tCh = at(text, t)
+		if tCh == 0 || (!matchSlash && tCh == '/') {
+			break
+		}
+		if flags&wmCaseFold != 0 {
+			tCh = gitToLower(tCh)
+		}
+		if tCh == pLit {
+			break
+		}
+		t++
+	}
+	return t, tCh, tCh == pLit
+}
+
+// gitDowildBracket is the '[' branch of dowild. p points at the '['. When
+// done is false, the class matched and the match goes on after nextP, which
+// points at the closing ']'.
+func gitDowildBracket(pattern string, p int, tCh byte, flags int) (nextP, result int, done bool) {
+	p++
+	pCh := at(pattern, p)
+	if pCh == '^' {
+		pCh = '!'
+	}
+	negated := pCh == '!'
+	if negated {
+		p++
+		pCh = at(pattern, p)
+	}
+	var prevCh byte
+	matched := false
+	for {
+		if pCh == 0 {
+			return p, wmAbortAll, true
+		}
+		var hit, abort bool
+		p, pCh, hit, abort = gitBracketItem(pattern, p, pCh, prevCh, tCh, flags)
+		if abort {
+			return p, wmAbortAll, true
+		}
+		if hit {
+			matched = true
+		}
+		prevCh = pCh
+		p++
+		pCh = at(pattern, p)
+		if pCh == ']' {
+			break
+		}
+	}
+	if matched == negated || (flags&wmPathname != 0 && tCh == '/') {
+		return p, wmNoMatch, true
+	}
+	return p, 0, false
+}
+
+// gitBracketItem matches one item of a bracket expression at p.
+func gitBracketItem(pattern string, p int, pCh, prevCh, tCh byte, flags int) (nextP int, nextCh byte, hit, abort bool) {
+	switch {
+	case pCh == '\\':
+		return gitBracketEscape(pattern, p, tCh)
+	case pCh == '-' && prevCh != 0 && at(pattern, p+1) != 0 && at(pattern, p+1) != ']':
+		return gitBracketRange(pattern, p, prevCh, tCh, flags)
+	case pCh == '[' && at(pattern, p+1) == ':':
+		return gitBracketClass(pattern, p, tCh, flags)
+	default:
+		return p, pCh, tCh == pCh, false
+	}
+}
+
+// gitBracketEscape matches an escaped character in a bracket expression.
+func gitBracketEscape(pattern string, p int, tCh byte) (nextP int, pCh byte, hit, abort bool) {
+	p++
+	pCh = at(pattern, p)
+	if pCh == 0 {
+		return p, pCh, false, true
+	}
+	return p, pCh, tCh == pCh, false
+}
+
+// gitBracketRange matches a range such as a-z. p points at the '-'. The
+// returned pCh is 0, which makes the caller's prevCh 0.
+func gitBracketRange(pattern string, p int, prevCh, tCh byte, flags int) (nextP int, pCh byte, hit, abort bool) {
+	p++
+	pCh = at(pattern, p)
+	if pCh == '\\' {
+		p++
+		pCh = at(pattern, p)
+		if pCh == 0 {
+			return p, pCh, false, true
+		}
+	}
+	if tCh <= pCh && tCh >= prevCh {
+		hit = true
+	} else if flags&wmCaseFold != 0 && gitIsLower(tCh) {
+		upper := gitToUpper(tCh)
+		if upper <= pCh && upper >= prevCh {
+			hit = true
+		}
+	}
+	return p, 0, hit, false
+}
+
+// gitBracketClass matches a [:class:] in a bracket expression. p points at
+// the '['. Without a closing ":]", the '[' is a plain character.
+func gitBracketClass(pattern string, p int, tCh byte, flags int) (nextP int, pCh byte, hit, abort bool) {
+	p += 2
+	s := p
+	for {
+		pCh = at(pattern, p)
+		if pCh == 0 || pCh == ']' {
+			break
+		}
+		p++
+	}
+	if pCh == 0 {
+		return p, pCh, false, true
+	}
+	i := p - s - 1
+	if i < 0 || pattern[p-1] != ':' {
+		// No ":]", so a plain '['.
+		return s - 2, '[', tCh == '[', false
+	}
+	ok, known := gitCharClass(pattern[s:s+i], tCh, flags)
+	if !known {
+		return p, 0, false, true
+	}
+	return p, 0, ok, false
 }
 
 // gitCharClass matches a [:class:] of wildmatch. known is false for a
