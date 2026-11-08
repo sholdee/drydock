@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/acquisition"
@@ -69,6 +70,10 @@ type BuildRequest struct {
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map
 	settingsInstallMemo  *sync.Map
+	// projectsIncomplete records that fleet discovery left out output that
+	// could hold AppProjects (markProjectsIncomplete), so the final
+	// AppProject set is not known to be complete.
+	projectsIncomplete *atomic.Bool
 	// progressiveSyncs, when set, is the
 	// applicationsetcontroller.enable.progressive.syncs value of a restarted
 	// discovery run (discoverRepositoryWithOCI).

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -133,6 +134,7 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 	request.discoveryPathMemo = &sync.Map{}
 	request.appsetGenerationMemo = &sync.Map{}
 	request.settingsInstallMemo = &sync.Map{}
+	request.projectsIncomplete = &atomic.Bool{}
 
 	discovered, externalDiags, err := scanRepositoryDiscovery(root, request)
 	if err != nil {
@@ -193,34 +195,40 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 		renderSig = nextRenderSig
 	}
 
-	discovered, gateDiags, err := applyFinalGates(root, request, discovered)
+	discovered, gateDiags, err := applyFinalGates(root, request, discovered, projectSetComplete(mode, maxDepth, request))
 	return discovered, dedupeDiagnostics(append(allDiags, gateDiags...)), allEvents, renderCache, renderSig, err
 }
 
-// applyFinalGates runs the checks that need the whole discovery result:
-// the namespace gate, then the AppProject lookup of the ApplicationSet
-// controller for generated Applications (pruneMissingProjectApplications).
-func applyFinalGates(root string, request BuildRequest, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, error) {
-	discovered, diags, err := applyFinalNamespaceGate(root, discovered)
-	if err != nil {
-		return discovered, diags, err
-	}
-	discovered, projectDiags := pruneMissingProjectApplications(discovered)
-	return discovered, append(diags, request.normalizeDiagnostics(projectDiags, false)...), nil
+// projectSetComplete reports whether discovery saw every AppProject: fleet
+// discovery ran, and no frontier Application left out output that can hold
+// one (markProjectsIncomplete).
+func projectSetComplete(mode string, maxDepth int, request BuildRequest) bool {
+	return mode == DiscoveryModeFleet && maxDepth > 0 && !request.projectsIncomplete.Load()
 }
 
-// applyFinalNamespaceGate prunes what Argo CD never reconciles, with the
-// settings at the end of discovery. Fleet discovery can find
-// argocd-cmd-params-cm late, after it expanded an ApplicationSet or rendered
-// an Application that Argo CD never reconciles, so the gate runs once more
-// on the whole result.
-func applyFinalNamespaceGate(root string, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, error) {
+// applyFinalGates runs the checks that need the whole discovery result,
+// with the settings at the end of discovery. The namespace gate prunes what
+// Argo CD never reconciles. Fleet discovery can find argocd-cmd-params-cm
+// late, after it expanded an ApplicationSet or rendered an Application that
+// Argo CD never reconciles, so the gate runs once more on the whole result.
+// Then the AppProject lookup of the ApplicationSet controller drops
+// generated Applications whose AppProject is missing
+// (pruneMissingProjectApplications). That runs only when projectsComplete
+// reports that fleet discovery rendered everything that could hold an
+// AppProject, and project diagnostics are not off.
+func applyFinalGates(root string, request BuildRequest, discovered discovery.Result, projectsComplete bool) (discovery.Result, []diagnostic.Diagnostic, error) {
 	settings, _, err := loadSettingsFromDiscovery(root, discovered)
 	if err != nil {
 		return discovered, nil, err
 	}
-	pruned, diags := pruneNotEnabledNamespaces(discovered, namespaceGateFromSettings(settings))
-	return pruned, diags, nil
+	discovered, diags := pruneNotEnabledNamespaces(discovered, namespaceGateFromSettings(settings))
+	if !projectsComplete || request.ProjectDiagnosticsMode.Normalize() == diagnostic.ProjectDiagnosticsModeOff {
+		// With project diagnostics off, the user says that the repository
+		// does not hold every AppProject.
+		return discovered, diags, nil
+	}
+	discovered, projectDiags := pruneMissingProjectApplications(discovered, settings)
+	return discovered, append(diags, request.normalizeDiagnostics(projectDiags, false)...), nil
 }
 
 // expandFirstApplicationSets sets the

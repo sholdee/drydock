@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -139,6 +141,9 @@ func renderDiscoveryApplication(ctx context.Context, root string, request BuildR
 	if !namespaceGateFromSettings(renderSettings.settings).applicationAllowed(appFile.Application.Namespace) {
 		return discovery.Result{}, nil, nil
 	}
+	if applicationSkipsProjectSources(root, request, discovered, appFile.Application) {
+		markProjectsIncomplete(request)
+	}
 	if !applicationMayRenderDiscoveryObjects(root, request, discovered, appFile.Application) {
 		return discovery.Result{}, nil, nil
 	}
@@ -200,6 +205,10 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 	if err != nil {
 		if ctx.Err() != nil || !inCluster {
 			return skippedRenderedDiscovery()
+		}
+		if !settingsOnly {
+			// The output that did not render can hold AppProjects.
+			markProjectsIncomplete(request)
 		}
 		if install := applicationSettingsInstall(ctx, request, provider, application); install.installsArgoCD() {
 			// The values files stay settings candidates, so drydock falls
@@ -307,6 +316,87 @@ func applicationMayRenderDiscoveryObjects(root string, request BuildRequest, dis
 		}
 	}
 	return false
+}
+
+// markProjectsIncomplete records that discovery left out output that can
+// hold AppProjects, so pruneMissingProjectApplications must not trust the
+// AppProject set.
+func markProjectsIncomplete(request BuildRequest) {
+	if request.projectsIncomplete != nil {
+		request.projectsIncomplete.Store(true)
+	}
+}
+
+// applicationSkipsProjectSources reports whether the discovery frontier
+// leaves out a source of application whose output can hold an AppProject
+// that discovery does not see otherwise:
+//
+//   - a chart-only Helm source, such as the argocd-apps chart, which
+//     discovery never renders;
+//   - an oci:// source without a --repo-map entry;
+//   - a source whose path is not in a local tree;
+//   - a local source that the repository scan already read, unless Argo CD
+//     renders it as plain manifests. A Kustomize, Helm, plugin, or Jsonnet
+//     render can rename or add AppProjects, for example with a namePrefix.
+//
+// It follows the skips in applicationMayRenderDiscoveryObjects. A plain
+// directory render holds at most the AppProjects that the scan read, so it
+// cannot hide one.
+func applicationSkipsProjectSources(root string, request BuildRequest, discovered discovery.Result, application argoappv1.Application) bool {
+	plan, err := Plan(application)
+	if err != nil {
+		return false
+	}
+	for _, sourcePlan := range plan.Sources {
+		if sourcePlan.RefOnly {
+			continue
+		}
+		source := sourcePlan.Source
+		if ociartifact.IsOCIURL(source.RepoURL) {
+			if _, mapped := mappedRepositoryPath(request, source.RepoURL); !mapped {
+				return true
+			}
+		} else if source.Chart != "" && source.Path == "" {
+			return true
+		}
+		sourceRoot, ok := localDiscoverySourceRoot(root, request, source)
+		if !ok {
+			return true
+		}
+		matches, err := pathMayContainDiscoveryObjectsCached(request.discoveryPathMemo, sourceRoot)
+		if err != nil {
+			return true
+		}
+		if matches && localSourceAlreadyDiscovered(root, sourceRoot, discovered) && !sourceRootHasLocalChart(sourceRoot) && !renderedAsScanned(sourceRoot, source) {
+			return true
+		}
+	}
+	return false
+}
+
+// renderedAsScanned reports whether Argo CD renders source as the plain
+// manifests that the repository scan read: a directory source without a
+// Helm, Kustomize, or plugin spec, without a kustomization or Chart.yaml,
+// and without Jsonnet files.
+func renderedAsScanned(sourceRoot string, source argoappv1.ApplicationSource) bool {
+	if source.Helm != nil || source.Kustomize != nil || source.Plugin != nil {
+		return false
+	}
+	if sourceType, err := discoverLocalSourceType(sourceRoot, sourceTypeGates{}); err != nil || sourceType != "" {
+		return false
+	}
+	hasJsonnet := false
+	err := filepath.WalkDir(sourceRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonnet") {
+			hasJsonnet = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return err == nil && !hasJsonnet
 }
 
 func renderedObjectDiscoveryPath(parent argoappv1.Application, renderedManifest render.Manifest) string {
