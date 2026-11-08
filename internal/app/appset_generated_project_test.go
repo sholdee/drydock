@@ -206,3 +206,29 @@ func TestArgoCDParityFixtureMissingProject(t *testing.T) {
 	}
 	t.Fatalf("diagnostics = %#v, want project.missing for parity-missing-project-dropped", result.Diagnostics)
 }
+
+// A build validates the AppProject twice: before rendering and in the
+// rendered resource policy check. Both give the same project.missing text
+// for a generated Application, so exactly one warning remains.
+func TestBuildReportsOneMissingProjectWarningForGeneratedApplication(t *testing.T) {
+	fixtureRoot, err := filepath.Abs(filepath.Join("..", "..", "testdata", "argocd-parity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:     filepath.Join(fixtureRoot, "missing-project"),
+		RepoMaps: []sourcepkg.RepoMap{{URL: "git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git", Path: filepath.Join(fixtureRoot, "repo")}},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	var warnings []string
+	for _, diag := range result.Diagnostics {
+		if diagnostic.StableCode(diag) == diagnostic.CodeProjectMissing && strings.Contains(diag.Message, "parity-missing-project-dropped") {
+			warnings = append(warnings, diag.Message)
+		}
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "ApplicationSet argocd/parity-validation-missing-project generates it") {
+		t.Fatalf("project.missing warnings for parity-missing-project-dropped = %#v, want exactly one with the ApplicationSet note", warnings)
+	}
+}

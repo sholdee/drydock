@@ -530,15 +530,18 @@ type renderApplicationsRequest struct {
 	trackingOptions   TrackingOptions
 	request           BuildRequest
 	projects          []argoappv1.AppProject
-	settings          config.ArgoSettings
-	strict            bool
-	statusOnly        bool
-	settingsFilter    manifest.SettingsResourceFilter
-	resourceFilter    manifest.ResourceFilter
-	healthEvaluator   *luahealth.Evaluator
-	recordEvents      bool
-	parallelism       int
-	statusCallback    ApplicationStatusCallback
+	// generatedBy names the ApplicationSet that generated an Application
+	// (generatedApplicationSets), for the project.missing text.
+	generatedBy     func(argoappv1.Application) string
+	settings        config.ArgoSettings
+	strict          bool
+	statusOnly      bool
+	settingsFilter  manifest.SettingsResourceFilter
+	resourceFilter  manifest.ResourceFilter
+	healthEvaluator *luahealth.Evaluator
+	recordEvents    bool
+	parallelism     int
+	statusCallback  ApplicationStatusCallback
 }
 
 type renderApplicationsResult struct {
@@ -734,7 +737,7 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 	scopeInputs = append(scopeInputs, rendered.Manifests...)
 	scopeInputs = append(scopeInputs, rendered.Hooks...)
 	appScopeRegistry := manifest.BuildCRDScopeRegistry(manifestObjectPtrs(scopeInputs))
-	resourcePolicyDiags := project.ValidateRenderedResourcePolicyResourcesWithRegistry(application, policyResources, request.projects, request.settings, appScopeRegistry)
+	resourcePolicyDiags := project.ValidateRenderedResourcePolicyResourcesWithRegistry(application, policyResources, request.projects, request.settings, appScopeRegistry, request.generatedBy)
 	resourcePolicyDiags = request.request.normalizeDiagnostics(resourcePolicyDiags, false)
 	out.diagnostics = append(out.diagnostics, resourcePolicyDiags...)
 	if err := diagnosticFailure(resourcePolicyDiags, request.strict); err != nil {

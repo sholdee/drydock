@@ -106,6 +106,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		trackingOptions:   trackingOptionsFromSettings(result.Settings),
 		request:           session.request,
 		projects:          result.Projects,
+		generatedBy:       generatedApplicationSets(result.ApplicationInputs),
 		settings:          result.Settings,
 		strict:            session.request.Strict,
 		statusOnly:        session.request.StatusOnly,

@@ -79,18 +79,21 @@ func ValidateRenderedResourcePolicy(app argoappv1.Application, objects []*unstru
 
 // ValidateRenderedResourcePolicyResources validates rendered Kubernetes objects with pre-normalization metadata.
 func ValidateRenderedResourcePolicyResources(app argoappv1.Application, resources []RenderedResource, projects []argoappv1.AppProject, settings config.ArgoSettings) []diagnostic.Diagnostic {
-	return ValidateRenderedResourcePolicyResourcesWithRegistry(app, resources, projects, settings, nil)
+	return ValidateRenderedResourcePolicyResourcesWithRegistry(app, resources, projects, settings, nil, nil)
 }
 
 // ValidateRenderedResourcePolicyResourcesWithRegistry validates rendered Kubernetes objects with pre-normalization
 // metadata, consulting the provided CRDScopeRegistry to resolve CR scope before falling back to deferral.
 // A nil registry is safe and preserves the existing deferral behavior.
-func ValidateRenderedResourcePolicyResourcesWithRegistry(app argoappv1.Application, resources []RenderedResource, projects []argoappv1.AppProject, settings config.ArgoSettings, registry manifest.CRDScopeRegistry) []diagnostic.Diagnostic {
+// generatedBy is the lookup of ValidateGeneratedApplications, so a missing
+// AppProject gives the same project.missing text on both paths and the
+// two warnings merge into one; nil means no Application is generated.
+func ValidateRenderedResourcePolicyResourcesWithRegistry(app argoappv1.Application, resources []RenderedResource, projects []argoappv1.AppProject, settings config.ArgoSettings, registry manifest.CRDScopeRegistry, generatedBy func(argoappv1.Application) string) []diagnostic.Diagnostic {
 	if len(resources) == 0 {
 		return nil
 	}
 
-	validator, diags := newRenderedResourcePolicyValidator(app, projects, settings)
+	validator, diags := newRenderedResourcePolicyValidator(app, projects, settings, generatedBy)
 	if len(diags) > 0 {
 		return diags
 	}
@@ -103,10 +106,10 @@ func ValidateRenderedResourcePolicyResourcesWithRegistry(app argoappv1.Applicati
 	return validator.validate(resources)
 }
 
-func newRenderedResourcePolicyValidator(app argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings) (*renderedResourcePolicyValidator, []diagnostic.Diagnostic) {
+func newRenderedResourcePolicyValidator(app argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings, generatedBy func(argoappv1.Application) string) (*renderedResourcePolicyValidator, []diagnostic.Diagnostic) {
 	proj, ok := renderedResourcePolicyProject(app, projects, settings)
 	if !ok {
-		return nil, []diagnostic.Diagnostic{projectWarning(app, fmt.Sprintf("Application %s references missing AppProject %q", applicationName(app), applicationProject(app)))}
+		return nil, []diagnostic.Diagnostic{projectWarning(app, missingProjectMessage(app, applicationProject(app), generatedBy))}
 	}
 
 	dest := app.Spec.Destination

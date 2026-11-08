@@ -538,7 +538,7 @@ func TestValidateRenderedResourcePolicyResolvesClusterScopeFromRegistry(t *testi
 	diags := ValidateRenderedResourcePolicyResourcesWithRegistry(app, []RenderedResource{{
 		Object:                       renderedObject("example.com/v1", "Widget", "", "custom"),
 		NamespaceBeforeNormalization: "",
-	}}, nil, config.DefaultSettings(), registry)
+	}}, nil, config.DefaultSettings(), registry, nil)
 
 	assertNoDiagnostic(t, diags, "unknown scope offline")
 	assertNoResourcePolicyDenied(t, diags)
@@ -559,7 +559,7 @@ func TestValidateRenderedResourcePolicyResolvesNamespacedScopeFromRegistry(t *te
 	diags := ValidateRenderedResourcePolicyResourcesWithRegistry(app, []RenderedResource{{
 		Object:                       renderedObject("example.com/v1", "Widget", "workloads", "custom"),
 		NamespaceBeforeNormalization: "workloads",
-	}}, []argoappv1.AppProject{project}, config.DefaultSettings(), registry)
+	}}, []argoappv1.AppProject{project}, config.DefaultSettings(), registry, nil)
 
 	assertNoDiagnostic(t, diags, "unknown scope offline")
 	assertResourcePolicyDenied(t, diags, "example.com/Widget workloads/custom")
@@ -586,7 +586,7 @@ func TestValidateRenderedResourcePolicyRegistryBeatsNamespaceBeforeNormalization
 	diags := ValidateRenderedResourcePolicyResourcesWithRegistry(app, []RenderedResource{{
 		Object:                       renderedObject("example.com/v1", "Widget", "", "my-widget"),
 		NamespaceBeforeNormalization: "workloads", // non-empty: simulates a source-set namespace stripped by normalization
-	}}, []argoappv1.AppProject{project}, config.DefaultSettings(), registry)
+	}}, []argoappv1.AppProject{project}, config.DefaultSettings(), registry, nil)
 
 	// Registry says Cluster-scoped → allowed by ClusterResourceWhitelist.
 	// Old ordering (heuristic first) would classify it namespaced → denied by NamespaceResourceWhitelist.
