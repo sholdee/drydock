@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -851,7 +852,7 @@ func TestGenerateGitGeneratorHidesGitlinkContentWithoutGitmodules(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(root, "params", "sub", ".git"), []byte("gitdir: ../../.git/modules/sub\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	options := Options{Worktree: indexGitlinks{"vendor/sub"}}
+	options := Options{Worktree: indexGitlinks{"params/sub", "vendor/sub"}}
 	// A pathspec "*" matches "/", and "**" of a doublestar glob matches
 	// any number of directories.
 	for newGlobbing, pattern := range map[bool]string{false: "params/*.yaml", true: "params/**/*.yaml"} {
@@ -874,33 +875,76 @@ func TestGenerateGitGeneratorHidesGitlinkContentWithoutGitmodules(t *testing.T) 
 	}
 }
 
-// TestGenerateGitFilesNewGlobbingThroughOutsideSymlinks pins a glob that
-// lists a symlink to a target outside the repository, or goes through one.
-// Argo CD lists and reads what is there, in its own file system, which
-// drydock does not read, so the ApplicationSet is unsupported.
+// TestGenerateGitFilesNewGlobbingThroughOutsideSymlinks pins a new-globbing
+// pattern that reaches a symlink to a target outside the repository.
+// Argo CD's LsFiles follows the symlink, drops every match whose real path
+// is outside the checkout, and fails only when it cannot resolve a match
+// (util/git/client.go:741-758). So when only literal pattern parts remain
+// below the symlink, or the symlink itself matches, nothing matches. When a
+// wildcard still has to match below it, Argo CD walks a tree that drydock
+// does not read, which can even hold the checkout itself (a symlink to
+// ".."), so the ApplicationSet is unsupported. drydock never reads the
+// target.
 func TestGenerateGitFilesNewGlobbingThroughOutsideSymlinks(t *testing.T) {
 	for _, tc := range []struct {
-		target  string
-		pattern string
+		target      string
+		pattern     string
+		unsupported bool
 	}{
-		{"../b/d.yaml", "**/.h"},
-		{"..", ".h/*"},
-		{"/etc", ".h/hostname"},
+		{"/etc", ".h/hostname", false},
+		{"/etc", "*/hostname", false},
+		{"/etc", "{a,.h}/hostname", false},
+		{"/etc", "?h", false},
+		{"/etc", ".h", false},
+		{"..", ".h/*", true},
+		{"/etc", "{a,.h}/*", true},
+		{"/etc", "**/*.yaml", true},
+		{"../b/d.yaml", "**/.h", true},
+		{"/", ".h/*/hostname", true},
 	} {
-		root := writeGitParityTree(t, "params/a.yaml")
+		root := writeGitParityTree(t, "a/x.yaml")
 		if err := os.Symlink(tc.target, filepath.Join(root, ".h")); err != nil {
 			t.Fatal(err)
 		}
 		apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitFilesAppSet(tc.pattern), Options{NewGitFileGlobbing: true})
-		if !errors.Is(err, ErrUnsupportedGenerator) || len(apps) != 0 || len(diags) != 1 || diagnostic.StableCode(diags[0]) != "appset.unsupported-generator" {
-			t.Fatalf(".h -> %s, pattern %q: apps = %q, diagnostics = %#v, error = %v, want an unsupported ApplicationSet", tc.target, tc.pattern, generatedNames(apps), diags, err)
+		if tc.unsupported {
+			if !errors.Is(err, ErrUnsupportedGenerator) || len(apps) != 0 || len(diags) != 1 || diagnostic.StableCode(diags[0]) != "appset.unsupported-generator" {
+				t.Fatalf(".h -> %s, pattern %q: apps = %q, diagnostics = %#v, error = %v, want an unsupported ApplicationSet", tc.target, tc.pattern, generatedNames(apps), diags, err)
+			}
+			continue
+		}
+		if err != nil || len(diags) != 0 || len(apps) != 0 {
+			t.Fatalf(".h -> %s, pattern %q: apps = %q, diagnostics = %#v, error = %v, want no match", tc.target, tc.pattern, generatedNames(apps), diags, err)
+		}
+	}
+}
+
+// TestGenerateGitFilesNewGlobbingThroughGitAndBack pins a symlink that
+// enters the top-level .git directory and leaves it again, such as
+// .git/../values.yaml. Argo CD reads the file it resolves to, but drydock
+// never follows a path through .git, so the ApplicationSet is unsupported
+// for a literal pattern and a wildcard, as with default globbing.
+func TestGenerateGitFilesNewGlobbingThroughGitAndBack(t *testing.T) {
+	root := writeGitParityTree(t, "values.yaml", ".git/HEAD")
+	if err := os.Symlink(".git/../values.yaml", filepath.Join(root, "x.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		pattern     string
+		newGlobbing bool
+	}{{"x.yaml", false}, {"x.yaml", true}, {"x.*", true}} {
+		apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitFilesAppSet(tc.pattern), Options{NewGitFileGlobbing: tc.newGlobbing})
+		if !errors.Is(err, ErrUnsupportedGenerator) || len(apps) != 0 || len(diags) != 1 {
+			t.Fatalf("pattern %q new globbing %t: apps = %q, diagnostics = %#v, error = %v, want an unsupported ApplicationSet", tc.pattern, tc.newGlobbing, generatedNames(apps), diags, err)
 		}
 	}
 }
 
 // TestGenerateGitFilesNewGlobbingMatchesExactNames pins that a literal
 // pattern part matches the exact name, as on Linux, where the repo-server
-// runs, also on a file system that ignores case.
+// runs, also on a file system that ignores case. On a case-sensitive file
+// system the old code passed too; the test can only fail on one that
+// ignores case, such as the default macOS file system.
 func TestGenerateGitFilesNewGlobbingMatchesExactNames(t *testing.T) {
 	root := writeGitParityTree(t, "params/a.yaml")
 	for _, pattern := range []string{"params/A.yaml", "Params/a.yaml", "PARAMS/*.yaml"} {
@@ -936,11 +980,105 @@ func TestGitlinkPathsFromTheIndexAreChecked(t *testing.T) {
 	}
 	root := writeGitParityTree(t, "params/a.yaml")
 	tree := newGitRepositoryTree(root, indexGitlinks{"/x", "a/../b", "params/sub "})
-	dirs, err := tree.directories(false)
-	if err != nil {
-		t.Fatal(err)
+	// An absolute name used to loop forever (path.Dir("/") is "/"), so the
+	// scan runs under a deadline.
+	type scanResult struct {
+		dirs []string
+		err  error
+	}
+	done := make(chan scanResult, 1)
+	go func() {
+		dirs, err := tree.directories(false)
+		done <- scanResult{dirs, err}
+	}()
+	var dirs []string
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		dirs = result.dirs
+	case <-time.After(5 * time.Second):
+		t.Fatal("directories() did not return within 5s")
 	}
 	if !slices.Equal(dirs, []string{"params", "params/sub "}) {
 		t.Fatalf("directories = %q, want params and the gitlink with a trailing space", dirs)
+	}
+}
+
+// TestGitlinkListerIsTrusted pins that a directory with a stray .git entry
+// is no gitlink when the index or the commit lists the gitlinks: the files
+// there stay files of the checkout. Only without a lister is a directory
+// with its own .git taken as a gitlink.
+func TestGitlinkListerIsTrusted(t *testing.T) {
+	root := writeGitParityTree(t, "apps/foo/x.yaml", "apps/foo/.git")
+	for _, newGlobbing := range []bool{false, true} {
+		apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitFilesAppSet("apps/*/x.yaml"), Options{Worktree: indexGitlinks{}, NewGitFileGlobbing: newGlobbing})
+		if err != nil || len(diags) != 0 || !slices.Equal(generatedNames(apps), []string{"apps-foo-x-yaml"}) {
+			t.Fatalf("new globbing %t: apps = %q, diagnostics = %#v, error = %v, want apps/foo/x.yaml", newGlobbing, generatedNames(apps), diags, err)
+		}
+	}
+	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitFilesAppSet("apps/*/x.yaml"), Options{NewGitFileGlobbing: true})
+	if err != nil || len(diags) != 0 || len(apps) != 0 {
+		t.Fatalf("without a lister: apps = %q, diagnostics = %#v, error = %v, want apps/foo taken as an empty gitlink", generatedNames(apps), diags, err)
+	}
+}
+
+// TestGitmodulesMustBeARegularFile pins that only a regular .gitmodules file
+// makes drydock keep the local content of a gitlink. A directory or a
+// symlink named .gitmodules is no submodule configuration.
+func TestGitmodulesMustBeARegularFile(t *testing.T) {
+	for _, kind := range []string{"file", "directory", "symlink"} {
+		root := writeGitParityTree(t, "params/sub/inner/x.yaml", "real-gitmodules")
+		switch kind {
+		case "file":
+			writeAppsetTestFile(t, filepath.Join(root, ".gitmodules"), "[submodule \"sub\"]\n")
+		case "directory":
+			writeAppsetTestFile(t, filepath.Join(root, ".gitmodules", "x"), "x\n")
+		case "symlink":
+			if err := os.Symlink("real-gitmodules", filepath.Join(root, ".gitmodules")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		apps, _, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitDirectoriesAppSet("params/sub/*"), Options{Worktree: indexGitlinks{"params/sub"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{}
+		if kind == "file" {
+			want = []string{"dir-params-sub-inner"}
+		}
+		if got := generatedNames(apps); !slices.Equal(got, want) {
+			t.Fatalf(".gitmodules %s: generated names = %q, want %q", kind, got, want)
+		}
+	}
+}
+
+// TestGitLookupsComposeUnicodeOnMacOS pins that a name the macOS file
+// system holds decomposed (NFD) matches its composed (NFC) spelling, which
+// Git commits and the Linux checkout holds, for a symlink target and a
+// literal new-globbing pattern part. Elsewhere the two spellings are
+// different names, so the test runs on macOS only.
+func TestGitLookupsComposeUnicodeOnMacOS(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("only macOS composes names")
+	}
+	nfc := "caf\u00e9.yaml"
+	nfd := "cafe\u0301.yaml"
+	root := writeGitParityTree(t, "real/"+nfd)
+	if err := os.MkdirAll(filepath.Join(root, "params"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../real/"+nfc, filepath.Join(root, "params", "link.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		pattern     string
+		newGlobbing bool
+	}{{"params/link.yaml", false}, {"real/" + nfc, true}} {
+		apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitFilesAppSet(tc.pattern), Options{NewGitFileGlobbing: tc.newGlobbing})
+		if err != nil || len(diags) != 0 || len(apps) != 1 {
+			t.Fatalf("pattern %q: apps = %q, diagnostics = %#v, error = %v, want one Application", tc.pattern, generatedNames(apps), diags, err)
+		}
 	}
 }

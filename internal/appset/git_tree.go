@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/pathsafety"
+	"golang.org/x/text/unicode/norm"
 )
 
 // gitRepositoryTree is the repository of a Git generator as the Argo CD
@@ -39,8 +41,8 @@ type gitRepositoryTree struct {
 	// contentDirs holds every directory of dirs.
 	contentDirs map[string]bool
 	// gitlinks are the gitlink directories: the ones the index or the
-	// commit tree lists as a submodule (WorktreeFilter.Gitlinks), and the
-	// ones that hold their own .git entry. `git ls-files` lists each one
+	// commit tree lists as a submodule (GitlinkLister), or, without a
+	// lister, the ones that hold their own .git entry. `git ls-files` lists each one
 	// as one entry and nothing in it, and the checkout holds each one as a
 	// directory.
 	gitlinks   []string
@@ -151,8 +153,12 @@ func (t *gitRepositoryTree) visit(abs string, entry fs.DirEntry, err error) erro
 	}
 	switch {
 	case entry.IsDir():
-		if _, err := os.Lstat(filepath.Join(abs, ".git")); err == nil {
-			t.addGitlink(rel)
+		// A lister knows the gitlinks of the index or the commit. Without
+		// one, a directory with its own .git is taken as a gitlink.
+		if _, listed := t.worktree.(GitlinkLister); !listed {
+			if _, err := os.Lstat(filepath.Join(abs, ".git")); err == nil {
+				t.addGitlink(rel)
+			}
 		}
 		if t.gitlinkSet[rel] && !t.submodules {
 			// The checkout holds an empty directory here.
@@ -201,7 +207,19 @@ func validGitlinkPath(rel string) bool {
 // hasChild reports whether the scan holds name, exactly as spelled, in the
 // directory dir.
 func (t *gitRepositoryTree) hasChild(dir, name string) bool {
-	return t.childSet[dir+"/"+name]
+	return t.childSet[childKey(dir+"/"+name)]
+}
+
+// childKey is the key of a path in childSet. On macOS, a file system can
+// hold a name decomposed (NFD), while Git commits it composed (NFC,
+// core.precomposeUnicode) and the Linux checkout of the repo-server holds
+// it composed, so both sides of a lookup compare as NFC there. The letter
+// case stays exact.
+func childKey(rel string) string {
+	if runtime.GOOS == "darwin" {
+		return norm.NFC.String(rel)
+	}
+	return rel
 }
 
 // indexChildren fills children from the scan: the files and symlinks, and
@@ -212,7 +230,7 @@ func (t *gitRepositoryTree) indexChildren() {
 	add := func(rel string, kind gitTreeKind) {
 		parent := path.Dir(rel)
 		t.children[parent] = append(t.children[parent], gitTreeChild{name: path.Base(rel), kind: kind})
-		t.childSet[parent+"/"+path.Base(rel)] = true
+		t.childSet[childKey(parent+"/"+path.Base(rel))] = true
 	}
 	for _, dir := range t.dirs {
 		add(dir.rel, gitTreeKindDir)
@@ -370,11 +388,14 @@ func (t *gitRepositoryTree) lsFiles(pattern string) ([]gitTreeFile, error) {
 // (util/git/client.go:726-761): doublestar.FilepathGlob of the pattern
 // joined to the checkout root, which matches directories too and follows
 // symlinks, and keeps a match only when its symlinks resolve inside the
-// checkout. drydock globs over a view of the checkout (gitGlobFS) that it
-// builds as the glob asks, so it never lists a directory outside root or in
-// .git. A pattern that leaves root matches nothing here; in Argo CD it can
-// only come back into the checkout through the checkout's random directory
-// name.
+// checkout and fails only when it cannot resolve a match. drydock globs
+// over a view of the checkout (gitGlobFS) that it builds as the glob asks,
+// so it never lists a directory outside root or in .git. A match through a
+// symlink out of the checkout is dropped, as Argo CD drops it. When a
+// wildcard still has to match below such a symlink, the ApplicationSet is
+// unsupported (gitGlobFS.checkVisited). A pattern that leaves root matches
+// nothing here; in Argo CD it can only come back into the checkout through
+// the checkout's random directory name.
 func (t *gitRepositoryTree) globFiles(manifestPath, pattern string) ([]gitTreeFile, []diagnostic.Diagnostic, error) {
 	// filepath.Join cleans the joined path, and an absolute pattern is
 	// joined below the root too.
@@ -393,16 +414,7 @@ func (t *gitRepositoryTree) globFiles(manifestPath, pattern string) ([]gitTreeFi
 	if err := t.scan(); err != nil {
 		return nil, nil, fmt.Errorf("%s git generator: list files: %w", manifestPath, err)
 	}
-	fsys := newGitGlobFS(t)
-	// The glob starts at the static part of the pattern. When that part
-	// leads out of the checkout, Argo CD lists what is there, which drydock
-	// does not read.
-	base, _ := doublestar.SplitPattern(relPattern)
-	for prefix := base; prefix != "." && prefix != ""; prefix = path.Dir(prefix) {
-		if node, err := fsys.lookup(prefix); err == nil && node.outside {
-			return nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files pattern %q goes through %s, a symlink to a target outside the repository, which drydock does not read", pattern, prefix)}
-		}
-	}
+	fsys := newGitGlobFS(t, relPattern)
 	matches, err := doublestar.Glob(fsys, relPattern)
 	if fsys.exhausted {
 		return nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files pattern %q visits more than %d paths through the symlinks of the repository", pattern, maxGlobVisits)}
@@ -410,12 +422,20 @@ func (t *gitRepositoryTree) globFiles(manifestPath, pattern string) ([]gitTreeFi
 	if err != nil {
 		return nil, nil, paramsError(fmt.Errorf("unable to list files. pattern %s: %w", pattern, err))
 	}
-	if len(fsys.outside) > 0 {
-		return nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files pattern %q lists %s, a symlink to a target outside the repository, which drydock does not read", pattern, fsys.outside[0])}
+	if len(fsys.unsupported) > 0 {
+		return nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files pattern %q %s", pattern, fsys.unsupported[0])}
 	}
 	out := make([]gitTreeFile, 0, len(matches))
 	for _, match := range matches {
 		node, err := fsys.lookup(match)
+		if err == nil && node.outside {
+			// LsFiles drops a match whose real path is outside the
+			// checkout (util/git/client.go:750-758).
+			continue
+		}
+		if err == nil && node.gitEscape {
+			return nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files pattern %q matches %s, a symlink through the .git directory of the checkout, which drydock does not read", pattern, match)}
+		}
 		if err == nil && node.inGit {
 			if node.dir {
 				// Argo CD fails to read a directory of its .git directory.
@@ -452,13 +472,17 @@ const maxGlobVisits = 1 << 17
 // checkout holds the names of checkoutGitPaths.
 type gitGlobFS struct {
 	tree *gitRepositoryTree
-	// outside lists the symlinks out of the checkout that the glob tried
-	// to list.
-	outside   []string
-	nodes     map[string]gitGlobNode
-	gitDirs   map[string][]gitTreeChild
-	visits    int
-	exhausted bool
+	// segments are the slash-separated parts of the pattern, and deep
+	// reports a "**" or a brace group with a "/", which can match any
+	// number of path parts.
+	segments []string
+	deep     bool
+	// unsupported holds why the glob needs what drydock does not read.
+	unsupported []string
+	nodes       map[string]gitGlobNode
+	gitDirs     map[string][]gitTreeChild
+	visits      int
+	exhausted   bool
 }
 
 type gitGlobNode struct {
@@ -471,10 +495,34 @@ type gitGlobNode struct {
 	hops int
 	// outside reports a path whose symlinks lead out of the checkout.
 	outside bool
+	// gitEscape reports a path whose symlinks enter the top-level .git
+	// directory and leave it again, which drydock does not follow.
+	gitEscape bool
 }
 
-func newGitGlobFS(t *gitRepositoryTree) *gitGlobFS {
+func newGitGlobFS(t *gitRepositoryTree, pattern string) *gitGlobFS {
 	fsys := &gitGlobFS{tree: t, nodes: map[string]gitGlobNode{}, gitDirs: map[string][]gitTreeChild{}}
+	fsys.segments = strings.Split(pattern, "/")
+	for _, segment := range fsys.segments {
+		if segment == "**" || strings.Contains(segment, "**") {
+			fsys.deep = true
+		}
+	}
+	if open := strings.IndexByte(pattern, '{'); open >= 0 && strings.Contains(pattern[open:], "/") && strings.Contains(pattern[open:], "}") {
+		// A brace group can hold a "/", so the parts do not line up.
+		for depth, i := 0, open; i < len(pattern); i++ {
+			switch pattern[i] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+			case '/':
+				if depth > 0 {
+					fsys.deep = true
+				}
+			}
+		}
+	}
 	fsys.gitDirs["."] = []gitTreeChild{{name: ".git", kind: gitTreeKindDir}}
 	for _, gitPath := range checkoutGitPaths {
 		kind := gitTreeKindFile
@@ -556,6 +604,9 @@ func (f *gitGlobFS) resolve(name string) gitGlobNode {
 	case repoSymlinkOutside:
 		return gitGlobNode{outside: true}
 	case repoSymlinkInGit:
+		if resolution.gitRest == "" {
+			return gitGlobNode{gitEscape: true}
+		}
 		return f.gitNode(resolution.gitRest)
 	}
 	real := resolution.path
@@ -580,6 +631,37 @@ func (f *gitGlobFS) gitNode(rel string) gitGlobNode {
 	return gitGlobNode{}
 }
 
+// checkVisited records a node that the glob asks for and that drydock
+// cannot answer for Argo CD. Argo CD's glob follows a symlink out of the
+// checkout and drops the matches there, but it can enter a tree that holds
+// its own checkout, such as a symlink to "..". So a symlink out of the
+// checkout is unsupported when a wildcard part of the pattern still has to
+// match below it, and needs nothing when only literal parts remain, which
+// match nothing in the checkout. A symlink through .git is never followed.
+func (f *gitGlobFS) checkVisited(name string, node gitGlobNode) {
+	if node.gitEscape {
+		f.unsupported = append(f.unsupported, fmt.Sprintf("goes through %s, a symlink through the .git directory of the checkout, which drydock does not read", name))
+		return
+	}
+	if !node.outside {
+		return
+	}
+	depth := len(strings.Split(name, "/"))
+	if f.deep || (depth < len(f.segments) && hasGlobMeta(f.segments[depth:])) {
+		f.unsupported = append(f.unsupported, fmt.Sprintf("goes through %s, a symlink to a target outside the repository, where a wildcard still has to match", name))
+	}
+}
+
+// hasGlobMeta reports whether a pattern part holds a doublestar wildcard.
+func hasGlobMeta(segments []string) bool {
+	for _, segment := range segments {
+		if strings.ContainsAny(segment, "*?[{") {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *gitGlobFS) Open(name string) (fs.File, error) {
 	info, err := f.Stat(name)
 	if err != nil {
@@ -596,6 +678,7 @@ func (f *gitGlobFS) Stat(name string) (fs.FileInfo, error) {
 	if err != nil {
 		return nil, &fs.PathError{Op: "stat", Path: name, Err: err}
 	}
+	f.checkVisited(name, node)
 	if !node.exists {
 		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
 	}
@@ -608,8 +691,9 @@ func (f *gitGlobFS) ReadDir(name string) ([]fs.DirEntry, error) {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
 	}
 	if node.outside {
-		f.outside = append(f.outside, name)
+		f.unsupported = append(f.unsupported, fmt.Sprintf("lists %s, a symlink to a target outside the repository, which drydock does not read", name))
 	}
+	f.checkVisited(name, node)
 	if !node.exists || !node.dir {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
 	}
