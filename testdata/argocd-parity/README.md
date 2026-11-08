@@ -890,7 +890,8 @@ note that the Git generator fails the whole ApplicationSet.
   tree, and an Argo CD checkout does not hold them. This is a recorded
   difference.
 - A symlinked param file whose target is outside the repository or in
-  `.git`. Argo CD reads the target, and drydock warns and skips the file.
+  `.git`. Argo CD reads the target in its own file system, and drydock
+  reports the ApplicationSet unsupported.
 
 ## Helm block scalar fixture
 

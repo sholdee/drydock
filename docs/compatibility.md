@@ -253,11 +253,16 @@ Supported:
   itself. So drydock keeps the Applications. When the repository declares
   AppProjects but not that one, drydock warns `project.missing`.
   In a working tree, drydock skips the paths that Git ignores and does not
-  track, and empty directories that are not gitlinks. It keeps untracked paths that Git
+  track, and empty directories that are not gitlinks. Without a
+  `.gitmodules` file, it also skips what is in a gitlink, because Argo CD
+  fetches no submodule content then. It keeps untracked paths that Git
   does not ignore. An Argo CD checkout does not hold them, so this is a
   recorded difference. drydock never reads a symlink target outside the
-  repository or in `.git`. It warns and skips that param file, but Argo CD
-  reads it. The render parity smoke covers these cases. See
+  repository or in the top-level `.git` directory. Argo CD reads such a
+  target in its own file system, or fails when it does not exist there, so
+  drydock reports the ApplicationSet unsupported. A name must match the
+  checkout exactly, also on a file system that ignores case. The render
+  parity smoke covers these cases. See
   [ApplicationSets](/docs/applicationsets/#git-generators).
 - The Argo CD v3.6.1 OCI ApplicationSet generator (`generators[].oci`),
   top-level and nested in matrix/merge, with directories and files, `exclude`,

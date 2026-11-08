@@ -85,9 +85,12 @@ directory for each gitlink.
 drydock finds the gitlinks in the index of a working tree, in the commit of
 a `--ref` snapshot, and as directories that hold their own `.git`. A gitlink
 is a directory of the checkout, also when it is not on disk. When the
-repository has a `.gitmodules` file, Argo CD fetches submodule content by
-default (`ARGOCD_GIT_MODULES_ENABLED`), and drydock does not. drydock then
-warns and sees each submodule as the local tree holds it.
+repository has no `.gitmodules` file, Argo CD fetches no submodule content,
+so each gitlink is an empty directory, and drydock does not look into it,
+also when a working tree holds content there. When the repository has a
+`.gitmodules` file, Argo CD fetches submodule content by default
+(`ARGOCD_GIT_MODULES_ENABLED`), and drydock does not. drydock then warns and
+sees each submodule as the local tree holds it.
 
 When a Git generator defines both `directories` and `files`, Argo CD's
 directory-first dispatch is used and `files` are ignored. `exclude: true`
@@ -186,9 +189,13 @@ The repo-server reads each listed file. It follows a symlink to its target,
 as the kernel does. A symlink to a directory, to a target that does not exist,
 or to a path through a file, such as `t.yaml/`, fails the ApplicationSet. In
 a working tree, a target that Git ignores and does not track does not exist
-either, and neither does a FIFO. drydock never reads a target outside the
-repository or in `.git`, also when a `..` leaves `.git` again. It warns about
-that one file and skips it. Argo CD reads such a target. A generated
+either, and neither does a FIFO, a `.git` entry below the top level, or a
+name in another letter case. drydock never reads a target outside the
+repository or in the top-level `.git` directory, also when a `..` leaves
+`.git` again. Argo CD reads such a target in its own file system, or fails
+when it does not exist there, so drydock reports the ApplicationSet
+unsupported. With new globbing, the same holds for a pattern that lists or
+goes through a symlink to a target outside the repository. A generated
 Application owns the paths that its param file came from: the listed path,
 each symlink followed, and the file read. So a changed-only diff renders it
 when only the target of a symlink changes.
