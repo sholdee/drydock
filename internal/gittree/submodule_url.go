@@ -2,8 +2,11 @@ package gittree
 
 import (
 	"fmt"
-	"net/url"
+	"regexp"
 	"strings"
+	"unicode"
+
+	"github.com/go-git/go-git/v5/plumbing/transport"
 )
 
 // ResolveSubmoduleURL resolves the URL of a submodule as `git submodule
@@ -86,13 +89,17 @@ func chopLastDir(remote string, relativeRemote bool) (string, bool, error) {
 	return ".", false, nil
 }
 
+// remoteHelperPattern matches the <transport>:: prefix that makes git run
+// git-remote-<transport>: a URL scheme followed by "::".
+var remoteHelperPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*::`)
+
 // SubmoduleTransport returns the transport that git uses for a resolved
-// submodule URL: "http", "https", "git", "ssh", "file", or another scheme
-// name. An scp-like URL (host:path) is ssh. A path is file.
+// submodule URL: "http", "https", "git", "ssh", "file", another scheme
+// name, or "remote-helper:<name>" for <name>::<address>. An scp-like URL
+// (host:path, with no "/" before the ":") is ssh. A path is file.
 func SubmoduleTransport(value string) string {
-	if helper, _, ok := strings.Cut(value, "::"); ok {
-		// <transport>::<address> runs git-remote-<transport>.
-		return "remote-helper:" + helper
+	if helper := remoteHelperPattern.FindString(value); helper != "" {
+		return "remote-helper:" + strings.TrimSuffix(helper, "::")
 	}
 	if i := strings.Index(value, "://"); i > 0 {
 		return strings.ToLower(value[:i])
@@ -104,34 +111,113 @@ func SubmoduleTransport(value string) string {
 }
 
 // AllowedSubmoduleTransport reports whether the Argo CD repo-server's git
-// would clone a submodule over transport. git allows http, https, git, and
-// ssh always. It allows file only when the user runs the command, and `git
-// submodule` clones with GIT_PROTOCOL_FROM_USER=0, so a file URL or a local
-// path fails there (protocol.file.allow defaults to "user" since git
-// 2.38.1). ext and every other transport are not allowed.
+// would clone a submodule over transport, and drydock can too. git allows
+// http, https, git, and ssh always. It allows file only when the user runs
+// the command, and `git submodule` clones with GIT_PROTOCOL_FROM_USER=0, so
+// a file URL or a local path fails there (protocol.file.allow defaults to
+// "user" since git 2.38.1). ext and every other transport are not allowed.
+// git+ssh and ssh+git are ssh to git, but go-git does not support them, so
+// drydock refuses them.
 func AllowedSubmoduleTransport(transport string) bool {
 	switch transport {
-	case "http", "https", "git", "ssh", "git+ssh", "ssh+git":
+	case "http", "https", "git", "ssh":
 		return true
 	}
 	return false
 }
 
-// SubmoduleURLHost returns the host of a resolved submodule URL, or "".
-func SubmoduleURLHost(value string) string {
-	if strings.Contains(value, "://") {
-		parsed, err := url.Parse(value)
-		if err != nil {
-			return ""
-		}
-		return strings.ToLower(parsed.Hostname())
+// ClassifySubmoduleURL returns the endpoint that go-git fetches a resolved
+// submodule URL from, and fails when drydock must not fetch it:
+//
+//   - git would use a transport that AllowedSubmoduleTransport refuses, or
+//     the file transport without allowFile;
+//   - go-git would use another transport than git, such as a local path
+//     for "x y:/path", which git reads as ssh to the host "x y";
+//   - the host is empty or holds a space, a control character, or a
+//     bracket, which go-git cannot parse in an scp-like URL;
+//   - the path is empty.
+func ClassifySubmoduleURL(resolved string, allowFile bool) (*transport.Endpoint, error) {
+	gitTransport := SubmoduleTransport(resolved)
+	if !AllowedSubmoduleTransport(gitTransport) && (gitTransport != "file" || !allowFile) {
+		return nil, fmt.Errorf("transport %q not allowed", gitTransport)
 	}
-	if urlIsLocalNotSSH(value) {
-		return ""
+	endpoint, err := transport.NewEndpoint(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("parse submodule URL: %w", err)
 	}
-	host, _, _ := strings.Cut(value, ":")
-	if _, after, ok := strings.Cut(host, "@"); ok {
-		host = after
+	if endpoint.Protocol != gitTransport {
+		return nil, fmt.Errorf("git reads the submodule URL as transport %q, but drydock's Git client reads it as %q", gitTransport, endpoint.Protocol)
 	}
-	return strings.ToLower(strings.Trim(host, "[]"))
+	if endpoint.Protocol == "file" {
+		return endpoint, nil
+	}
+	if !validEndpointHost(endpoint.Host) {
+		return nil, fmt.Errorf("submodule URL host %q is not valid", endpoint.Host)
+	}
+	if strings.Trim(endpoint.Path, "/") == "" {
+		return nil, fmt.Errorf("submodule URL has no repository path")
+	}
+	return endpoint, nil
+}
+
+// CheckEndpointTransport fails unless go-git fetches url over protocol.
+// Callers run it right before a clone or fetch, so a URL that a change
+// made between classification and fetch reads differently is refused.
+func CheckEndpointTransport(url, protocol string) error {
+	if protocol == "" {
+		return nil
+	}
+	endpoint, err := transport.NewEndpoint(url)
+	if err != nil {
+		return err
+	}
+	if endpoint.Protocol != protocol {
+		return fmt.Errorf("drydock's Git client reads the URL as transport %q, want %q", endpoint.Protocol, protocol)
+	}
+	return nil
+}
+
+func validEndpointHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	return !strings.ContainsFunc(host, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '[' || r == ']'
+	})
+}
+
+// credentialScope is where credentials may go: the protocol, host, and
+// port of an endpoint.
+type credentialScope struct {
+	protocol string
+	host     string
+	port     int
+}
+
+func endpointScope(url string) (credentialScope, bool) {
+	endpoint, err := transport.NewEndpoint(url)
+	if err != nil || endpoint.Host == "" {
+		return credentialScope{}, false
+	}
+	port := endpoint.Port
+	if port == 0 {
+		port = defaultPorts[endpoint.Protocol]
+	}
+	return credentialScope{protocol: endpoint.Protocol, host: strings.ToLower(endpoint.Host), port: port}, true
+}
+
+var defaultPorts = map[string]int{"http": 80, "https": 443, "ssh": 22, "git": 9418}
+
+// SameCredentialScope reports whether HTTP credentials for superURL may go
+// to submoduleURL: the same host and port, and never from https to http.
+func SameCredentialScope(superURL, submoduleURL string) bool {
+	super, ok := endpointScope(superURL)
+	if !ok {
+		return false
+	}
+	sub, ok := endpointScope(submoduleURL)
+	if !ok || super.host != sub.host || super.port != sub.port {
+		return false
+	}
+	return super.protocol != "https" || sub.protocol != "http"
 }

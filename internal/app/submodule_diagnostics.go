@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -16,11 +17,6 @@ import (
 	"github.com/sholdee/drydock/internal/render"
 )
 
-// submoduleSnapshotCode identifies the warning for a snapshot of a Git ref
-// that holds submodule content while reposerver.enable.git.submodule is
-// off.
-const submoduleSnapshotCode = "render.submodule-content-disabled"
-
 // submoduleWorktreeCode identifies the warning for a source in a submodule
 // that the working tree does not hold.
 const submoduleWorktreeCode = "render.submodule-not-initialized"
@@ -28,9 +24,9 @@ const submoduleWorktreeCode = "render.submodule-not-initialized"
 // rootSubmodules describes the submodules of the tree a provider renders.
 type rootSubmodules struct {
 	root string
-	// snapshotCheckedOut is the number of submodules whose content the
-	// snapshot of a Git ref at root holds.
-	snapshotCheckedOut int
+	// fill is the submodule checkout of the snapshot of a Git ref at root,
+	// or nil.
+	fill *snapshotFill
 	// worktree reports that root is a working tree, not a snapshot.
 	worktree bool
 
@@ -38,11 +34,11 @@ type rootSubmodules struct {
 	empty []string
 }
 
-func newRootSubmodules(root string, request BuildRequest) *rootSubmodules {
+func newRootSubmodules(root string, request BuildRequest, fill *snapshotFill) *rootSubmodules {
 	return &rootSubmodules{
-		root:               root,
-		snapshotCheckedOut: request.rootSnapshot.checkedOut,
-		worktree:           strings.TrimSpace(request.rootRevision) == "",
+		root:     root,
+		fill:     fill,
+		worktree: strings.TrimSpace(request.rootRevision) == "",
 	}
 }
 
@@ -60,7 +56,7 @@ func (s *rootSubmodules) emptySubmodules(ctx context.Context) []string {
 			modules = map[string]gittree.Module{}
 		}
 		for _, link := range gitref.IndexGitlinks(ctx, s.root) {
-			if module, ok := modules[link]; ok && strings.EqualFold(strings.TrimSpace(module.Update), "none") {
+			if module, ok := modules[link]; ok && gittree.ModuleSkipped(module) {
 				continue
 			}
 			if entries, err := os.ReadDir(filepath.Join(s.root, filepath.FromSlash(link))); err != nil || len(entries) == 0 {
@@ -71,44 +67,69 @@ func (s *rootSubmodules) emptySubmodules(ctx context.Context) []string {
 	return s.empty
 }
 
-// submoduleRenderDiagnostics warns when the tree that source renders from
-// holds other submodule content than the Argo CD repo-server's checkout:
+// submoduleRenderDiagnostics checks the submodules of the tree that
+// source renders from against the Argo CD repo-server's checkout:
 //
-//   - a snapshot of a Git ref always holds submodule content, because
-//     drydock takes it before it reads argocd-cmd-params-cm; with
-//     reposerver.enable.git.submodule off, the repo-server's checkout holds
-//     each submodule as an empty directory;
+//   - a snapshot of a Git ref whose submodule configuration git refuses
+//     fails every source, as the repo-server's checkout fails;
+//   - a source whose path is in a submodule of a snapshot that drydock
+//     could not check out (offline, or unreachable) fails with the reason;
 //   - a working tree whose submodule is not initialized holds an empty
 //     directory where the repo-server checks the content out. drydock
-//     never writes to the working tree, so it renders it as it is.
-func (p localProvider) submoduleRenderDiagnostics(ctx context.Context, source render.ResolvedSource) []diagnostic.Diagnostic {
-	if p.submodules == nil || !p.isRepoRoot(source.RepoRoot) {
-		return nil
+//     never writes to the working tree, so it renders it as it is and
+//     warns.
+func (p localProvider) submoduleRenderDiagnostics(ctx context.Context, source render.ResolvedSource) ([]diagnostic.Diagnostic, error) {
+	if p.submodules == nil || !p.isRepoRoot(source.RepoRoot) || !p.gitSubmodules {
+		return nil, nil
 	}
-	if !p.gitSubmodules {
-		if p.submodules.snapshotCheckedOut == 0 {
-			return nil
-		}
-		return []diagnostic.Diagnostic{{
-			Code:     submoduleSnapshotCode,
-			Severity: diagnostic.SeverityWarning,
-			Category: "render",
-			Message:  "reposerver.enable.git.submodule is false, so the Argo CD repo-server renders each submodule as an empty directory, but drydock renders the submodule content of the Git ref snapshot, which it takes before it reads that setting",
-		}}
+	if fill := p.submodules.fill; fill != nil {
+		return nil, fill.sourceError(source.Path)
 	}
 	if !p.submodules.worktree {
-		return nil
+		return nil, nil
 	}
 	link, ok := submoduleOfPath(p.submodules.emptySubmodules(ctx), source.Path)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	return []diagnostic.Diagnostic{{
 		Code:     submoduleWorktreeCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "render",
 		Message:  fmt.Sprintf("source path %q is in submodule %q, which holds nothing in the working tree; the Argo CD repo-server checks out submodule content (reposerver.enable.git.submodule), so run git submodule update --init --recursive, or diff a Git ref with --ref", source.Path, link),
-	}}
+	}}, nil
+}
+
+// sourceError fails a source of a snapshot whose submodules drydock could
+// not check out: every source when git refuses the configuration, and a
+// source whose path is in a missing submodule.
+func (f *snapshotFill) sourceError(sourcePath string) error {
+	if f.err != nil {
+		return fmt.Errorf("check out the submodules of the Git ref snapshot: %w", f.err)
+	}
+	for _, missing := range f.result.Missing {
+		if _, ok := submoduleOfPath([]string{missing.Path}, sourcePath); ok {
+			return missingSubmoduleError(missing)
+		}
+	}
+	return nil
+}
+
+// renderError adds the missing submodules of the snapshot to the error of a
+// source that failed: its inputs can be in one of them.
+func (f *snapshotFill) renderError(err error) error {
+	if f == nil || err == nil || len(f.result.Missing) == 0 {
+		return err
+	}
+	reasons := make([]error, 0, len(f.result.Missing))
+	for _, missing := range f.result.Missing {
+		reasons = append(reasons, missingSubmoduleError(missing))
+	}
+	return fmt.Errorf("%w; the snapshot lacks submodule content: %w", err, errors.Join(reasons...))
+}
+
+func missingSubmoduleError(missing gittree.MissingSubmodule) error {
+	return fmt.Errorf("submodule %q could not be checked out: %w", missing.Path, missing.Err)
 }
 
 // submoduleOfPath returns the gitlink of links that holds the source path

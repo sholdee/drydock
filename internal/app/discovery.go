@@ -231,7 +231,7 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 	request.appsetGenerationMemo = &sync.Map{}
 	request.settingsInstallMemo = &sync.Map{}
 
-	discovered, externalDiags, err := scanRepositoryDiscovery(root, request)
+	discovered, externalDiags, err := scanRepositoryWithSubmodules(ctx, root, request)
 	if err != nil {
 		return discovered, externalDiags, nil, renderCache, "", err
 	}
@@ -628,4 +628,32 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 
 func (o Orchestrator) discoveryProvider(ctx context.Context, root string, settings config.ArgoSettings, request BuildRequest, recorder *cacheevent.Recorder) (localProvider, func(), error) {
 	return newLocalProvider(ctx, o, root, settings, request, recorder, "drydock-discovery-cache-snapshots-*")
+}
+
+// scanRepositoryWithSubmodules scans the repository at root, and then
+// checks out the submodules of a snapshot root before its ApplicationSets
+// read it (fillSnapshotSubmodulesForDiscovery).
+func scanRepositoryWithSubmodules(ctx context.Context, root string, request BuildRequest) (discovery.Result, []diagnostic.Diagnostic, error) {
+	discovered, diags, err := scanRepositoryDiscovery(root, request)
+	if err != nil {
+		return discovered, diags, err
+	}
+	return discovered, diags, fillSnapshotSubmodulesForDiscovery(ctx, root, request, discovered)
+}
+
+// fillSnapshotSubmodulesForDiscovery checks out the submodules of a
+// snapshot root before its ApplicationSets read it, with the settings that
+// discovery found (fillSnapshotSubmodules). It fails only when it cannot
+// read the settings: a configuration that git refuses, or a submodule
+// that drydock cannot find, fails the sources that render from it.
+func fillSnapshotSubmodulesForDiscovery(ctx context.Context, root string, request BuildRequest, discovered discovery.Result) error {
+	if request.rootSnapshot.options == nil {
+		return nil
+	}
+	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	if err != nil {
+		return err
+	}
+	fillSnapshotSubmodules(ctx, root, request, settings)
+	return nil
 }

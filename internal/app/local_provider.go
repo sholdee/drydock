@@ -165,6 +165,9 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	}
 	recorded := p.acquisitions.Len()
 	manifests, diags, err := p.renderSource(ctx, source, opts)
+	if err != nil && p.submodules != nil && p.sourceResolvesToRepoRoot(source) {
+		err = p.submodules.fill.renderError(err)
+	}
 	diags = append(diags, staleChartDiagnostics(p.acquisitions.Records()[recorded:])...)
 	return manifests, diags, err
 }

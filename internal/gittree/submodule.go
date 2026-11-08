@@ -33,6 +33,10 @@ type SubmoduleRef struct {
 	URL string
 	// Commit is the commit that the superproject pins.
 	Commit plumbing.Hash
+	// Transport is the go-git transport protocol of URL
+	// (ClassifySubmoduleURL). An opener that fetches must fetch over it
+	// only (CheckEndpointTransport).
+	Transport string
 }
 
 // SubmoduleOpener returns a repository that holds the commit of ref. It
@@ -67,6 +71,18 @@ type SubmoduleRequest struct {
 	// local path. The Argo CD repo-server's git refuses it; only tests set
 	// it.
 	AllowFileTransport bool
+	// KeepMissing records a submodule whose commit no opener has in
+	// SubmoduleResult.Missing and keeps its empty directory, instead of
+	// failing the checkout. Only content that cannot be found is kept
+	// missing; a configuration that git refuses still fails.
+	KeepMissing bool
+}
+
+// MissingSubmodule is a submodule whose content CheckoutSubmodules could
+// not find with KeepMissing.
+type MissingSubmodule struct {
+	Path string
+	Err  error
 }
 
 // CheckedOutSubmodule is a submodule that CheckoutSubmodules wrote.
@@ -86,6 +102,8 @@ type SubmoduleResult struct {
 	Submodules []CheckedOutSubmodule
 	// Configured reports that the top-level tree has a .gitmodules file.
 	Configured bool
+	// Missing are the submodules left empty with KeepMissing.
+	Missing []MissingSubmodule
 }
 
 // CheckoutSubmodules writes the content of the submodules of a checkout, as
@@ -164,57 +182,91 @@ func (w submoduleWalker) checkoutLevel(ctx context.Context, level submoduleLevel
 }
 
 func (w submoduleWalker) checkoutLink(ctx context.Context, level submoduleLevel, link Gitlink) error {
+	ref, skip, err := w.prepareLink(level, link)
+	if err != nil || skip {
+		return err
+	}
+	tree, err := w.openTree(ctx, ref)
+	if err != nil {
+		if w.request.KeepMissing && ctx.Err() == nil {
+			w.result.Missing = append(w.result.Missing, MissingSubmodule{Path: ref.Path, Err: err})
+			return nil
+		}
+		return err
+	}
+	if _, err := WriteTree(ctx, tree, WriteOptions{Root: w.request.Root, Prefix: ref.Path, KeepOutOfBoundsSymlinks: w.request.KeepOutOfBoundsSymlinks}); err != nil {
+		return fmt.Errorf("check out submodule %q: %w", ref.Path, err)
+	}
+	w.result.Submodules = append(w.result.Submodules, CheckedOutSubmodule{Path: ref.Path, URL: ref.URL, Commit: link.Commit})
+	return w.checkoutNested(ctx, level, ref, tree)
+}
+
+// prepareLink checks the module of link as `git submodule update` does and
+// returns the submodule to check out. skip is true for update = none.
+func (w submoduleWalker) prepareLink(level submoduleLevel, link Gitlink) (SubmoduleRef, bool, error) {
 	fullPath := joinPrefix(level.prefix, link.Path)
 	module, ok := level.modules[link.Path]
 	if !ok || module.URL == "" {
-		return fmt.Errorf("no url found for submodule path %q in .gitmodules", fullPath)
+		return SubmoduleRef{}, false, fmt.Errorf("no url found for submodule path %q in .gitmodules", fullPath)
 	}
-	if strings.EqualFold(strings.TrimSpace(module.Update), "none") {
-		return nil
+	if err := ValidateModuleUpdate(module); err != nil {
+		return SubmoduleRef{}, false, err
+	}
+	if ModuleSkipped(module) {
+		return SubmoduleRef{}, true, nil
 	}
 	if !ValidRelPath(fullPath) {
-		return fmt.Errorf("unsafe submodule path %q", fullPath)
+		return SubmoduleRef{}, false, fmt.Errorf("unsafe submodule path %q", fullPath)
 	}
 	resolved, err := ResolveSubmoduleURL(level.remoteURL, module.URL)
 	if err != nil {
-		return fmt.Errorf("submodule %q: %w", fullPath, err)
+		return SubmoduleRef{}, false, fmt.Errorf("submodule %q: %w", fullPath, err)
 	}
-	if err := w.checkTransport(fullPath, resolved); err != nil {
-		return err
+	endpoint, err := ClassifySubmoduleURL(resolved, w.request.AllowFileTransport)
+	if err != nil {
+		return SubmoduleRef{}, false, fmt.Errorf("submodule %q: %w", fullPath, err)
 	}
-	if len(w.result.Submodules) >= MaxSubmodules {
-		return fmt.Errorf("checkout has more than %d submodules", MaxSubmodules)
+	if len(w.result.Submodules)+len(w.result.Missing) >= MaxSubmodules {
+		return SubmoduleRef{}, false, fmt.Errorf("checkout has more than %d submodules", MaxSubmodules)
 	}
-	ref := SubmoduleRef{
+	return SubmoduleRef{
 		Path:       fullPath,
 		ModuleDirs: append(append([]string(nil), level.moduleDirs...), module.Name),
 		URL:        resolved,
 		Commit:     link.Commit,
+		Transport:  endpoint.Protocol,
+	}, false, nil
+}
+
+// ValidateModuleUpdate fails for an update value of .gitmodules that git
+// refuses: git accepts exactly checkout, merge, rebase, and none, and
+// fails for anything else, also a !command ("invalid value for
+// 'submodule.<name>.update'").
+func ValidateModuleUpdate(module Module) error {
+	switch module.Update {
+	case "", "checkout", "merge", "rebase", "none":
+		return nil
 	}
-	tree, err := w.openTree(ctx, ref)
-	if err != nil {
-		return err
-	}
-	if _, err := WriteTree(ctx, tree, WriteOptions{Root: w.request.Root, Prefix: fullPath, KeepOutOfBoundsSymlinks: w.request.KeepOutOfBoundsSymlinks}); err != nil {
-		return fmt.Errorf("check out submodule %q: %w", fullPath, err)
-	}
-	w.result.Submodules = append(w.result.Submodules, CheckedOutSubmodule{Path: fullPath, URL: resolved, Commit: link.Commit})
-	return w.checkoutNested(ctx, level, ref, tree)
+	return fmt.Errorf("invalid value for 'submodule.%s.update'", module.Name)
+}
+
+// ModuleSkipped reports whether `git submodule update` skips the module:
+// its update value is exactly none.
+func ModuleSkipped(module Module) bool {
+	return module.Update == "none"
 }
 
 // checkoutNested checks out the submodules of the submodule ref, whose
-// tree is tree.
+// tree is tree. Below the top level, git does not check for a .gitmodules
+// file: a gitlink without a module fails.
 func (w submoduleWalker) checkoutNested(ctx context.Context, level submoduleLevel, ref SubmoduleRef, tree *object.Tree) error {
 	links, err := Links(tree)
 	if err != nil || len(links) == 0 {
 		return err
 	}
-	modules, found, err := ReadModules(tree)
+	modules, _, err := ReadModules(tree)
 	if err != nil {
 		return fmt.Errorf("submodule %q: %w", ref.Path, err)
-	}
-	if !found {
-		return nil
 	}
 	return w.checkoutLevel(ctx, submoduleLevel{
 		links:      links,
@@ -224,17 +276,6 @@ func (w submoduleWalker) checkoutNested(ctx context.Context, level submoduleLeve
 		moduleDirs: ref.ModuleDirs,
 		depth:      level.depth + 1,
 	})
-}
-
-func (w submoduleWalker) checkTransport(fullPath, resolved string) error {
-	transport := SubmoduleTransport(resolved)
-	if AllowedSubmoduleTransport(transport) {
-		return nil
-	}
-	if transport == "file" && w.request.AllowFileTransport {
-		return nil
-	}
-	return fmt.Errorf("submodule %q: transport %q not allowed", fullPath, transport)
 }
 
 func (w submoduleWalker) openTree(ctx context.Context, ref SubmoduleRef) (*object.Tree, error) {

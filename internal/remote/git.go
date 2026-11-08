@@ -78,7 +78,7 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 			return Result{Path: cachePath, URL: normalizedURL, Revision: revision, FromCache: true}, nil
 		}
 		if !opts.Refresh {
-			revision, err := checkoutGitRevision(repo, worktree, request.Revision)
+			revision, err := checkoutOrFetchCommit(ctx, repo, worktree, repoURL, request.Revision, opts)
 			if err == nil {
 				writeGitRepoMetadata(filepath.Dir(cachePath), key, normalizedURL, revision)
 				return Result{Path: cachePath, URL: normalizedURL, Revision: revision, FromCache: true}, nil
@@ -87,6 +87,9 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 		}
 		auth, _, err := gitAuthMethod(opts.GitCredentials, repoURL)
 		if err != nil {
+			return Result{}, err
+		}
+		if err := checkFetchTransport(repo, repoURL, opts); err != nil {
 			return Result{}, err
 		}
 		if err := refreshGitRepository(ctx, repo, worktree, repoURL, request.Revision, auth, opts.GitCredentials); err != nil {
@@ -112,6 +115,9 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 	if err != nil {
 		return Result{}, err
 	}
+	if err := checkFetchTransport(nil, repoURL, opts); err != nil {
+		return Result{}, err
+	}
 	repo, err = cloneGitRepository(ctx, cachePath, repoURL, auth, opts.GitCredentials)
 	if err != nil {
 		return Result{}, err
@@ -120,7 +126,7 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 	if err != nil {
 		return Result{}, fmt.Errorf("open remote Git repository %s worktree: %s", RedactGitRepoURL(repoURL), redactGitError(err, repoURL, opts.GitCredentials))
 	}
-	revision, err := checkoutGitRevision(repo, worktree, request.Revision)
+	revision, err := checkoutOrFetchCommit(ctx, repo, worktree, repoURL, request.Revision, opts)
 	if err != nil {
 		return Result{}, fmt.Errorf("checkout remote Git repository %s revision %q: %s", RedactGitRepoURL(repoURL), strings.TrimSpace(request.Revision), redactGitError(err, repoURL, opts.GitCredentials))
 	}

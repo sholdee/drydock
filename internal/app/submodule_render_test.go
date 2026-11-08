@@ -121,3 +121,105 @@ func TestBuildWarnsForUninitializedSubmoduleSource(t *testing.T) {
 		t.Fatalf("Diagnostics = %#v, want no warning for an initialized submodule", result.Diagnostics)
 	}
 }
+
+// writeTopApplication adds an Application whose path is outside the
+// submodule and commits it.
+func writeTopApplication(t *testing.T, root string) {
+	t.Helper()
+	submoduletest.WriteFile(t, root, "apps/top-app.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: top
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+submoduleTestRepoURL+`
+    targetRevision: HEAD
+    path: apps-src
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	submoduletest.WriteFile(t, root, "apps-src/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: top-src\n")
+	submoduletest.Run(t, root, "add", "-A")
+	submoduletest.Run(t, root, "commit", "-q", "-m", "add top app")
+}
+
+// TestDiffRefOfflineRendersSourcesOutsideMissingSubmodules pins that an
+// offline --ref diff of a clone whose submodule commit drydock cannot find
+// fails only the sources in that submodule, not the whole diff.
+func TestDiffRefOfflineRendersSourcesOutsideMissingSubmodules(t *testing.T) {
+	root, _ := submoduleApplicationRepo(t, false)
+	submoduletest.Run(t, root, "rm", "-q", "apps/sub.yaml")
+	submoduletest.Run(t, root, "commit", "-q", "-m", "drop sub app")
+	base := submoduletest.Run(t, root, "rev-parse", "HEAD")
+	writeTopApplication(t, root)
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base, Offline: true, GitCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v, want the diff without the missing submodule", err)
+	}
+	if !diffHasConfigMap(result, "top-src") {
+		t.Fatalf("Results = %#v, want the top ConfigMap", result.Results)
+	}
+}
+
+// TestDiffRefSkipsSubmodulesWhenDisabled pins that with
+// reposerver.enable.git.submodule false, a --ref snapshot checks out no
+// submodule content and needs none: the submodule directory renders
+// empty, offline, without a fetch.
+func TestDiffRefSkipsSubmodulesWhenDisabled(t *testing.T) {
+	root, base := submoduleApplicationRepoAt(t, false, "mods/child")
+	submoduletest.WriteFile(t, root, "argocd/cmd-params.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  reposerver.enable.git.submodule: "false"
+`)
+	submoduletest.Run(t, root, "add", "-A")
+	submoduletest.Run(t, root, "commit", "-q", "-m", "disable submodules")
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base, Offline: true, GitCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v, want no submodule fetch with submodules off", err)
+	}
+	if diffHasConfigMap(result, "child") {
+		t.Fatalf("Results = %#v, want no submodule content", result.Results)
+	}
+}
+
+// TestDiffRefChangedOnlySeesSubmoduleBump pins that a commit that only
+// moves a submodule to another commit changes the Application whose path
+// is in that submodule.
+func TestDiffRefChangedOnlySeesSubmoduleBump(t *testing.T) {
+	root, _ := submoduleApplicationRepo(t, true)
+	base := submoduletest.Run(t, root, "rev-parse", "HEAD")
+	child := filepath.Join(root, "mods", "child")
+	submoduletest.WriteFile(t, child, "child/app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: child\ndata:\n  v: bumped\n")
+	submoduletest.Run(t, child, "commit", "-q", "-am", "bump")
+	submoduletest.Run(t, root, "add", "mods/child")
+	submoduletest.Run(t, root, "commit", "-q", "-m", "bump submodule")
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base, ChangedOnly: true, Offline: true, GitCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if !diffHasConfigMap(result, "child") {
+		t.Fatalf("Results = %#v, want the bumped submodule ConfigMap", result.Results)
+	}
+}
+
+func diffHasConfigMap(result DiffResult, name string) bool {
+	for _, item := range result.Results {
+		if item.Resource.Kind == "ConfigMap" && item.Resource.Name == name {
+			return true
+		}
+	}
+	return false
+}

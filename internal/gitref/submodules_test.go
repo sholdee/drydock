@@ -1,6 +1,8 @@
 package gitref
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -52,6 +54,7 @@ func TestSnapshotFetchesSubmodulesMissingFromTheLocalStore(t *testing.T) {
 	plain := filepath.Join(fixture.Dir, "plain")
 	submoduletest.Run(t, fixture.Dir, "clone", "-q", filepath.Join(fixture.Dir, "parent.git"), plain)
 
+	before := treeFingerprint(t, plain)
 	cacheDir := t.TempDir()
 	offline := source.GitOptions{CacheDir: cacheDir, Submodules: true, AllowFileSubmoduleTransport: true}
 	_, err := Snapshot(t.Context(), Request{
@@ -75,9 +78,35 @@ func TestSnapshotFetchesSubmodulesMissingFromTheLocalStore(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = result.Cleanup() })
 	requireSnapshotFile(t, result.Path, "mods/child/deep/deep/cm.yaml")
-	if entries, _ := os.ReadDir(filepath.Join(plain, ".git", "modules")); len(entries) != 0 {
-		t.Fatalf("the repository's .git/modules holds %d entries, want drydock to never write there", len(entries))
+	if _, err := os.Stat(filepath.Join(plain, ".git", "modules")); !os.IsNotExist(err) {
+		t.Fatalf("stat .git/modules = %v, want drydock to never create it", err)
 	}
+	if after := treeFingerprint(t, plain); after != before {
+		t.Fatalf("the repository changed:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// treeFingerprint lists every path below root, .git included, with its
+// mode, size, and modification time.
+func treeFingerprint(t *testing.T, root string) string {
+	t.Helper()
+	var out strings.Builder
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		fmt.Fprintf(&out, "%s %s %d %d\n", rel, info.Mode(), info.Size(), info.ModTime().UnixNano())
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
 }
 
 // TestSnapshotWithoutSubmodulesKeepsEmptyGitlinks pins that a snapshot

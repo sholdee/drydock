@@ -64,3 +64,45 @@ func TestDefaultAcquirerRemoteSubmodulesOfflineCacheMiss(t *testing.T) {
 		t.Fatalf("offline Acquire() error = %v, want an offline cache miss for the submodule", err)
 	}
 }
+
+// TestDefaultAcquirerRefusesRemoteSubmoduleURLsThatReadLocalRepositories
+// pins the local path PoC for remote Kustomize bases: git reads
+// "git@x y:/..." as ssh to the host "x y", and go-git as a local path.
+func TestDefaultAcquirerRefusesRemoteSubmoduleURLsThatReadLocalRepositories(t *testing.T) {
+	for _, prefix := range []string{"git@x y:", "x y:"} {
+		parentURL := submoduletest.LocalPathURLFixture(t, prefix)
+		result, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: parentURL, Revision: "main", Submodules: true}, Options{CacheDir: t.TempDir()})
+		if err == nil {
+			data, _ := os.ReadFile(filepath.Join(result.Path, "sub", "app", "cm.yaml"))
+			t.Fatalf("prefix %q: Acquire() error = nil, sub/app/cm.yaml = %q; want the URL refused", prefix, data)
+		}
+		if !strings.Contains(err.Error(), "drydock's Git client reads it as") {
+			t.Fatalf("prefix %q: Acquire() error = %v, want the transport mismatch", prefix, err)
+		}
+	}
+}
+
+// TestDefaultAcquirerFetchesUnreachablePinnedRemoteCommit pins that a
+// remote Kustomize base fetches a submodule commit that no branch holds.
+func TestDefaultAcquirerFetchesUnreachablePinnedRemoteCommit(t *testing.T) {
+	parentURL := submoduletest.UnreachableCommitFixture(t)
+	result, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: parentURL, Revision: "main", Submodules: true}, Options{CacheDir: t.TempDir(), AllowFileSubmoduleTransport: true})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(result.Path, "sub", "app", "cm.yaml"))
+	if err != nil || !strings.Contains(string(data), "name: feature") {
+		t.Fatalf("sub/app/cm.yaml = %q, %v; want the pinned commit", data, err)
+	}
+}
+
+// TestDefaultAcquirerNamesTheGitTransportDifference pins that a git://
+// submodule of a remote Kustomize base fails with an error that says
+// drydock does not fetch it, which is a recorded difference.
+func TestDefaultAcquirerNamesTheGitTransportDifference(t *testing.T) {
+	parentURL := submoduletest.SubmoduleURLFixture(t, "git://git.example.invalid/child.git")
+	_, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: parentURL, Revision: "main", Submodules: true}, Options{CacheDir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "recorded difference") {
+		t.Fatalf("Acquire() error = %v, want the git:// difference named", err)
+	}
+}

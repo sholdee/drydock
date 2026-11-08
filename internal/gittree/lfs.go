@@ -101,6 +101,26 @@ func (f *lfsPointerFields) add(key, value string) bool {
 	return true
 }
 
+// ReadLFSPointerFile reads the file at path as a Git LFS pointer. It never
+// follows a symlink and reads at most MaxLFSPointerSize+1 bytes: a file
+// that is not regular or is larger than a pointer is no pointer.
+func ReadLFSPointerFile(path string) (LFSPointer, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > MaxLFSPointerSize {
+		return LFSPointer{}, false
+	}
+	in, err := os.OpenFile(path, os.O_RDONLY|openNoFollow, 0)
+	if err != nil {
+		return LFSPointer{}, false
+	}
+	defer func() { _ = in.Close() }()
+	data, err := io.ReadAll(io.LimitReader(in, MaxLFSPointerSize+1))
+	if err != nil {
+		return LFSPointer{}, false
+	}
+	return ParseLFSPointer(data)
+}
+
 // ScanLFSPointers lists the Git LFS pointer files of tree, as `git lfs
 // ls-files` finds them in the Argo CD repo-server: regular files whose
 // content is a pointer. It never looks into a gitlink, since Argo CD runs

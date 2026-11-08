@@ -48,6 +48,7 @@ func SubmoduleCacheOpener(superURL string, opts GitOptions, network *atomic.Bool
 			Credentials:                 submoduleCredentials(opts.Credentials, superURL, ref.URL),
 			LockEntry:                   opts.LockEntry,
 			AllowFileSubmoduleTransport: opts.AllowFileSubmoduleTransport,
+			RequireTransport:            ref.Transport,
 		}
 		if opts.LockEntry != nil {
 			unlock := opts.LockEntry(request, entryOpts)
@@ -69,12 +70,12 @@ func SubmoduleCacheOpener(superURL string, opts GitOptions, network *atomic.Bool
 // credentials of the superproject's repository (runCredentialedCmd,
 // util/git/client.go:783-789): the same askpass username and password, and
 // the same SSH key, for every submodule. drydock sends a username,
-// password, or bearer token only to a submodule on the host of the
-// superproject, so a .gitmodules file cannot send them to another host.
+// password, or bearer token only to a submodule on the host and port of
+// the superproject, and never from https to http, so a .gitmodules file
+// cannot send them elsewhere or in clear text.
 // SSH keys are kept for every host: SSH never sends the private key.
 func submoduleCredentials(credentials GitCredentials, superURL, submoduleURL string) GitCredentials {
-	superHost := gittree.SubmoduleURLHost(superURL)
-	if superHost != "" && superHost == gittree.SubmoduleURLHost(submoduleURL) {
+	if gittree.SameCredentialScope(superURL, submoduleURL) {
 		return credentials
 	}
 	credentials.Username = ""

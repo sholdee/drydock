@@ -4,11 +4,14 @@
 package submoduletest
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Fixture is a superproject with one submodule, which has a submodule of
@@ -143,4 +146,116 @@ func New(t testing.TB) Fixture {
 
 func configMap(name string) string {
 	return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n"
+}
+
+// LocalPathURLFixture builds a superproject whose .gitmodules URL is
+// prefix + "/../../../../../../../../.." + the path of a secret bare
+// repository, such as "x y:" or "git@x y:". git reads that URL as ssh to
+// the host "x y". It returns the file URL of the superproject.
+func LocalPathURLFixture(t testing.TB, prefix string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	secret := NewRepo(t, dir, "secret", map[string]string{"app/cm.yaml": configMap("leaked")})
+	NewRepo(t, dir, "parent", map[string]string{"apps/a.yaml": configMap("a")})
+	work := filepath.Join(dir, "parent-work")
+	url := prefix + "/../../../../../../../../.." + filepath.Join(dir, "secret.git")
+	WriteFile(t, work, ".gitmodules", "[submodule \"sub\"]\n\tpath = sub\n\turl = "+url+"\n")
+	Run(t, work, "update-index", "--add", "--cacheinfo", "160000,"+secret+",sub")
+	Run(t, work, "add", ".gitmodules")
+	Run(t, work, "commit", "-q", "-m", "local path submodule")
+	Run(t, work, "push", "-q", filepath.Join(dir, "parent.git"), "HEAD:main")
+	return FileURL(filepath.Join(dir, "parent.git"))
+}
+
+// UnreachableCommitFixture builds a superproject whose submodule pins a
+// commit that no branch or tag of the submodule's repository holds: the
+// branch that held it was deleted. The repository serves unadvertised
+// commits (uploadpack.allowAnySHA1InWant). It returns the file URL of the
+// superproject.
+func UnreachableCommitFixture(t testing.TB) string {
+	t.Helper()
+	dir := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	NewRepo(t, dir, "child", map[string]string{"app/cm.yaml": configMap("main")})
+	work := filepath.Join(dir, "child-work")
+	Run(t, work, "checkout", "-q", "-b", "feature")
+	WriteFile(t, work, "app/cm.yaml", configMap("feature"))
+	Run(t, work, "commit", "-q", "-am", "feature")
+	pinned := Run(t, work, "rev-parse", "HEAD")
+	Run(t, work, "push", "-q", filepath.Join(dir, "child.git"), "feature")
+	Run(t, filepath.Join(dir, "child.git"), "branch", "-D", "feature")
+	// go-git fetches with protocol v0, where upload-pack serves an
+	// unadvertised commit only with this setting, as hosting services do.
+	Run(t, filepath.Join(dir, "child.git"), "config", "uploadpack.allowAnySHA1InWant", "true")
+	NewRepo(t, dir, "parent", map[string]string{"top.yaml": configMap("top")})
+	parent := filepath.Join(dir, "parent-work")
+	WriteFile(t, parent, ".gitmodules", "[submodule \"sub\"]\n\tpath = sub\n\turl = ../child.git\n")
+	Run(t, parent, "update-index", "--add", "--cacheinfo", "160000,"+pinned+",sub")
+	Run(t, parent, "add", ".gitmodules")
+	Run(t, parent, "commit", "-q", "-m", "pin feature")
+	Run(t, parent, "push", "-q", filepath.Join(dir, "parent.git"), "HEAD:main")
+	return FileURL(filepath.Join(dir, "parent.git"))
+}
+
+// SubmoduleURLFixture builds a superproject with one gitlink "sub" whose
+// .gitmodules URL is url, pinned to a commit of a local child repository.
+// It returns the file URL of the superproject.
+func SubmoduleURLFixture(t testing.TB, url string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	child := NewRepo(t, dir, "child", map[string]string{"app/cm.yaml": configMap("child")})
+	NewRepo(t, dir, "parent", map[string]string{"top.yaml": configMap("top")})
+	work := filepath.Join(dir, "parent-work")
+	WriteFile(t, work, ".gitmodules", "[submodule \"sub\"]\n\tpath = sub\n\turl = "+url+"\n")
+	Run(t, work, "update-index", "--add", "--cacheinfo", "160000,"+child+",sub")
+	Run(t, work, "add", ".gitmodules")
+	Run(t, work, "commit", "-q", "-m", "submodule")
+	Run(t, work, "push", "-q", filepath.Join(dir, "parent.git"), "HEAD:main")
+	return FileURL(filepath.Join(dir, "parent.git"))
+}
+
+// ServeGitDaemon serves every repository below dir with `git daemon` on a
+// free local port and returns the git:// base URL. It skips the test when
+// git daemon does not start. The daemon stops with the test.
+func ServeGitDaemon(t testing.TB, dir string) string {
+	t.Helper()
+	bin := Git(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no local port: %v", err)
+	}
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	_ = listener.Close()
+	if !ok {
+		t.Skip("no TCP port")
+	}
+	port := addr.Port
+	cmd := exec.Command(bin, "daemon", "--reuseaddr", "--export-all", "--listen=127.0.0.1",
+		"--port="+strconv.Itoa(port), "--base-path="+dir, dir)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("git daemon: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	address := "127.0.0.1:" + strconv.Itoa(port)
+	for range 100 {
+		if conn, err := net.Dial("tcp", address); err == nil {
+			_ = conn.Close()
+			return "git://" + address
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Skip("git daemon did not start")
+	return ""
 }

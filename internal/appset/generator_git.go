@@ -102,11 +102,10 @@ func gitGeneratorParamSets(ctx generatorContext, git *argoappv1.GitGenerator) ([
 // submoduleContentDiagnostic warns about submodules that hold nothing in
 // the tree the Git generator reads, while the Argo CD repo-server checks
 // their content out (applicationsetcontroller.enable.git.submodule, on by
-// default) and its Git generator sees it. A snapshot of a Git ref holds
-// that content, so this happens for a working tree whose submodules are
-// not initialized.
+// default) and its Git generator sees it: a working tree whose submodule is
+// not initialized, or a snapshot whose submodule drydock could not fetch.
 func submoduleContentDiagnostic(manifestPath string, empty []string) diagnostic.Diagnostic {
-	return appsetDiagnostic(manifestPath, fmt.Sprintf("submodule %s holds nothing in the working tree; Argo CD checks out submodule content (applicationsetcontroller.enable.git.submodule) and its Git generator sees it, so run git submodule update --init --recursive, or diff a Git ref with --ref", strings.Join(quoteAll(empty), ", ")))
+	return appsetDiagnostic(manifestPath, fmt.Sprintf("submodule %s holds nothing in the tree that drydock reads; Argo CD checks out submodule content (applicationsetcontroller.enable.git.submodule) and its Git generator sees it; in a working tree, run git submodule update --init --recursive, or diff a Git ref with --ref", strings.Join(quoteAll(empty), ", ")))
 }
 
 func quoteAll(values []string) []string {

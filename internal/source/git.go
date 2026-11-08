@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	git "github.com/go-git/go-git/v5"
+	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
@@ -44,6 +45,10 @@ type GitOptions struct {
 	// file URL, which the Argo CD repo-server's git refuses. Only tests set
 	// it.
 	AllowFileSubmoduleTransport bool
+	// RequireTransport, when set, is the only go-git transport protocol
+	// drydock may clone or fetch over. A submodule fetch sets it to the
+	// protocol that gittree.ClassifySubmoduleURL allowed.
+	RequireTransport string
 	// LFS lists the Git LFS pointer files of the commit in
 	// GitResult.LFSPointers: the repository's Secret sets enableLfs, so the
 	// Argo CD repo-server replaces them with their content. drydock does
@@ -114,9 +119,15 @@ func acquireOnlineGitRepository(ctx context.Context, cachePath, key string, requ
 		return GitResult{}, err
 	}
 
+	if err := gittree.CheckEndpointTransport(request.URL, opts.RequireTransport); err != nil {
+		return GitResult{}, fmt.Errorf("repository %s: %w", RedactURL(request.URL), err)
+	}
 	repo, cloned, err := openOrCloneGitRepository(ctx, cachePath, request.URL, auth, opts.Credentials)
 	if err != nil {
 		return GitResult{}, err
+	}
+	if err := checkOriginTransport(repo, opts.RequireTransport); err != nil {
+		return GitResult{}, fmt.Errorf("repository %s: %w", RedactURL(request.URL), err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -255,10 +266,33 @@ func checkoutAcquiredGitRepository(ctx context.Context, repo *git.Repository, wo
 		fetched = true
 		revision, err = checkoutGitRevision(repo, worktree, request.Revision, request.URL)
 	}
+	if err != nil && fullCommitSHA.MatchString(strings.TrimSpace(request.Revision)) {
+		// A commit that no branch or tag holds: `git submodule update`
+		// fetches the SHA itself, so drydock fetches it into a ref of its
+		// own and tries again.
+		if fetchErr := fetchGitCommit(ctx, repo, strings.ToLower(strings.TrimSpace(request.Revision)), auth); fetchErr == nil {
+			fetched = true
+			revision, err = checkoutGitRevision(repo, worktree, request.Revision, request.URL)
+		}
+	}
 	if err != nil {
 		return "", fetched, fmt.Errorf("checkout repository %s revision %q: %s", RedactURL(request.URL), strings.TrimSpace(request.Revision), redactGitError(err, request.URL, credentials))
 	}
 	return revision, fetched, nil
+}
+
+// fetchGitCommit fetches the commit sha from origin into
+// refs/drydock/<sha>.
+func fetchGitCommit(ctx context.Context, repo *git.Repository, sha string, auth transport.AuthMethod) error {
+	err := repo.FetchContext(ctx, &git.FetchOptions{
+		RemoteName: "origin",
+		Auth:       auth,
+		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec(sha + ":refs/drydock/" + sha)},
+	})
+	if err == nil || errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return nil
+	}
+	return err
 }
 
 func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL string, auth transport.AuthMethod, credentials GitCredentials) error {
@@ -704,4 +738,22 @@ func redactGitCredentialError(message string, credentials GitCredentials) string
 
 func RedactGitCredentialError(message string, credentials GitCredentials) string {
 	return redactGitCredentialError(message, credentials)
+}
+
+// checkOriginTransport fails unless go-git fetches every URL of the origin
+// remote of repo over protocol. Fetches and pulls use those URLs.
+func checkOriginTransport(repo *git.Repository, protocol string) error {
+	if protocol == "" {
+		return nil
+	}
+	remote, err := repo.Remote("origin")
+	if err != nil {
+		return err
+	}
+	for _, url := range remote.Config().URLs {
+		if err := gittree.CheckEndpointTransport(url, protocol); err != nil {
+			return err
+		}
+	}
+	return nil
 }

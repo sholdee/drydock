@@ -165,3 +165,46 @@ func resolveGitDir(repoPath string) string {
 	}
 	return ""
 }
+
+// FillRequest is a snapshot whose submodules FillSnapshotSubmodules checks
+// out after drydock reads the settings of the tree.
+type FillRequest struct {
+	// Root is the snapshot that Snapshot wrote without submodule content.
+	Root string
+	// Repo and Revision are the repository and the commit of the snapshot.
+	Repo     string
+	Revision string
+	// Submodules says where submodule content comes from.
+	Submodules SubmoduleOptions
+	// KeepOutOfBoundsSymlinks is Request.KeepOutOfBoundsSymlinks.
+	KeepOutOfBoundsSymlinks bool
+}
+
+// FillSnapshotSubmodules checks out the submodules of a snapshot of a Git
+// ref (gittree.CheckoutSubmodules). A submodule whose commit neither the
+// local .git/modules store nor the opener holds stays an empty directory
+// and is listed in SubmoduleResult.Missing. A configuration that git
+// refuses fails, as the repo-server's checkout fails.
+func FillSnapshotSubmodules(ctx context.Context, request FillRequest) (gittree.SubmoduleResult, error) {
+	repo, displayRepoPath, err := openLocalRepository(request.Repo)
+	if err != nil {
+		return gittree.SubmoduleResult{}, err
+	}
+	tree, err := treeForRef(repo, request.Revision)
+	if err != nil {
+		return gittree.SubmoduleResult{}, fmt.Errorf("load Git tree of %s in %q: %w", request.Revision, displayRepoPath, err)
+	}
+	remoteURL := request.Submodules.RemoteURL
+	if strings.TrimSpace(remoteURL) == "" {
+		remoteURL = DefaultRemoteURL(request.Repo)
+	}
+	return gittree.CheckoutSubmodules(ctx, gittree.SubmoduleRequest{
+		Root:                    request.Root,
+		Tree:                    tree,
+		RemoteURL:               remoteURL,
+		Opener:                  gittree.ChainOpener(localModuleOpener(request.Repo), request.Submodules.Opener),
+		KeepOutOfBoundsSymlinks: request.KeepOutOfBoundsSymlinks,
+		AllowFileTransport:      request.Submodules.AllowFileTransport,
+		KeepMissing:             true,
+	})
+}

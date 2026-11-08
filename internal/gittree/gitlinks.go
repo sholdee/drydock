@@ -60,7 +60,8 @@ const maxGitmodulesSize = 1 << 20
 // submodule (util/git/client.go:812 checks for the file). The modules are
 // keyed by path. A module whose name git refuses (check_submodule_name in
 // git's submodule-config.c: empty, or with a ".." component) is left out,
-// as git ignores it. When two modules name one path, the first one wins.
+// as git ignores it. When two modules name one path, the last one wins, as
+// in git.
 func ReadModules(tree *object.Tree) (modules map[string]Module, found bool, err error) {
 	entry, err := tree.FindEntry(gitmodulesFile)
 	if err != nil {
@@ -112,9 +113,7 @@ func ParseModules(data []byte) (map[string]Module, error) {
 		if module.Path == "" || strings.HasPrefix(module.Path, "-") {
 			continue
 		}
-		if _, ok := out[module.Path]; ok {
-			continue
-		}
+		// git keeps the last module for a path.
 		out[module.Path] = module
 	}
 	return out, nil

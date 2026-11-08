@@ -142,11 +142,13 @@ func worktreeLFSState(ctx context.Context, root string) rootLFSState {
 		return state
 	}
 	for _, pointer := range pointers {
-		data, err := pathsafety.ReadRegularFile(filepath.Join(root, filepath.FromSlash(pointer.Path)))
-		if err != nil {
+		target := filepath.Join(root, filepath.FromSlash(pointer.Path))
+		// A symlinked parent directory could lead out of the tree.
+		if inside, _, err := pathsafety.IsInsideAny(filepath.Dir(target), []string{root}); err != nil || !inside {
 			continue
 		}
-		if onDisk, ok := gittree.ParseLFSPointer(data); ok && onDisk.OID == pointer.OID {
+		onDisk, ok := gittree.ReadLFSPointerFile(target)
+		if ok && onDisk.OID == pointer.OID {
 			state.missing = append(state.missing, pointer.Path)
 		}
 	}
@@ -228,7 +230,10 @@ func quoteStrings(values []string) []string {
 // gitContentDiagnostics is the submodule and Git LFS warnings of source
 // (submoduleRenderDiagnostics, lfsRenderDiagnostics).
 func (p localProvider) gitContentDiagnostics(ctx context.Context, source render.ResolvedSource) ([]diagnostic.Diagnostic, error) {
-	diags := p.submoduleRenderDiagnostics(ctx, source)
+	diags, err := p.submoduleRenderDiagnostics(ctx, source)
+	if err != nil {
+		return diags, err
+	}
 	lfsDiags, err := p.lfsRenderDiagnostics(source)
 	return append(diags, lfsDiags...), err
 }

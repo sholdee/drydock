@@ -727,7 +727,7 @@ func TestGenerateGitGeneratorSeesIndexGitlinks(t *testing.T) {
 	}
 	writeAppsetTestFile(t, filepath.Join(root, ".gitmodules"), "[submodule \"sub\"]\n")
 	_, diags, err = GenerateFromYAMLWithOptions(root, "app-set.yaml", gitDirectoriesAppSet("apps/*"), Options{Worktree: indexGitlinks{"apps/mod"}})
-	if err != nil || len(diags) != 1 || !strings.Contains(diags[0].Message, `submodule "apps/mod" holds nothing in the working tree`) {
+	if err != nil || len(diags) != 1 || !strings.Contains(diags[0].Message, `submodule "apps/mod" holds nothing in the tree that drydock reads`) {
 		t.Fatalf("error = %v, diagnostics = %#v, want the submodule content warning", err, diags)
 	}
 	writeAppsetTestFile(t, filepath.Join(root, ".gitmodules"), "[submodule \"mod\"]\n\tpath = apps/mod\n\turl = ../mod.git\n\tupdate = none\n")

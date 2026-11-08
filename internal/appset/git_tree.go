@@ -288,9 +288,9 @@ func hiddenPath(rel string) bool {
 // emptySubmodules lists the gitlinks whose directory holds nothing while
 // Argo CD would check their content out: the tree has a .gitmodules file,
 // submodules are enabled, and .gitmodules does not skip the module with
-// update = none. A snapshot of a Git ref holds the content of every such
-// submodule, so only a working tree whose submodule is not initialized has
-// one.
+// update = none. A working tree whose submodule is not initialized has
+// one, and so has a snapshot of a Git ref whose submodule drydock could not
+// fetch or whose reposerver.enable.git.submodule is off.
 func (t *gitRepositoryTree) emptySubmodules() []string {
 	if !t.submodules || len(t.gitlinks) == 0 {
 		return nil
@@ -303,7 +303,7 @@ func (t *gitRepositoryTree) emptySubmodules() []string {
 	}
 	var out []string
 	for _, link := range t.gitlinks {
-		if module, ok := modules[link]; ok && strings.EqualFold(strings.TrimSpace(module.Update), "none") {
+		if module, ok := modules[link]; ok && gittree.ModuleSkipped(module) {
 			continue
 		}
 		if entries, err := os.ReadDir(filepath.Join(t.root, filepath.FromSlash(link))); err != nil || len(entries) == 0 {

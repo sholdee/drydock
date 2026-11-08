@@ -187,3 +187,61 @@ func TestDefaultGitAcquirerListsLFSPointers(t *testing.T) {
 		t.Fatalf("LFSPointers = %#v, want assets/blob.bin", result.LFSPointers)
 	}
 }
+
+// TestDefaultGitAcquirerRefusesSubmoduleURLsThatReadLocalRepositories pins
+// that a .gitmodules URL that git reads as ssh to the host "x y", and
+// go-git as a local path, never reads the local repository it names.
+func TestDefaultGitAcquirerRefusesSubmoduleURLsThatReadLocalRepositories(t *testing.T) {
+	for _, prefix := range []string{"x y:", "git@x y:"} {
+		parentURL := submoduletest.LocalPathURLFixture(t, prefix)
+		opts := submoduleOptions(t.TempDir(), true, true)
+		opts.AllowFileSubmoduleTransport = false
+		result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: parentURL, Revision: "main"}, opts)
+		if err == nil {
+			data, _ := os.ReadFile(filepath.Join(result.Path, "sub", "app", "cm.yaml"))
+			t.Fatalf("prefix %q: Acquire() error = nil, sub/app/cm.yaml = %q; want the URL refused", prefix, data)
+		}
+		if !strings.Contains(err.Error(), "drydock's Git client reads it as") {
+			t.Fatalf("prefix %q: Acquire() error = %v, want the transport mismatch", prefix, err)
+		}
+	}
+}
+
+// TestDefaultGitAcquirerFetchesUnreachablePinnedCommit pins that a
+// submodule commit that no branch or tag holds is fetched by its SHA, as
+// `git submodule update` does.
+func TestDefaultGitAcquirerFetchesUnreachablePinnedCommit(t *testing.T) {
+	parentURL := submoduletest.UnreachableCommitFixture(t)
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: parentURL, Revision: "main"}, submoduleOptions(t.TempDir(), true, true))
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(result.Path, "sub", "app", "cm.yaml"))
+	if err != nil || !strings.Contains(string(data), "name: feature") {
+		t.Fatalf("sub/app/cm.yaml = %q, %v; want the pinned commit", data, err)
+	}
+}
+
+// TestDefaultGitAcquirerFetchesSubmodulesOverGitDaemon runs drydock's own
+// submodule fetch over the network: a git daemon serves the fixture, the
+// superproject's relative submodule URLs resolve to git:// URLs, and the
+// file transport stays refused. A second, offline run reads the cache.
+func TestDefaultGitAcquirerFetchesSubmodulesOverGitDaemon(t *testing.T) {
+	fixture := submoduletest.New(t)
+	base := submoduletest.ServeGitDaemon(t, fixture.Dir)
+	cacheDir := t.TempDir()
+	request := GitRequest{URL: base + "/parent.git", Revision: "main"}
+	online := GitOptions{AllowNetwork: true, CacheDir: cacheDir, Submodules: true}
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), request, online)
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	requireFile(t, result.Path, "mods/child/deep/deep/cm.yaml")
+	offline := online
+	offline.AllowNetwork = false
+	result, err = DefaultGitAcquirer{}.Acquire(context.Background(), request, offline)
+	if err != nil {
+		t.Fatalf("offline Acquire() error = %v", err)
+	}
+	requireFile(t, result.Path, "mods/child/child/app/cm.yaml")
+}
