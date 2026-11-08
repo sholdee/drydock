@@ -347,6 +347,11 @@ Supported:
   with that `configMapRef`, drydock reports `appset.provider-no-match` as
   before. Argo CD runs these checks before it reads the cluster or the SCM
   provider, so drydock runs them also when no provider fixture is given.
+  The warning text assumes that the cluster lookups before these checks
+  work: for a pull request or SCM provider generator, Argo CD first selects
+  the provider, and for a `clusterDecisionResource` generator it first reads
+  the `configMapRef` ConfigMap. If such a lookup fails, the Argo CD message
+  names that failure instead, and the ApplicationSet fails all the same.
 - Warning diagnostics when a discovered ApplicationSet generates zero
   Applications; `--strict` promotes those diagnostics to errors.
 - Argo CD Git and OCI files param decoding for empty content: empty,
@@ -378,7 +383,9 @@ Supported:
     generated no parameters` (`matrix.go:129-131`, `merge.go:169-171`).
     Earlier drydock releases called this an unsupported generator and kept
     the Applications of the other generators.
-  - A matrix or merge child that names more than one generator.
+  - A matrix or merge child that names more than one generator. Argo CD
+    runs each of them first, so the error of one that fails comes before
+    this one.
   - A generator selector that does not parse
     (`generator_spec_processor.go:34-37`).
   - A fasttemplate matrix whose two children set one key to two values.
@@ -389,7 +396,9 @@ Supported:
   parameters`. drydock checks a matrix or merge child in the Argo CD order:
   first its selector, then its generator count. A merge runs every child, so
   an error in a later child fails the ApplicationSet also when an earlier
-  child needs provider data that drydock does not have. A matrix runs its
+  child needs provider data that drydock does not have. The merge key checks
+  (no merge keys, or a repeated merge key value in a child that drydock can
+  run) also come before drydock reports such a merge as unsupported. A matrix runs its
   second child only for the param sets of its first child. When the first
   child gives none, the second child does not run, and nothing fails.
   Earlier drydock releases stopped the whole run for most of these errors.
@@ -407,37 +416,23 @@ Supported:
   Application with the same warning, as Argo CD does. When the named
   AppProject does not exist, Argo CD does not create the generated
   Application either, and it keeps the other Applications of the
-  ApplicationSet (`applicationset_controller.go:627-633`). drydock omits
-  that Application with the same warning only when it knows every
-  AppProject. All of these conditions must be true:
-  - Discovery runs in fleet mode with a `--max-discovery-depth` above zero.
-    With `--discovery-mode static`, which `plugin-policy` reports also use,
-    drydock keeps the Application.
-  - Fleet discovery rendered every source that can hold an AppProject. A
-    chart-only Helm source (such as the `argocd-apps` chart), an `oci://`
-    source without a `--repo-map` entry, a source path that is not in a
-    local tree, a source that failed to render, and a local source that the
-    repository scan already read but that Argo CD renders with Kustomize,
-    Helm, a plugin, or Jsonnet each make the AppProject set incomplete. Such
-    a render can rename an AppProject, for example with a `namePrefix`.
-  - `--project-diagnostics` is not `off`. With `off`, the repository does
-    not hold every AppProject.
-  - The repository declares AppProjects, but not the named one, and the
-    name is not `default`. This is the rule of the `project.missing`
-    warning. If the repository declares no AppProject, the named one can
-    exist only in the cluster.
-
-  When `argocd-cmd-params-cm` names the controller namespace, only the
-  AppProjects in that namespace, or without a namespace, count, because
-  Argo CD looks the AppProject up there. In every other case drydock keeps
-  the Application, and AppProject validation reports `project.missing` for
-  it, as for any Application. Earlier drydock releases kept every such
-  Application. The render parity smoke checks this case on a fixture
-  directory of its own, because the main fixture repository has chart-only
-  Helm and OCI sources. drydock skips the destination-cluster check of the
-  ApplicationSet controller for generated Applications, because the
-  clusters can exist only in the cluster. AppProject validation reports
-  that later, as for any Application.
+  ApplicationSet (`applicationset_controller.go:626-633`). This is a
+  recorded divergence: drydock keeps that Application and renders it. The
+  reason is that drydock does not know the AppProjects of the cluster
+  offline. An AppProject can exist only in the cluster, or come from a
+  render that discovery does not run, such as a remote chart or a Kustomize
+  `namePrefix`. A wrong drop would hide the Application from `build` and
+  `diff` without a trace. drydock reports the Application with the usual
+  `project.missing` warning when the repository declares other AppProjects
+  but not the named one. For a generated Application, the warning names the
+  ApplicationSet and says that the ApplicationSet controller does not create
+  or update the Application unless that AppProject exists in the cluster.
+  The warning keeps its class, and `--project-diagnostics` controls it as
+  before. The render parity smoke checks this divergence on a fixture
+  directory of its own. drydock also skips the destination-cluster check of
+  the ApplicationSet controller for generated Applications, because the
+  clusters can exist only in the cluster. AppProject validation reports that
+  later, as for any Application.
 - Argo CD v3.6.1 RollingSync handling for `spec.strategy.type: RollingSync`,
   gated on `applicationsetcontroller.enable.progressive.syncs` in
   `argocd-cmd-params-cm` (off by default; only `true` in any letter case
@@ -2694,7 +2689,7 @@ implemented or documented as runtime boundaries.
 | Rendered AppProject discovery | `applyExplicitKustomizeDiscovery`, `discoverRenderedFleet`, bootstrap discovery | Existing explicit-rendered and fleet discovery tests | Phase 2 fixture expansion |
 | Duplicate or conflicting projects | `mergeProjects`, `resolveDiscoveryConflict`, same-scan `projectIndex` last-wins | Existing rendered precedence coverage | Discovery-focused follow-up |
 | Implicit default project | `effectiveProject`, `implicitDefaultProject` | `TestValidateApplicationsAllowsImplicitDefaultProject`, `TestValidateApplicationsImplicitDefaultProjectPermitsAnySourceNamespace`, `TestValidateApplicationsDefersUnresolvedProjectWithoutLocalProjects`, `TestValidateApplicationsCurrentBehaviorAllowsImplicitDefaultProjectWhenOtherLocalProjectsExist` | No follow-up |
-| Missing non-default project | `ValidateApplications`, `projectIndex`, `applicationProject`; `pruneMissingProjectApplications` omits generated Applications | `TestValidateApplicationsCurrentBehaviorReportsMissingNonDefaultProject`, `TestListApplicationsDropsGeneratedApplicationWithMissingProject` | No follow-up |
+| Missing non-default project | `ValidateApplications`, `ValidateGeneratedApplications`, `projectIndex`, `applicationProject` | `TestValidateApplicationsCurrentBehaviorReportsMissingNonDefaultProject`, `TestDiagStaticKeepsGeneratedApplicationWithMissingProject` | Generated Applications are kept, a recorded divergence |
 | Source repository matching | `validateSources`, Argo `IsSourcePermitted` | Existing source policy tests, source parity fixtures, `TestValidateApplicationsCurrentBehaviorReportsDeniedMultiSourceRepository` | Phase 3 remediation for any future parity gaps |
 | Destination matching | `validateDestination`, `destinationCluster`, `offlineDestinationPermitted`, Argo `IsDestinationPermitted` | Existing destination and project-scoped cluster tests, destination parity fixtures fed Argo CD-resolved clusters, `TestOfflineDestinationPermittedIsSoundAgainstArgoCD` | Unresolved destinations defer only when the unknown name, server, or project scoping decides the outcome |
 | Cluster Secret metadata | `clusterSecretSettings`, `projectScopedClusters`, `projectScopedClusterDestinations` | Cluster parser tests, project-scoped destination tests, `TestValidateApplicationsAddsProjectScopedClusterDestinations`, metadata integration fixtures | No follow-up |

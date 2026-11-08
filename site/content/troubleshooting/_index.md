@@ -56,17 +56,16 @@ only `generateName` or renders an empty name) or shared its name with another
 Application from the same ApplicationSet. Argo CD v3.6.1 refuses those
 Applications, and for a duplicated name it refuses every Application with
 that name. Give each generated Application a unique, non-empty
-`metadata.name`. The same warning with `application references project ...
-which does not exist` means the generated Application names an AppProject
-that the repository does not declare. Argo CD does not create it. Declare the
-AppProject, or fix `spec.project` in the template.
+`metadata.name`.
 
-If such an Application already exists in the cluster, Argo CD does not
-delete it. It only stops updating it, because it deletes Applications by the
-full generated list, not by the list that passed validation
-(`applicationset_controller.go:386-388`). A `drydock diff` shows the
-resources of that Application as removed, but the live Application and its
-resources stay until you delete them.
+A `project.missing` warning for a generated Application says that its
+ApplicationSet generates it and that the ApplicationSet controller does not
+create or update it unless the AppProject exists in the cluster. drydock
+still renders the Application, because it cannot see the AppProjects of the
+cluster. If the AppProject exists only in the cluster, you can ignore the
+warning. Otherwise declare the AppProject, or fix `spec.project` in the
+template. If such an Application already exists in the cluster, Argo CD does
+not delete it when its AppProject goes missing. It only stops updating it.
 
 ## Symptom: Discovery Fails Decoding Non-Deployable YAML
 

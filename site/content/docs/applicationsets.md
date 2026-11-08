@@ -247,15 +247,12 @@ controller after all templates render:
   errors by Application name.
 
 The controller then looks up the AppProject of each generated Application
-and does not create one whose AppProject does not exist. drydock omits such
-an Application only when it knows every AppProject: fleet discovery rendered
-every source that can hold one, `--project-diagnostics` is not `off`, and the
-repository declares AppProjects but not the named one. The `default` project
-always exists. When `argocd-cmd-params-cm` names the controller namespace,
-only the AppProjects in that namespace count. In every other case drydock
-keeps the Application and reports `project.missing`. See
-`docs/compatibility.md` for the sources that make the AppProject set
-incomplete.
+and does not create one whose AppProject does not exist in the cluster.
+drydock does not know the AppProjects of the cluster offline, so it keeps
+such an Application. When the repository declares other AppProjects but not
+the named one, the `project.missing` warning names the ApplicationSet and
+says that the ApplicationSet controller does not create the Application
+unless that AppProject exists in the cluster.
 
 Each failure emits an `appset.application-validation-failed` warning carrying
 Argo CD's message, and the ApplicationSet's other Applications still
