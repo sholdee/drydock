@@ -224,7 +224,8 @@ error. These errors are:
   that names more than one.
 - A generator selector that does not parse.
 - A pull request or SCM provider filter regexp that does not compile, and a
-  cluster or `clusterDecisionResource` selector that Argo CD rejects.
+  cluster or `clusterDecisionResource` selector that Argo CD rejects. These
+  checks need only the spec, so they also run without provider fixtures.
 
 Other generator evaluation failures, such as file IO, source acquisition, and
 invalid ApplicationSet YAML, stop the run.
@@ -247,10 +248,14 @@ controller after all templates render:
 
 The controller then looks up the AppProject of each generated Application
 and does not create one whose AppProject does not exist. drydock omits such
-an Application when the repository declares AppProjects but not the named
-one. The `default` project always exists. If the repository declares no
-AppProject, drydock keeps the Application, because its project can exist
-only in the cluster.
+an Application only when it knows every AppProject: fleet discovery rendered
+every source that can hold one, `--project-diagnostics` is not `off`, and the
+repository declares AppProjects but not the named one. The `default` project
+always exists. When `argocd-cmd-params-cm` names the controller namespace,
+only the AppProjects in that namespace count. In every other case drydock
+keeps the Application and reports `project.missing`. See
+`docs/compatibility.md` for the sources that make the AppProject set
+incomplete.
 
 Each failure emits an `appset.application-validation-failed` warning carrying
 Argo CD's message, and the ApplicationSet's other Applications still

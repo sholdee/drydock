@@ -340,9 +340,13 @@ Supported:
   rule below): a pull request or SCM provider filter regexp that does not
   compile, a cluster generator selector that `metav1.LabelSelectorAsSelector`
   rejects, a `clusterDecisionResource` generator that sets both or neither of
-  `name` and `labelSelector`, and a `clusterDecisionResource` generator for
-  which the fixture has decision resources but none that it names or
-  selects.
+  `name` and `labelSelector`, a `clusterDecisionResource` `labelSelector`
+  that is empty or does not parse, and a `clusterDecisionResource` generator
+  for which the fixture has decision resources with its `configMapRef` but
+  none that it names or selects. When the fixture has no decision resource
+  with that `configMapRef`, drydock reports `appset.provider-no-match` as
+  before. Argo CD runs these checks before it reads the cluster or the SCM
+  provider, so drydock runs them also when no provider fixture is given.
 - Warning diagnostics when a discovered ApplicationSet generates zero
   Applications; `--strict` promotes those diagnostics to errors.
 - Argo CD Git and OCI files param decoding for empty content: empty,
@@ -379,6 +383,15 @@ Supported:
     (`generator_spec_processor.go:34-37`).
   - A fasttemplate matrix whose two children set one key to two values.
 
+  The warning carries the exact Argo CD text, with the wraps that the matrix
+  and merge generators add, such as `failed to get params for second
+  generator in the matrix generator: child generator generated no
+  parameters`. drydock checks a matrix or merge child in the Argo CD order:
+  first its selector, then its generator count. A merge runs every child, so
+  an error in a later child fails the ApplicationSet also when an earlier
+  child needs provider data that drydock does not have. A matrix runs its
+  second child only for the param sets of its first child. When the first
+  child gives none, the second child does not run, and nothing fails.
   Earlier drydock releases stopped the whole run for most of these errors.
   The render parity smoke checks each kind against Argo CD.
 - Argo CD v3.6.1 generated-Application name validation: a generated
@@ -395,14 +408,33 @@ Supported:
   AppProject does not exist, Argo CD does not create the generated
   Application either, and it keeps the other Applications of the
   ApplicationSet (`applicationset_controller.go:627-633`). drydock omits
-  that Application with the same warning when the repository declares
-  AppProjects but not the named one and the name is not `default`. This is
-  the rule of the `project.missing` warning. If the repository declares no
-  AppProject, the named one can exist only in the cluster, so drydock keeps
-  the Application. drydock applies this rule after discovery ends, so the
-  AppProjects that rendered Applications make count too. Earlier drydock
-  releases kept every such Application. The render parity smoke checks
-  this case. drydock skips the destination-cluster check of the
+  that Application with the same warning only when it knows every
+  AppProject. All of these conditions must be true:
+  - Discovery runs in fleet mode with a `--max-discovery-depth` above zero.
+    With `--discovery-mode static`, which `plugin-policy` reports also use,
+    drydock keeps the Application.
+  - Fleet discovery rendered every source that can hold an AppProject. A
+    chart-only Helm source (such as the `argocd-apps` chart), an `oci://`
+    source without a `--repo-map` entry, a source path that is not in a
+    local tree, a source that failed to render, and a local source that the
+    repository scan already read but that Argo CD renders with Kustomize,
+    Helm, a plugin, or Jsonnet each make the AppProject set incomplete. Such
+    a render can rename an AppProject, for example with a `namePrefix`.
+  - `--project-diagnostics` is not `off`. With `off`, the repository does
+    not hold every AppProject.
+  - The repository declares AppProjects, but not the named one, and the
+    name is not `default`. This is the rule of the `project.missing`
+    warning. If the repository declares no AppProject, the named one can
+    exist only in the cluster.
+
+  When `argocd-cmd-params-cm` names the controller namespace, only the
+  AppProjects in that namespace, or without a namespace, count, because
+  Argo CD looks the AppProject up there. In every other case drydock keeps
+  the Application, and AppProject validation reports `project.missing` for
+  it, as for any Application. Earlier drydock releases kept every such
+  Application. The render parity smoke checks this case on a fixture
+  directory of its own, because the main fixture repository has chart-only
+  Helm and OCI sources. drydock skips the destination-cluster check of the
   ApplicationSet controller for generated Applications, because the
   clusters can exist only in the cluster. AppProject validation reports
   that later, as for any Application.

@@ -218,7 +218,9 @@ After rendering, generated Applications go through Argo CD's name validation
 name is dropped) as `appset.application-validation-failed` warnings. After
 discovery, `pruneMissingProjectApplications` in `internal/app` drops a
 generated Application whose AppProject the repository does not declare, with
-the same code, and
+the same code. `applyFinalGates` runs it only in fleet mode with project
+diagnostics on and when no frontier skip or render failure set
+`BuildRequest.projectsIncomplete` (`applicationSkipsProjectSources`). Then
 `spec.strategy` RollingSync handling follows
 `applicationsetcontroller.enable.progressive.syncs` (`appset.Options.ProgressiveSyncs`).
 Each discovery run uses one value, read before the first ApplicationSet

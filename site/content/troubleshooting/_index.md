@@ -61,6 +61,13 @@ which does not exist` means the generated Application names an AppProject
 that the repository does not declare. Argo CD does not create it. Declare the
 AppProject, or fix `spec.project` in the template.
 
+If such an Application already exists in the cluster, Argo CD does not
+delete it. It only stops updating it, because it deletes Applications by the
+full generated list, not by the list that passed validation
+(`applicationset_controller.go:386-388`). A `drydock diff` shows the
+resources of that Application as removed, but the live Application and its
+resources stay until you delete them.
+
 ## Symptom: Discovery Fails Decoding Non-Deployable YAML
 
 Discovery errors that end with
