@@ -9,6 +9,7 @@ import (
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/sholdee/drydock/internal/gittree"
 )
 
 func TestChangedPathsBetweenRefsReportsTrackedAddsModifiesAndDeletes(t *testing.T) {
@@ -116,14 +117,14 @@ func TestChangedPathsFromRefToWorktreeReportsStagedDeletionWithRestoredFile(t *t
 
 func TestChangedPathsFromRefToWorktreeReportsManyTrackedWorktreeChanges(t *testing.T) {
 	repoPath, _, wt := newSnapshotRepo(t)
-	for i := range maxMaterializeTreeWorkers * 2 {
+	for i := range gittree.MaxWorkers * 2 {
 		rel := filepath.Join("apps", "many", fmt.Sprintf("cm-%02d.yaml", i))
 		writeChangedPathFileForTest(t, filepath.Join(repoPath, rel), fmt.Sprintf("value: old-%02d\n", i))
 	}
 	base := commitAllSnapshotFiles(t, wt, "baseline")
 
-	want := make([]string, 0, maxMaterializeTreeWorkers*2)
-	for i := range maxMaterializeTreeWorkers * 2 {
+	want := make([]string, 0, gittree.MaxWorkers*2)
+	for i := range gittree.MaxWorkers * 2 {
 		rel := filepath.Join("apps", "many", fmt.Sprintf("cm-%02d.yaml", i))
 		writeChangedPathFileForTest(t, filepath.Join(repoPath, rel), fmt.Sprintf("value: new-%02d\n", i))
 		want = append(want, filepath.ToSlash(rel))

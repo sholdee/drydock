@@ -18,6 +18,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/cache"
 	"github.com/sholdee/drydock/internal/gitauth"
+	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/giturl"
 )
 
@@ -31,6 +32,18 @@ type GitOptions struct {
 	CacheDir     string
 	Refresh      bool
 	Credentials  GitCredentials
+	// Submodules checks out the content of the submodules of the commit,
+	// as the Argo CD repo-server does when reposerver.enable.git.submodule
+	// is on (the default). Without it, each gitlink is an empty directory.
+	Submodules bool
+	// LockEntry, when set, locks the cache entry of a request for the
+	// time drydock reads or writes it, and returns the unlock function.
+	// Submodule fetches lock their own entries with it.
+	LockEntry func(request GitRequest, opts GitOptions) (unlock func())
+	// AllowFileSubmoduleTransport lets a submodule URL be a local path or a
+	// file URL, which the Argo CD repo-server's git refuses. Only tests set
+	// it.
+	AllowFileSubmoduleTransport bool
 }
 
 type GitCredentials struct {
@@ -77,13 +90,16 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	}
 
 	if !opts.AllowNetwork {
-		result, err := acquireCachedGitRepository(cachePath, key, request)
-		if err != nil {
-			return GitResult{}, err
-		}
-		return result, nil
+		return acquireCachedGitRepository(ctx, cachePath, key, request, opts)
 	}
 
+	return acquireOnlineGitRepository(ctx, cachePath, key, request, opts)
+}
+
+// acquireOnlineGitRepository clones or opens the cache entry at cachePath,
+// refreshes it when asked, checks out the revision with its submodules,
+// and fetches what the entry lacks.
+func acquireOnlineGitRepository(ctx context.Context, cachePath, key string, request GitRequest, opts GitOptions) (GitResult, error) {
 	auth, _, err := gitAuthMethod(opts.Credentials, request.URL)
 	if err != nil {
 		return GitResult{}, err
@@ -109,13 +125,17 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	if err != nil {
 		return GitResult{}, err
 	}
+	submoduleNetwork, err := syncCacheSubmodules(ctx, repo, cachePath, revision, request, opts)
+	if err != nil {
+		return GitResult{}, err
+	}
 
-	network := cloned || refreshed || fetched
+	network := cloned || refreshed || fetched || submoduleNetwork
 	writeGitMetadata(cachePath, key, request, revision)
 	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: !network, Network: network}, nil
 }
 
-func acquireCachedGitRepository(cachePath, key string, request GitRequest) (GitResult, error) {
+func acquireCachedGitRepository(ctx context.Context, cachePath, key string, request GitRequest, opts GitOptions) (GitResult, error) {
 	repo, err := openExistingGitRepository(cachePath)
 	if err != nil {
 		return GitResult{}, fmt.Errorf("offline cache miss for Git repository %s", RedactURL(request.URL))
@@ -127,6 +147,9 @@ func acquireCachedGitRepository(cachePath, key string, request GitRequest) (GitR
 	revision, err := checkoutGitRevision(repo, worktree, request.Revision, request.URL)
 	if err != nil {
 		return GitResult{}, fmt.Errorf("checkout cached repository %s revision %q: %w", RedactURL(request.URL), strings.TrimSpace(request.Revision), err)
+	}
+	if _, err := syncCacheSubmodules(ctx, repo, cachePath, revision, request, opts); err != nil {
+		return GitResult{}, err
 	}
 	writeGitMetadata(cachePath, key, request, revision)
 	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: true, Network: false}, nil
@@ -237,6 +260,9 @@ func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL strin
 }
 
 func pullGitRepository(ctx context.Context, worktree *git.Worktree, repoURL string, auth transport.AuthMethod, credentials GitCredentials) error {
+	if err := gittree.ClearCacheSubmodules(worktree.Filesystem.Root(), plumbing.ZeroHash); err != nil {
+		return fmt.Errorf("clear submodule content of repository %s: %w", RedactURL(repoURL), err)
+	}
 	err := worktree.PullContext(ctx, &git.PullOptions{
 		RemoteName: "origin",
 		Auth:       auth,
@@ -279,6 +305,10 @@ func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision,
 
 	hash, err := resolveCheckoutRevision(repo, cleanRevision, repoURL)
 	if err != nil {
+		return "", err
+	}
+	// Submodule content of another commit must not meet the checkout.
+	if err := gittree.ClearCacheSubmodules(worktree.Filesystem.Root(), *hash); err != nil {
 		return "", err
 	}
 	if err := worktree.Checkout(&git.CheckoutOptions{Hash: *hash, Force: true}); err != nil {

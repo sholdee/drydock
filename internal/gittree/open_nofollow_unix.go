@@ -1,6 +1,6 @@
 //go:build !windows
 
-package gitref
+package gittree
 
 import "syscall"
 

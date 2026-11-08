@@ -2,20 +2,15 @@ package gitref
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
-	"sort"
 	"strings"
-	"sync"
 
-	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/source"
 )
@@ -32,12 +27,40 @@ type Request struct {
 	// symlink. Nothing is written through it: a Git tree cannot hold a path
 	// below a symlink.
 	KeepOutOfBoundsSymlinks bool
+	// Submodules, when set, checks out the content of the submodules of
+	// the commit, as the Argo CD repo-server does by default
+	// (CheckoutSubmodules). Without it, each gitlink stays an empty
+	// directory.
+	Submodules *SubmoduleOptions
+}
+
+// SubmoduleOptions says where a snapshot gets submodule content. A
+// submodule commit comes from the local repository's own submodule
+// store (.git/modules) first, which needs no network, and else from
+// Opener.
+type SubmoduleOptions struct {
+	// RemoteURL is the URL that relative submodule URLs resolve against.
+	// Empty means the URL of the remote origin of the repository, or of
+	// its only remote.
+	RemoteURL string
+	// Opener finds a submodule commit that the local store does not hold:
+	// drydock's Git cache, and the network unless drydock runs offline.
+	Opener gittree.SubmoduleOpener
+	// AllowFileTransport is gittree.SubmoduleRequest.AllowFileTransport.
+	AllowFileTransport bool
 }
 
 type Result struct {
 	Path     string
 	Revision string
 	Cleanup  func() error
+	// Gitlinks are the gitlinks of the commit, relative to Path with
+	// forward slashes, with or without submodule content.
+	Gitlinks []string
+	// SubmodulesConfigured reports that the commit has a .gitmodules file.
+	SubmodulesConfigured bool
+	// Submodules are the submodules the snapshot checked out.
+	Submodules []gittree.CheckedOutSubmodule
 }
 
 func Snapshot(ctx context.Context, request Request) (Result, error) {
@@ -79,11 +102,20 @@ func Snapshot(ctx context.Context, request Request) (Result, error) {
 		return Result{}, fmt.Errorf("git ref snapshot temp directory %q is inside protected root %q", root, matchedRoot)
 	}
 
+	result := Result{Path: root, Revision: hash.String(), Cleanup: cleanup}
 	if err := materializeTree(ctx, tree, root, request.KeepOutOfBoundsSymlinks); err != nil {
 		_ = cleanup()
 		return Result{}, err
 	}
-	return Result{Path: root, Revision: hash.String(), Cleanup: cleanup}, nil
+	submodules, err := snapshotSubmodules(ctx, request, tree, root)
+	if err != nil {
+		_ = cleanup()
+		return Result{}, fmt.Errorf("check out the submodules of %q at %s: %w", displayRepoPath, hash.String(), err)
+	}
+	result.Gitlinks = submodules.Gitlinks
+	result.SubmodulesConfigured = submodules.Configured
+	result.Submodules = submodules.Submodules
+	return result, nil
 }
 
 func looksLikeRemoteRepo(value string) bool {
@@ -127,59 +159,21 @@ func looksLikeSCPRemote(value string) bool {
 }
 
 func materializeTree(ctx context.Context, tree *object.Tree, root string, keepOutOfBoundsSymlinks bool) error {
-	files := make([]object.File, 0)
-	if err := tree.Files().ForEach(func(file *object.File) error {
-		files = append(files, *file)
-		return nil
-	}); err != nil {
-		return err
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
-	if err := rejectOverlappingTreePaths(files); err != nil {
-		return err
-	}
-	if err := materializeTreeFiles(ctx, files, root, keepOutOfBoundsSymlinks); err != nil {
-		return err
-	}
-	return materializeGitlinks(tree, root)
+	_, err := gittree.WriteTree(ctx, tree, gittree.WriteOptions{Root: root, KeepOutOfBoundsSymlinks: keepOutOfBoundsSymlinks})
+	return err
 }
 
-// materializeGitlinks creates an empty directory for each gitlink
-// (submodule) of tree, as a checkout holds one before any submodule
-// content is fetched. tree.Files skips gitlinks, so they are read with a
-// tree walker. A snapshot then holds an empty directory only for a gitlink
-// (SnapshotGitlinks).
-func materializeGitlinks(tree *object.Tree, root string) error {
-	walker := object.NewTreeWalker(tree, true, nil)
-	defer walker.Close()
-	for {
-		name, entry, err := walker.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if entry.Mode != filemode.Submodule {
-			continue
-		}
-		clean := filepath.Clean(filepath.FromSlash(name))
-		if clean == "." || filepath.IsAbs(clean) || pathsafety.RelEscapes(clean) {
-			return fmt.Errorf("unsafe Git tree path %q", name)
-		}
-		target := filepath.Join(root, clean)
-		if err := validateSnapshotWriteParent(root, filepath.Dir(target)); err != nil {
-			return err
-		}
-		if err := mkdirSnapshotParents(root, target); err != nil {
-			return err
-		}
-	}
-}
+// mkdirSnapshotParents and writeSnapshotFile keep the names the tests of
+// this package use.
+var (
+	mkdirSnapshotParents = gittree.MkdirParents
+	writeSnapshotFile    = gittree.WriteFile
+)
 
-// SnapshotGitlinks returns the gitlinks of a snapshot at root, relative to
-// root with forward slashes: its empty directories. A Git tree cannot hold
-// another empty directory.
+// SnapshotGitlinks returns the gitlinks of a snapshot at root that holds no
+// submodule content, relative to root with forward slashes: its empty
+// directories. A Git tree cannot hold another empty directory. A snapshot
+// with submodule content lists them in Result.Gitlinks.
 func SnapshotGitlinks(root string) []string {
 	var out []string
 	collectEmptyDirectories(root, "", &out)
@@ -201,203 +195,4 @@ func collectEmptyDirectories(dir, rel string, out *[]string) {
 		}
 		collectEmptyDirectories(filepath.Join(dir, entry.Name()), path.Join(rel, entry.Name()), out)
 	}
-}
-
-func materializeTreeFiles(ctx context.Context, files []object.File, root string, keepOutOfBoundsSymlinks bool) error {
-	if len(files) == 0 {
-		return ctx.Err()
-	}
-	workers := materializeTreeParallelism(len(files))
-	jobs := make(chan int)
-	errs := make([]error, len(files))
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for range workers {
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				if err := ctx.Err(); err != nil {
-					errs[i] = err
-					continue
-				}
-				errs[i] = materializeTreeFile(root, &files[i], keepOutOfBoundsSymlinks)
-			}
-		}()
-	}
-	for i := range files {
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
-	for _, err := range errs {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-const maxMaterializeTreeWorkers = 16
-
-func materializeTreeParallelism(fileCount int) int {
-	if fileCount <= 1 {
-		return fileCount
-	}
-	workers := max(runtime.GOMAXPROCS(0), 1)
-	workers = min(workers, maxMaterializeTreeWorkers)
-	workers = min(workers, fileCount)
-	return workers
-}
-
-func materializeTreeFile(root string, file *object.File, keepOutOfBoundsSymlinks bool) error {
-	path := filepath.Clean(file.Name)
-	if path == "." || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(os.PathSeparator)) {
-		return fmt.Errorf("unsafe Git tree path %q", file.Name)
-	}
-	target := filepath.Join(root, path)
-	parent := filepath.Dir(target)
-	if err := validateSnapshotWriteParent(root, parent); err != nil {
-		return err
-	}
-	if err := mkdirSnapshotParents(root, parent); err != nil {
-		return err
-	}
-	if err := validateSnapshotWriteParent(root, parent); err != nil {
-		return err
-	}
-
-	switch file.Mode {
-	case filemode.Symlink:
-		body, err := file.Contents()
-		if err != nil {
-			return err
-		}
-		if body == "" {
-			return fmt.Errorf("materialize symlink %q: symlink target must not be empty", file.Name)
-		}
-		if !keepOutOfBoundsSymlinks {
-			if err := validateSnapshotSymlinkTarget(root, target, body); err != nil {
-				return fmt.Errorf("materialize symlink %q: %w", file.Name, err)
-			}
-		}
-		return os.Symlink(body, target)
-	case filemode.Regular, filemode.Deprecated, filemode.Executable:
-		return writeSnapshotFile(target, file)
-	case filemode.Empty, filemode.Dir, filemode.Submodule:
-		return fmt.Errorf("unsupported Git tree file mode %s for %q", file.Mode, file.Name)
-	default:
-		return fmt.Errorf("unsupported Git tree file mode %s for %q", file.Mode, file.Name)
-	}
-}
-
-// rejectOverlappingTreePaths fails for a malformed Git tree that names one
-// path twice, or a path below another file. Git never writes such a tree.
-// Written in parallel, a symlink entry could otherwise redirect the write of
-// the other entry outside the snapshot. files must be sorted by name.
-func rejectOverlappingTreePaths(files []object.File) error {
-	names := make(map[string]struct{}, len(files))
-	for i := range files {
-		name := files[i].Name
-		if _, ok := names[name]; ok {
-			return fmt.Errorf("git tree names path %q more than once", name)
-		}
-		names[name] = struct{}{}
-	}
-	for i := range files {
-		for dir := path.Dir(files[i].Name); dir != "." && dir != "/"; dir = path.Dir(dir) {
-			if _, ok := names[dir]; ok {
-				return fmt.Errorf("git tree path %q is below the file %q", files[i].Name, dir)
-			}
-		}
-	}
-	return nil
-}
-
-func writeSnapshotFile(target string, file *object.File) error {
-	reader, err := file.Reader()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = reader.Close() }()
-
-	mode := os.FileMode(0o644)
-	if file.Mode == filemode.Executable {
-		mode = 0o755
-	}
-	// O_NOFOLLOW fails on a symlink at target, so a write never goes
-	// through one. An existing regular file is truncated, as before: on a
-	// case-insensitive filesystem, README.md and readme.md name one file,
-	// and the last write wins.
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|openNoFollow, mode)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(out, reader)
-	closeErr := out.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	return closeErr
-}
-
-// mkdirSnapshotParents creates dir and every directory between root and it,
-// one component at a time. It refuses a component that exists as a symlink
-// or as anything but a directory, so it never creates a directory through a
-// symlink, outside the snapshot. os.MkdirAll follows symlinks, so on a
-// case-insensitive filesystem a parallel worker that wrote the symlink "A"
-// could make it create "a/x" outside the snapshot before any later check.
-// os.Mkdir does not follow a symlink at its own path: it fails because the
-// path exists, and the check that follows refuses it.
-func mkdirSnapshotParents(root, dir string) error {
-	rel, err := filepath.Rel(root, dir)
-	if err != nil || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) {
-		return fmt.Errorf("snapshot destination %q escapes snapshot root %q", dir, root)
-	}
-	if rel == "." {
-		return nil
-	}
-	current := root
-	for component := range strings.SplitSeq(rel, string(os.PathSeparator)) {
-		current = filepath.Join(current, component)
-		if err := os.Mkdir(current, 0o755); err != nil && !os.IsExist(err) {
-			return err
-		}
-		info, err := os.Lstat(current)
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return fmt.Errorf("snapshot destination %q is not a directory inside snapshot root %q", current, root)
-		}
-	}
-	return nil
-}
-
-func validateSnapshotWriteParent(root, parent string) error {
-	inside, _, err := pathsafety.IsInsideAny(parent, []string{root})
-	if err != nil {
-		return err
-	}
-	if !inside {
-		return fmt.Errorf("snapshot destination %q escapes snapshot root %q", parent, root)
-	}
-	return nil
-}
-
-func validateSnapshotSymlinkTarget(root, linkPath, target string) error {
-	if target == "" {
-		return fmt.Errorf("symlink target must not be empty")
-	}
-	if filepath.IsAbs(target) {
-		return fmt.Errorf("symlink target %q must be relative", target)
-	}
-	resolvedTarget := filepath.Clean(filepath.Join(filepath.Dir(linkPath), target))
-	inside, _, err := pathsafety.IsInsideAny(resolvedTarget, []string{root})
-	if err != nil {
-		return err
-	}
-	if !inside {
-		return fmt.Errorf("symlink target %q escapes snapshot root", target)
-	}
-	return nil
 }
