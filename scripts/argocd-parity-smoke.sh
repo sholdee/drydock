@@ -250,6 +250,11 @@ NAMESPACE_DISABLED_APPLICATIONSET="parity-appset-namespace-disabled"
 # spec.sourceHydrator.syncSource.path is ".". It lives outside repo/, so the
 # main inventory never sees it (assert_crd_rejected_application).
 CRD_REJECTED_DIR="${REPO_ROOT}/testdata/argocd-parity/crd-rejected"
+# A generated Application whose AppProject is missing, a recorded
+# divergence that run_missing_project_smoke checks on its own directory.
+MISSING_PROJECT_DIR="${REPO_ROOT}/testdata/argocd-parity/missing-project"
+MISSING_PROJECT_APPLICATIONSET="parity-validation-missing-project"
+MISSING_PROJECT_MESSAGE="application references project parity-missing-project which does not exist"
 CRD_REJECTED_APPLICATION="parity-crd-sync-path-dot"
 CRD_REJECTED_MESSAGE="Invalid value: \".\": spec.sourceHydrator.syncSource.path in body should match"
 # The HTTP Helm repository fixture. A second container in the registry Pod
@@ -416,6 +421,14 @@ APPLICATIONS=(
   # parity-empty-project-dropped renders an empty spec.project, which the
   # ApplicationSet controller cannot find, so only this one exists.
   parity-empty-project-kept
+  # A matrix child's own selector is not interpolated, so no
+  # parity-matrix-selector-templated-* name exists. A selector inside a
+  # merge child is, so it keeps only inner-dev.
+  parity-matrix-selector-inner-dev
+  # One spec.generators entry that sets both list and matrix generates
+  # from both.
+  parity-two-fields-list
+  parity-two-fields-matrix
   # Cluster generator over cluster Secrets with reserved annotations.
   parity-cluster-alpha
   parity-cluster-beta
@@ -523,11 +536,20 @@ APP_REVISION_TAG_OBJECT_ABSENT=(
   parity-app-revision-annotated-tag-single
 )
 
-# ApplicationSets that Argo CD must reject, as "name|text" pairs. Before the
-# inventory checks, the smoke waits for each one to have an ErrorOccurred
-# condition with status True and a message that contains the text. Without
-# this wait, a missing Application could also mean that the ApplicationSet
-# has not reconciled yet.
+# ApplicationSets that Argo CD must reject, as "name|text|code|path"
+# entries. Before the inventory checks, the smoke waits for each one to have
+# an ErrorOccurred condition with status True and a message that contains
+# the text. Without this wait, a missing Application could also mean that
+# the ApplicationSet has not reconciled yet. When an entry has a code,
+# drydock must warn with that code for the ApplicationSet file at path, and
+# the warning must contain the same text (compare_applicationset_errors).
+# The template render failure has no code here because its drydock warning
+# spans several lines.
+#
+# The parity-gen-error-* ApplicationSets each fail in one generator. Argo CD
+# then generates nothing for the whole ApplicationSet, so none of their
+# Applications are in APPLICATIONS. run_missing_project_smoke checks the
+# missing AppProject case on its own.
 #
 # A matrix or merge param type clash cannot be listed here. Argo CD v3.6.1
 # panics in that merge, and Reconcile recovers the panic and returns before
@@ -535,7 +557,14 @@ APP_REVISION_TAG_OBJECT_ABSENT=(
 # (applicationset/controllers/applicationset_controller.go:123-133), so there
 # is no condition to wait for.
 APPLICATIONSET_ERRORS=(
-  "parity-cluster-sprig-map-function|got map[string]string"
+  "parity-cluster-sprig-map-function|got map[string]string||"
+  "parity-gen-error-elements-yaml|error unmarshling decoded ElementsYaml|appset.generator-failed|applicationsets/generator-error-elements-yaml.yaml"
+  "parity-gen-error-empty-child|failed to get params for second generator in the matrix generator: child generator generated no parameters|appset.generator-failed|applicationsets/generator-error-empty-child.yaml"
+  "parity-gen-error-nested-too-deep|failed to get params for second generator in the matrix generator: child generator returned an error on parameter generation: failed to get params for second generator in the matrix generator: child generator generated no parameters|appset.generator-failed|applicationsets/generator-error-nested-too-deep.yaml"
+  "parity-gen-error-selector|error parsing label selector: \"Sometimes\" is not a valid pod selector operator|appset.generator-failed|applicationsets/generator-error-selector.yaml"
+  "parity-gen-error-merge-keys|error getting param sets by merge key: the parameters from a generator were not unique by the given mergeKeys, Merge requires all param sets to be unique. Duplicate key was {\"suffix\":\"merged\"}|appset.generator-failed|applicationsets/generator-error-merge-keys.yaml"
+  "parity-gen-error-matrix-count|found less than two generators, Matrix support only two|appset.generator-failed|applicationsets/generator-error-matrix-count.yaml"
+  "parity-gen-error-cluster-selector|error getting cluster secrets: error converting label selector: values[0][parity.drydock.dev/role]: Invalid value: \"https://alpha.parity-clusters.invalid\"|appset.generator-failed|applicationsets/generator-error-cluster-selector.yaml"
 )
 
 # RollingSync ApplicationSets, as "name|type|status|reason|message|code"
@@ -1731,11 +1760,94 @@ wait_for_applicationset_error() {
 }
 
 wait_for_applicationset_errors() {
-  local entry appset expected
+  local entry appset expected _code _path
   for entry in "${APPLICATIONSET_ERRORS[@]}"; do
-    IFS='|' read -r appset expected <<< "${entry}"
+    IFS='|' read -r appset expected _code _path <<< "${entry}"
     wait_for_applicationset_error "${appset}" "${expected}"
   done
+}
+
+# compare_applicationset_errors checks the drydock side of
+# APPLICATIONSET_ERRORS: for each entry with a code, the get apps stderr
+# that capture_drydock_applications keeps must hold a warning with that
+# code for the ApplicationSet file, with the Argo CD text in it.
+# run_missing_project_smoke checks a recorded divergence. It applies
+# MISSING_PROJECT_DIR after the main comparisons, so its Applications stay
+# out of the main inventory. Argo CD must report the missing AppProject in an
+# ErrorOccurred condition, create parity-missing-project-kept, and not
+# create parity-missing-project-dropped. drydock does not know the AppProjects
+# of the cluster offline, so it must keep both Applications and warn
+# project.missing for parity-missing-project-dropped, with the note that the
+# ApplicationSet controller does not create it, once in diag and once in
+# build.
+run_missing_project_smoke() {
+  local output_dir list_file list_stderr diag_file diag_stderr build_stderr names count
+  # drydock diag and build write their warnings to stderr.
+  log_step "Checking a generated Application whose AppProject is missing"
+  kubectl apply -f "${MISSING_PROJECT_DIR}" >/dev/null
+  wait_for_applicationset_error "${MISSING_PROJECT_APPLICATIONSET}" "${MISSING_PROJECT_MESSAGE}"
+  wait_for_application argocd parity-missing-project-kept
+  if kubectl -n argocd get application parity-missing-project-dropped >/dev/null 2>&1; then
+    fail "Argo CD created parity-missing-project-dropped, whose AppProject does not exist"
+  fi
+  output_dir="$(artifact_dir missing-project)"
+  list_file="${output_dir}/drydock-apps.txt"
+  list_stderr="${output_dir}/drydock-apps.stderr"
+  diag_file="${output_dir}/drydock-diag.txt"
+  diag_stderr="${output_dir}/drydock-diag.stderr"
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" get apps \
+    --path "${MISSING_PROJECT_DIR}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --offline > "${list_file}" 2> "${list_stderr}"); then
+    cat "${list_stderr}" >&2 || true
+    fail "drydock get apps on ${MISSING_PROJECT_DIR} failed; see ${list_stderr}"
+  fi
+  names="$(awk 'NR > 1 { print $2 }' "${list_file}" | sort | tr '\n' ' ')"
+  [[ "${names}" == "parity-missing-project-dropped parity-missing-project-kept " ]] \
+    || fail "drydock listed '${names}' for ${MISSING_PROJECT_DIR}; want both Applications (recorded divergence); see ${list_file}"
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diag \
+    --path "${MISSING_PROJECT_DIR}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --offline > "${diag_file}" 2> "${diag_stderr}"); then
+    cat "${diag_stderr}" >&2 || true
+    fail "drydock diag on ${MISSING_PROJECT_DIR} failed; see ${diag_stderr}"
+  fi
+  grep -F "warning project.missing: Application argocd/parity-missing-project-dropped references missing AppProject \"parity-missing-project\"; ApplicationSet argocd/${MISSING_PROJECT_APPLICATIONSET} generates it, and the Argo CD ApplicationSet controller does not create or update it unless that AppProject exists in the cluster" "${diag_stderr}" >/dev/null \
+    || fail "drydock did not warn project.missing for parity-missing-project-dropped with the ApplicationSet controller note; see ${diag_stderr}"
+  if grep -F "warning " "${diag_stderr}" | grep -qF "parity-missing-project-kept"; then
+    fail "drydock warned for parity-missing-project-kept, whose AppProject exists; see ${diag_stderr}"
+  fi
+  # build validates the AppProject before and after rendering. Both checks
+  # give the same text, so exactly one warning must remain.
+  build_stderr="${output_dir}/drydock-build.stderr"
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build apps \
+    --path "${MISSING_PROJECT_DIR}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --offline > "${output_dir}/drydock-build.yaml" 2> "${build_stderr}"); then
+    cat "${build_stderr}" >&2 || true
+    fail "drydock build apps on ${MISSING_PROJECT_DIR} failed; see ${build_stderr}"
+  fi
+  count="$(grep -cF "warning project.missing: Application argocd/parity-missing-project-dropped " "${build_stderr}" || true)"
+  [[ "${count}" == "1" ]] \
+    || fail "drydock build apps gave ${count} project.missing warnings for parity-missing-project-dropped; want exactly one; see ${build_stderr}"
+  kubectl delete -f "${MISSING_PROJECT_DIR}" --wait=false >/dev/null || true
+  echo "Missing AppProject: Argo CD drops the Application, drydock keeps it and warns project.missing (recorded divergence)" >&2
+}
+
+compare_applicationset_errors() {
+  local stderr_file="${OUT_DIR}/applications/drydock.stderr"
+  local entry appset expected code path checked=0
+  log_step "Comparing Argo CD ApplicationSet errors with drydock warnings"
+  for entry in "${APPLICATIONSET_ERRORS[@]}"; do
+    IFS='|' read -r appset expected code path <<< "${entry}"
+    [[ -n "${code}" ]] || continue
+    if ! grep -F "warning ${code}: " "${stderr_file}" | grep -F "(path: ${path}," | grep -qF "${expected}"; then
+      grep -E '^warning appset\.' "${stderr_file}" >&2 || echo "(no appset warnings)" >&2
+      fail "drydock did not warn ${code} for ApplicationSet argocd/${appset} (${path}) with the Argo CD text \"${expected}\"; see ${stderr_file}"
+    fi
+    checked=$((checked + 1))
+  done
+  echo "ApplicationSet errors: ${checked} drydock warnings match" >&2
 }
 
 # applicationset_condition prints "<status>|<reason>|<message>" for the
@@ -3200,6 +3312,7 @@ main() {
   assert_namespace_gate
   assert_crd_rejected_application
   compare_rolling_sync_conditions
+  compare_applicationset_errors
   compare_avp_oracle_manifests
   compare_tracking_manifests
   run_live_diff_smoke
@@ -3211,6 +3324,7 @@ main() {
   fi
   run_source_type_gates_smoke
   run_kustomize_build_options_smoke
+  run_missing_project_smoke
   echo "Argo CD render parity smoke complete: ${OUT_DIR}" >&2
 }
 

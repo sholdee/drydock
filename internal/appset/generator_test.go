@@ -612,7 +612,7 @@ func TestGenerateListGeneratorRejectsNonStringFasttemplateElements(t *testing.T)
 			element: `
           - name: alpha
             replicas: 2`,
-			wantText: `field "replicas" must be a string`,
+			wantText: "error parsing value as string %!w(<nil>)",
 		},
 		{
 			name: "nested values",
@@ -620,7 +620,7 @@ func TestGenerateListGeneratorRejectsNonStringFasttemplateElements(t *testing.T)
           - name: beta
             values:
               region: true`,
-			wantText: "values.region must be a string",
+			wantText: "error parsing value as string %!w(<nil>)",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -639,13 +639,8 @@ spec:
       name: '{{name}}'
 `)
 
-			_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
-			if err == nil {
-				t.Fatal("GenerateFromYAML() error = nil, want non-string list element failure")
-			}
-			if !strings.Contains(err.Error(), tt.wantText) {
-				t.Fatalf("error = %v, want %q", err, tt.wantText)
-			}
+			apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+			requireGeneratorFailed(t, apps, diags, err, tt.wantText)
 		})
 	}
 }
@@ -836,7 +831,7 @@ spec:
 	}
 }
 
-func TestGenerateListGeneratorElementsYamlNonMappingReturnsDiagnostic(t *testing.T) {
+func TestGenerateListGeneratorElementsYamlNonMappingFailsApplicationSet(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -854,15 +849,7 @@ spec:
 `)
 
 	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
-	if err != nil {
-		t.Fatalf("GenerateFromYAML() error = %v", err)
-	}
-	if len(apps) != 0 {
-		t.Fatalf("generated apps = %#v, want none", apps)
-	}
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "elementsYaml entries must be mappings") {
-		t.Fatalf("diagnostics = %#v, want elementsYaml mapping diagnostic", diags)
-	}
+	requireGeneratorFailed(t, apps, diags, err, "error unmarshling decoded ElementsYaml")
 }
 func TestGenerateListGeneratorElementsYamlAllowsEmptyMapping(t *testing.T) {
 	root := t.TempDir()
@@ -1050,13 +1037,5 @@ func TestGeneratorFromNestedCarriesOciGenerator(t *testing.T) {
 	}
 	if generator.Oci != oci {
 		t.Fatalf("generatorFromNested().Oci = %#v, want the nested oci generator", generator.Oci)
-	}
-	supported, err := supportedGeneratorTree(generator, Options{})
-	if err != nil || supported {
-		t.Fatalf("supportedGeneratorTree(oci, no fetcher) = %v, %v; want unsupported", supported, err)
-	}
-	supported, err = supportedGeneratorTree(generator, Options{OCI: &fakeOCIFetcher{}})
-	if err != nil || !supported {
-		t.Fatalf("supportedGeneratorTree(oci, fetcher) = %v, %v; want supported", supported, err)
 	}
 }

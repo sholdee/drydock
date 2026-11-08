@@ -206,8 +206,29 @@ comment-only param file while the template references file params under
 and rendering the template against it fails. Use `[]` as the param file
 content when a match should generate nothing.
 
-Generator evaluation failures — file IO, source acquisition, and invalid
-ApplicationSet YAML — remain fatal to the run.
+## Generator Errors
+
+Some generator errors are not template errors, but Argo CD v3.6.1 still
+reports them as an `ErrorOccurred` condition and generates no Applications
+for the whole ApplicationSet. drydock warns `appset.generator-failed` with
+the Argo CD message, and that ApplicationSet contributes zero Applications.
+Other ApplicationSets render normally. `--strict` promotes the warning to an
+error. These errors are:
+
+- A list element that does not decode, or an `elementsYaml` that is not a
+  YAML list of mappings.
+- A matrix that does not have exactly two children, or a merge with fewer
+  than two children, no merge keys, or a repeated merge key value.
+- A matrix or merge child that names no generator, such as `{}` or a matrix
+  nested one level too deep (`child generator generated no parameters`), or
+  that names more than one.
+- A generator selector that does not parse.
+- A pull request or SCM provider filter regexp that does not compile, and a
+  cluster or `clusterDecisionResource` selector that Argo CD rejects. These
+  checks need only the spec, so they also run without provider fixtures.
+
+Other generator evaluation failures, such as file IO, source acquisition, and
+invalid ApplicationSet YAML, stop the run.
 
 In diffs, a failing ApplicationSet contributes zero desired Applications on
 that side. When the failure exists on only one side, the diff reports that
@@ -224,6 +245,14 @@ controller after all templates render:
 - When several generated Applications share a name, every Application with
   that name is omitted, not only the later ones; Argo CD keys validation
   errors by Application name.
+
+The controller then looks up the AppProject of each generated Application
+and does not create one whose AppProject does not exist in the cluster.
+drydock does not know the AppProjects of the cluster offline, so it keeps
+such an Application. When the repository declares other AppProjects but not
+the named one, the `project.missing` warning names the ApplicationSet and
+says that the ApplicationSet controller does not create the Application
+unless that AppProject exists in the cluster.
 
 Each failure emits an `appset.application-validation-failed` warning carrying
 Argo CD's message, and the ApplicationSet's other Applications still
@@ -297,7 +326,9 @@ identities, URL-like fixture paths, and malformed files produce
 `appset.provider-fixture-invalid`. If fixtures are supplied but no entries match
 a provider generator, drydock emits `appset.provider-no-match`. Filters that
 cannot be evaluated from fixture data fail closed with
-`appset.provider-unsupported-filter`.
+`appset.provider-unsupported-filter`. A filter that Argo CD itself rejects,
+such as a regexp that does not compile, fails the ApplicationSet with
+`appset.generator-failed` (see Generator Errors).
 
 ```yaml
 clusters:

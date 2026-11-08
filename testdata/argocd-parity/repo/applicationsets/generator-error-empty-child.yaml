@@ -1,0 +1,38 @@
+# A matrix child that names no generator. Argo CD v3.6.1 finds no generator
+# in it and fails with "child generator generated no parameters"
+# (applicationset/generators/matrix.go:129-131).
+# Argo CD v3.6.1 then fails the whole ApplicationSet with an ErrorOccurred
+# condition, so the sibling list generator generates nothing either, and
+# no parity-gen-error-empty-child-* name exists. drydock must warn
+# appset.generator-failed and generate none. APPLICATIONSET_ERRORS in the
+# smoke waits for the condition.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-gen-error-empty-child
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - suffix: sibling
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - suffix: matrix
+          - {}
+  template:
+    metadata:
+      name: "parity-gen-error-empty-child-{{.suffix}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/validation/empty-name-alpha
+      destination:
+        name: in-cluster
+        namespace: "parity-gen-error-empty-child-{{.suffix}}"

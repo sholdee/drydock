@@ -1,0 +1,39 @@
+# The second element renders an Application whose AppProject does not
+# exist. The Argo CD v3.6.1 ApplicationSet controller does not create it,
+# sets an ErrorOccurred condition with reason ApplicationValidationError,
+# and still creates the first one
+# (applicationset/controllers/applicationset_controller.go:627-633).
+#
+# This is a recorded divergence. drydock does not know the AppProjects of
+# the cluster offline, so it keeps the second Application and warns
+# project.missing with a note that the ApplicationSet controller does not
+# create it. run_missing_project_smoke applies this directory after the
+# main comparisons, so its Applications stay out of the main inventory, and
+# runs drydock on this directory alone.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-validation-missing-project
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - suffix: kept
+            project: default
+          - suffix: dropped
+            project: parity-missing-project
+  template:
+    metadata:
+      name: "parity-missing-project-{{.suffix}}"
+    spec:
+      project: "{{.project}}"
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/validation/empty-name-alpha
+      destination:
+        name: in-cluster
+        namespace: "parity-missing-project-{{.suffix}}"

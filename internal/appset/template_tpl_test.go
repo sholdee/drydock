@@ -281,7 +281,7 @@ func TestGenerateTplMatrixInterpolationFailureIsAppSetScoped(t *testing.T) {
 	writeAppsetTestFile(t, filepath.Join(root, "apps", "dev", "alpha", "kustomization.yaml"), "resources: []\n")
 
 	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", tplMatrixAppSet(`{{ tpl "apps/{{ .missing }}" . }}`))
-	assertTplTemplateRenderFailure(t, apps, diags, err, "interpolate nested generator")
+	assertTplTemplateRenderFailure(t, apps, diags, err, "child generator returned an error on parameter generation: failed to replace parameters in generator")
 }
 
 func TestGenerateGeneratorTemplateFailureDropsOtherGeneratorsApplications(t *testing.T) {

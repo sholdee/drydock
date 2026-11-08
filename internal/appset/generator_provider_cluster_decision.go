@@ -7,10 +7,14 @@ import (
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
 func evaluateClusterDecisionResourceGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if err := validateClusterDecisionResourceGenerator(generator.ClusterDecisionResource); err != nil {
+		return nil, nil, true, &generatorParamsError{err: err}
+	}
 	if !ctx.Options.Provider.Supplied() {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -32,17 +36,26 @@ func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.
 	if len(data.ClusterDecisions) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
 	}
-	if err := validateClusterDecisionResourceGenerator(generator); err != nil {
-		return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, err.Error())}, nil
-	}
 
 	clustersByName := clusterInputsByName(data.Clusters)
-	out, diag, err := clusterDecisionResourceInputParamSets(manifestPath, generator, data.ClusterDecisions, clustersByName, useGoTemplate)
+	out, matchedResource, diag, err := clusterDecisionResourceInputParamSets(manifestPath, generator, data.ClusterDecisions, clustersByName, useGoTemplate)
 	if diag != nil {
 		return nil, []diagnostic.Diagnostic{*diag}, nil
 	}
 	if err != nil {
 		return nil, nil, err
+	}
+	if !matchedResource {
+		if !clusterDecisionFixtureHasConfigMapRef(data.ClusterDecisions, generator.ConfigMapRef) {
+			// The fixture holds no decision resources for this
+			// configMapRef, so it does not describe them.
+			return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
+		}
+		// Argo CD v3.6.1 fails the ApplicationSet when it lists no
+		// decision resource (applicationset/generators/duck_type.go:129-132).
+		// The fixture holds decision resources for this configMapRef, but
+		// none of them is the one this generator names or selects.
+		return nil, nil, &generatorParamsError{err: errors.New("no clusterDecisionResources found")}
 	}
 	if len(out) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
@@ -50,16 +63,40 @@ func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.
 	return out, nil, nil
 }
 
-func validateClusterDecisionResourceGenerator(generator *argoappv1.DuckTypeGenerator) error {
-	hasLabelSelector := len(generator.LabelSelector.MatchLabels) > 0 || len(generator.LabelSelector.MatchExpressions) > 0
-	switch {
-	case generator.Name == "" && !hasLabelSelector:
-		return errors.New("clusterDecisionResource must set exactly one of name or labelSelector with provider fixtures")
-	case generator.Name != "" && hasLabelSelector:
-		return errors.New("clusterDecisionResource cannot combine name and labelSelector with provider fixtures")
-	default:
-		return nil
+// clusterDecisionFixtureHasConfigMapRef reports whether the fixture holds a
+// decision resource for configMapRef.
+func clusterDecisionFixtureHasConfigMapRef(inputs []ClusterDecisionInput, configMapRef string) bool {
+	for _, input := range inputs {
+		if input.ConfigMapRef == configMapRef {
+			return true
+		}
 	}
+	return false
+}
+
+// validateClusterDecisionResourceGenerator mirrors the definition check of
+// the Argo CD v3.6.1 clusterDecisionResource generator
+// (applicationset/generators/duck_type.go:99-104): exactly one of name and
+// labelSelector, where a labelSelector counts as set when matchLabels or
+// matchExpressions is present, even empty. Argo CD then lists the decision
+// resources with metav1.FormatLabelSelector of the selector
+// (duck_type.go:113-127). That gives "<none>" for an empty selector and
+// "<error>" for one that does not parse, and the API server rejects both,
+// so the list call fails. drydock parses the same text with labels.Parse,
+// as the API server does. The checks need only the spec, so they run also
+// without provider fixtures.
+func validateClusterDecisionResourceGenerator(generator *argoappv1.DuckTypeGenerator) error {
+	hasLabelSelector := generator.LabelSelector.MatchLabels != nil || generator.LabelSelector.MatchExpressions != nil
+	if (generator.Name == "" && !hasLabelSelector) || (generator.Name != "" && hasLabelSelector) {
+		return errors.New("there is a problem with the definition of the ClusterDecisionResource generator")
+	}
+	if generator.Name == "" {
+		formatted := metav1.FormatLabelSelector(generator.LabelSelector.DeepCopy())
+		if _, err := labels.Parse(formatted); err != nil {
+			return fmt.Errorf("failed to get dynamic resources: %w", err)
+		}
+	}
+	return nil
 }
 
 func clusterInputsByName(clusters []ClusterInput) map[string]ClusterInput {
@@ -70,24 +107,26 @@ func clusterInputsByName(clusters []ClusterInput) map[string]ClusterInput {
 	return clustersByName
 }
 
-func clusterDecisionResourceInputParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, inputs []ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool) ([]generatorParamSet, *diagnostic.Diagnostic, error) {
+func clusterDecisionResourceInputParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, inputs []ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool) ([]generatorParamSet, bool, *diagnostic.Diagnostic, error) {
 	var out []generatorParamSet
+	matchedResource := false
 	for _, input := range inputs {
 		matched, err := clusterDecisionResourceMatches(generator, input)
 		if err != nil {
 			diag := providerUnsupportedFilterDiagnostic(manifestPath, err.Error())
-			return nil, &diag, nil
+			return nil, false, &diag, nil
 		}
 		if !matched {
 			continue
 		}
+		matchedResource = true
 		paramSets, err := clusterDecisionResourceDecisionParamSets(generator, input, clustersByName, useGoTemplate)
 		if err != nil {
-			return nil, nil, err
+			return nil, true, nil, err
 		}
 		out = append(out, paramSets...)
 	}
-	return out, nil, nil
+	return out, matchedResource, nil, nil
 }
 
 func clusterDecisionResourceDecisionParamSets(generator *argoappv1.DuckTypeGenerator, input ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool) ([]generatorParamSet, error) {

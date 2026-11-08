@@ -32,9 +32,11 @@ func applyGeneratorSelector(manifestPath string, selectorSpec *metav1.LabelSelec
 	if selectorSpec == nil {
 		return paramSets, nil, nil
 	}
+	// Argo CD v3.6.1 Transform fails the ApplicationSet when the selector
+	// does not parse (applicationset/generators/generator_spec_processor.go:34-37).
 	selector, err := appsetutils.LabelSelectorAsSelector(selectorSpec)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse generator selector: %w", err)
+		return nil, nil, &generatorParamsError{err: fmt.Errorf("error parsing label selector: %w", err)}
 	}
 	filtered := make([]generatorParamSet, 0, len(paramSets))
 	for _, paramSet := range paramSets {
@@ -48,8 +50,7 @@ func applyGeneratorSelector(manifestPath string, selectorSpec *metav1.LabelSelec
 func applyProviderGeneratorSelector(manifestPath, kind string, selectorSpec *metav1.LabelSelector, paramSets []generatorParamSet) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
 	filtered, diags, err := applyGeneratorSelector(manifestPath, selectorSpec, paramSets)
 	if err != nil {
-		diags = append(diags, providerUnsupportedFilterDiagnostic(manifestPath, fmt.Sprintf("%s selector: %v", kind, err)))
-		return nil, diags, nil
+		return nil, diags, err
 	}
 	if selectorSpec != nil && len(paramSets) > 0 && len(filtered) == 0 {
 		diags = append(diags, providerNoMatchDiagnostic(manifestPath, kind))

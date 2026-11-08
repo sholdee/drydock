@@ -19,6 +19,18 @@ const (
 )
 
 func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings) []diagnostic.Diagnostic {
+	return ValidateGeneratedApplications(apps, projects, settings, nil)
+}
+
+// ValidateGeneratedApplications is ValidateApplications with generatedBy,
+// which returns the ApplicationSet that generated an Application, or ""
+// for an Application that no ApplicationSet generated. The project.missing
+// warning of a generated Application then says that the Argo CD
+// ApplicationSet controller does not create it unless its AppProject exists
+// in the cluster (applicationset/controllers/applicationset_controller.go:626-633).
+// drydock does not know the AppProjects of the cluster offline, so it keeps
+// the Application.
+func ValidateGeneratedApplications(apps []argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings, generatedBy func(argoappv1.Application) string) []diagnostic.Diagnostic {
 	if len(apps) == 0 {
 		return nil
 	}
@@ -43,7 +55,7 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 				proj = implicitDefaultProject()
 				diags = append(diags, unresolvedProjectWarning(app, projectName))
 			default:
-				diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s references missing AppProject %q", applicationName(app), projectName)))
+				diags = append(diags, projectWarning(app, missingProjectMessage(app, projectName, generatedBy)))
 				continue
 			}
 		}
@@ -62,6 +74,20 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 	}
 
 	return dedupeDiagnostics(diags)
+}
+
+// missingProjectMessage is the project.missing message. Its "references
+// missing AppProject" substring is the stable-code dispatch key.
+func missingProjectMessage(app argoappv1.Application, projectName string, generatedBy func(argoappv1.Application) string) string {
+	message := fmt.Sprintf("Application %s references missing AppProject %q", applicationName(app), projectName)
+	if generatedBy == nil {
+		return message
+	}
+	appSet := generatedBy(app)
+	if appSet == "" {
+		return message
+	}
+	return fmt.Sprintf("%s; ApplicationSet %s generates it, and the Argo CD ApplicationSet controller does not create or update it unless that AppProject exists in the cluster", message, appSet)
 }
 
 // ByName indexes projects the way validation looks an Application's

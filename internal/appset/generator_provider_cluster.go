@@ -9,10 +9,14 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
 func evaluateClustersGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if err := clusterGeneratorSpecError(generator.Clusters); err != nil {
+		return nil, nil, true, err
+	}
 	if !ctx.Options.Provider.Supplied() {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -30,14 +34,31 @@ func evaluateClustersGenerator(ctx generatorContext, generator argoappv1.Applica
 	return paramSets, diags, true, err
 }
 
+// clusterGeneratorSpecError mirrors the selector check of the Argo CD v3.6.1
+// cluster generator. It lists the cluster Secrets with
+// metav1.LabelSelectorAsSelector, which also checks label values, and fails
+// the ApplicationSet when the selector does not parse
+// (applicationset/generators/cluster.go:62-66 and :194-198). The check
+// needs only the spec, so it runs also without provider fixtures.
+func clusterGeneratorSpecError(clusters *argoappv1.ClusterGenerator) error {
+	selector := metav1.AddLabelToSelector(clusters.Selector.DeepCopy(), argocommon.LabelKeySecretType, argocommon.LabelValueSecretTypeCluster)
+	if _, err := metav1.LabelSelectorAsSelector(selector); err != nil {
+		return &generatorParamsError{err: fmt.Errorf("error getting cluster secrets: error converting label selector: %w", err)}
+	}
+	return nil
+}
+
 func clusterGeneratorParamSets(manifestPath string, clusters *argoappv1.ClusterGenerator, inputs []ClusterInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	if err := clusterGeneratorSpecError(clusters); err != nil {
+		return nil, nil, err
+	}
 	if len(inputs) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusters")}, nil
 	}
 
 	selector, err := appsetutils.LabelSelectorAsSelector(&clusters.Selector)
 	if err != nil {
-		return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, fmt.Sprintf("clusters selector: %v", err))}, nil
+		return nil, nil, &generatorParamsError{err: fmt.Errorf("error getting cluster secrets: error converting label selector: %w", err)}
 	}
 
 	var out []generatorParamSet

@@ -190,7 +190,7 @@ spec:
 	}
 }
 
-func TestGenerateClusterDecisionResourceRequiresNameOrLabelSelector(t *testing.T) {
+func TestGenerateClusterDecisionResourceWithoutNameOrLabelSelectorFailsApplicationSet(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -218,15 +218,7 @@ spec:
 			Decisions:     []map[string]any{{"clusterName": "prod-a"}},
 		}},
 	}}})
-	if err != nil {
-		t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
-	}
-	if len(apps) != 0 {
-		t.Fatalf("generated apps = %#v, want none", apps)
-	}
-	if len(diags) != 1 || diags[0].Code != "appset.provider-unsupported-filter" {
-		t.Fatalf("diagnostics = %#v, want unsupported filter diagnostic", diags)
-	}
+	requireGeneratorFailed(t, apps, diags, err, "there is a problem with the definition of the ClusterDecisionResource generator")
 }
 
 func TestGenerateClusterDecisionResourceAppliesLabelSelector(t *testing.T) {
@@ -291,7 +283,7 @@ spec:
 	}
 }
 
-func TestGenerateClusterDecisionResourceUnsupportedFilterFailsClosed(t *testing.T) {
+func TestGenerateClusterDecisionResourceNameAndLabelSelectorFailsApplicationSet(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -324,13 +316,72 @@ spec:
 			Decisions:     []map[string]any{{"clusterName": "prod-a"}},
 		}},
 	}}})
-	if err != nil {
-		t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
-	}
-	if len(apps) != 0 {
-		t.Fatalf("generated apps = %#v, want none", apps)
-	}
-	if len(diags) != 1 || diags[0].Code != "appset.provider-unsupported-filter" {
-		t.Fatalf("diagnostics = %#v, want unsupported filter diagnostic", diags)
-	}
+	requireGeneratorFailed(t, apps, diags, err, "there is a problem with the definition of the ClusterDecisionResource generator")
+}
+
+// Argo CD v3.6.1 counts a labelSelector as set when matchLabels is present,
+// even empty (applicationset/generators/duck_type.go:99-104), and fails the
+// ApplicationSet when it also sets a name.
+func TestGenerateClusterDecisionResourceNameAndEmptyMatchLabelsFailsApplicationSet(t *testing.T) {
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: decisions
+spec:
+  generators:
+    - list:
+        elements:
+          - name: sibling
+    - clusterDecisionResource:
+        configMapRef: placement-config
+        name: placement-a
+        labelSelector:
+          matchLabels: {}
+  template:
+    metadata:
+      name: '{{name}}'
+    spec:
+      project: default
+`)
+	apps, diags, err := GenerateFromYAMLWithOptions(t.TempDir(), "app-set.yaml", data, Options{Provider: ProviderOptions{Data: ProviderData{
+		Clusters: []ClusterInput{{Name: "prod-a", Server: "https://prod-a.example.invalid"}},
+		ClusterDecisions: []ClusterDecisionInput{{
+			ConfigMapRef: "placement-config", ResourceName: "placement-a", MatchKey: "clusterName", StatusListKey: "clusters",
+			Decisions: []map[string]any{{"clusterName": "prod-a"}},
+		}},
+	}}})
+	requireGeneratorFailed(t, apps, diags, err, "there is a problem with the definition of the ClusterDecisionResource generator")
+}
+
+// Argo CD v3.6.1 fails the ApplicationSet when the list of decision
+// resources is empty (duck_type.go:129-132).
+func TestGenerateClusterDecisionResourceNoResourceFailsApplicationSet(t *testing.T) {
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: decisions
+spec:
+  generators:
+    - list:
+        elements:
+          - name: sibling
+    - clusterDecisionResource:
+        configMapRef: placement-config
+        name: placement-missing
+  template:
+    metadata:
+      name: '{{name}}'
+    spec:
+      project: default
+`)
+	apps, diags, err := GenerateFromYAMLWithOptions(t.TempDir(), "app-set.yaml", data, Options{Provider: ProviderOptions{Data: ProviderData{
+		Clusters: []ClusterInput{{Name: "prod-a", Server: "https://prod-a.example.invalid"}},
+		ClusterDecisions: []ClusterDecisionInput{{
+			ConfigMapRef: "placement-config", ResourceName: "placement-a", MatchKey: "clusterName", StatusListKey: "clusters",
+			Decisions: []map[string]any{{"clusterName": "prod-a"}},
+		}},
+	}}})
+	requireGeneratorFailed(t, apps, diags, err, "no clusterDecisionResources found")
 }

@@ -27,6 +27,11 @@ const CodeAppSetInvalidRolloutConfig = "appset.invalid-rollout-config"
 // whether the Application that sets it exists.
 const CodeSettingsProgressiveSyncsCycle = "settings.progressive-syncs-cycle"
 
+// CodeAppSetGeneratorFailed reports a generator error that Argo CD
+// reports as an ErrorOccurred condition on the ApplicationSet. The
+// ApplicationSet then contributes no Applications.
+const CodeAppSetGeneratorFailed = "appset.generator-failed"
+
 // CodeAppSetRolloutNoSteps reports a RollingSync strategy with an empty
 // steps list while progressive syncs are on.
 const CodeAppSetRolloutNoSteps = "appset.rollout-no-steps"
@@ -189,6 +194,8 @@ func appSetCode(message string) string {
 		return "appset.unsupported-generator"
 	case strings.Contains(message, "template render failed"):
 		return "appset.template-render-failed"
+	case strings.Contains(message, "ApplicationSet generator failed"):
+		return CodeAppSetGeneratorFailed
 	case strings.Contains(message, "generated zero Applications"):
 		return "appset.generated-zero-applications"
 	case strings.Contains(message, "generated Application validation failed"):

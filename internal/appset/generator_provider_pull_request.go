@@ -5,13 +5,18 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
-	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/gosimple/slug"
+	"github.com/gosimple/unidecode"
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
 func evaluatePullRequestGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if err := compilePullRequestFilters(generator.PullRequest.Filters); err != nil {
+		return nil, nil, true, &generatorParamsError{err: fmt.Errorf("error listing repos: %w", err)}
+	}
 	if !ctx.Options.Provider.Supplied() {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -30,6 +35,9 @@ func evaluatePullRequestGenerator(ctx generatorContext, generator argoappv1.Appl
 }
 
 func pullRequestParamSets(manifestPath string, generator *argoappv1.PullRequestGenerator, inputs []PullRequestInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	if err := compilePullRequestFilters(generator.Filters); err != nil {
+		return nil, nil, &generatorParamsError{err: fmt.Errorf("error listing repos: %w", err)}
+	}
 	if len(inputs) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "pullRequest")}, nil
 	}
@@ -81,6 +89,31 @@ func pullRequestParamSets(manifestPath string, generator *argoappv1.PullRequestG
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "pullRequest")}, nil
 	}
 	return out, nil, nil
+}
+
+// compilePullRequestFilters mirrors compileFilters in Argo CD v3.6.1
+// (applicationset/services/pull_request/utils.go:11-37). ListPullRequests
+// compiles every filter before it lists pull requests, so a regexp that
+// does not compile fails the ApplicationSet whatever the provider returns.
+func compilePullRequestFilters(filters []argoappv1.PullRequestGeneratorFilter) error {
+	for _, filter := range filters {
+		if filter.BranchMatch != nil {
+			if _, err := regexp.Compile(*filter.BranchMatch); err != nil {
+				return fmt.Errorf("error compiling BranchMatch regexp %q: %w", *filter.BranchMatch, err)
+			}
+		}
+		if filter.TargetBranchMatch != nil {
+			if _, err := regexp.Compile(*filter.TargetBranchMatch); err != nil {
+				return fmt.Errorf("error compiling TargetBranchMatch regexp %q: %w", *filter.TargetBranchMatch, err)
+			}
+		}
+		if filter.TitleMatch != nil {
+			if _, err := regexp.Compile(*filter.TitleMatch); err != nil {
+				return fmt.Errorf("error compiling TitleMatch regexp %q: %w", *filter.TitleMatch, err)
+			}
+		}
+	}
+	return nil
 }
 
 func pullRequestMatchesScope(generator *argoappv1.PullRequestGenerator, input PullRequestInput) bool {
@@ -230,9 +263,9 @@ func pullRequestParams(input PullRequestInput, values map[string]string, useGoTe
 		"number":             strconv.Itoa(input.Number),
 		"title":              input.Title,
 		"branch":             input.Branch,
-		"branch_slug":        appsetutils.SlugifyName(50, false, input.Branch),
+		"branch_slug":        pullRequestBranchSlug(input.Branch),
 		"target_branch":      input.TargetBranch,
-		"target_branch_slug": appsetutils.SlugifyName(50, false, input.TargetBranch),
+		"target_branch_slug": pullRequestBranchSlug(input.TargetBranch),
 		"head_sha":           input.HeadSHA,
 		"head_short_sha":     shortString(input.HeadSHA, 8),
 		"head_short_sha_7":   shortString(input.HeadSHA, 7),
@@ -245,4 +278,74 @@ func pullRequestParams(input PullRequestInput, values map[string]string, useGoTe
 		return nil, err
 	}
 	return params, nil
+}
+
+// pullRequestSlugMaxLength is the slug.MaxLength that the Argo CD v3.6.1
+// pull request generator sets, to leave room in a 63-character DNS label
+// (applicationset/generators/pull_request.go:84-88).
+const pullRequestSlugMaxLength = 50
+
+var (
+	// pullRequestSlugCustomSub is the slug.CustomSub that the pull request
+	// generator sets (pull_request.go:90-93).
+	pullRequestSlugCustomSub = map[string]string{"_": "-"}
+	// pullRequestSlugEnglishSub is the "en" language table of
+	// github.com/gosimple/slug v1.15.0, which slug.Make uses: enSub with
+	// defaultSub merged in by the package init (languages_substitution.go:8-50).
+	// TestPullRequestBranchSlugMatchesSlugMakeForEveryRune compares it with
+	// slug.Make over every rune of the Basic Multilingual Plane, so a new
+	// slug release that changes the table fails the test.
+	pullRequestSlugEnglishSub = map[rune]string{
+		'&':  "and",
+		'@':  "at",
+		'"':  "",
+		'\'': "",
+		'’':  "",
+		'‒':  "-", // figure dash
+		'–':  "-", // en dash
+		'—':  "-", // em dash
+		'―':  "-", // horizontal bar
+	}
+	pullRequestSlugNonAuthorized  = regexp.MustCompile("[^a-zA-Z0-9-_]")
+	pullRequestSlugMultipleDashes = regexp.MustCompile("-+")
+)
+
+// pullRequestBranchSlug computes branch_slug and target_branch_slug as the
+// Argo CD v3.6.1 pull request generator does: slug.Make from
+// github.com/gosimple/slug v1.15.0 with MaxLength 50, "_" substituted by
+// "-", and the library defaults for every other option, so smart
+// truncation cuts after the last whole word and accented letters become
+// plain ASCII ("fix/café-crème" gives "fix-cafe-creme"). It does not call
+// slug.Make, because slug keeps its options in package variables that
+// appsetutils.SlugifyName (the slugify template function) also sets.
+//
+// Argo CD sets MaxLength and CustomSub before each run but leaves
+// EnableSmartTruncate as the last slugify call in the controller process
+// set it. This uses the library default, true, which holds unless a
+// template in the same controller calls slugify with smartTruncate false.
+func pullRequestBranchSlug(branch string) string {
+	out := strings.TrimSpace(branch)
+	out = slug.Substitute(out, pullRequestSlugCustomSub)
+	out = slug.SubstituteRune(out, pullRequestSlugEnglishSub)
+	out = unidecode.Unidecode(out)
+	out = strings.ToLower(out)
+	out = pullRequestSlugNonAuthorized.ReplaceAllString(out, "-")
+	out = pullRequestSlugMultipleDashes.ReplaceAllString(out, "-")
+	out = strings.Trim(out, "-_")
+	return pullRequestSlugSmartTruncate(out)
+}
+
+// pullRequestSlugSmartTruncate mirrors smartTruncate in
+// github.com/gosimple/slug v1.15.0: a slug longer than the limit is cut at
+// the last "-" at or before the limit, or at the limit when there is none.
+func pullRequestSlugSmartTruncate(text string) string {
+	if len(text) <= pullRequestSlugMaxLength {
+		return text
+	}
+	for i := pullRequestSlugMaxLength; i >= 0; i-- {
+		if text[i] == '-' {
+			return text[:i]
+		}
+	}
+	return text[:pullRequestSlugMaxLength]
 }

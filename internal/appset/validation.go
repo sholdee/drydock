@@ -57,6 +57,72 @@ func appsetGeneratorTemplateRenderDiagnostic(manifestPath string, err error) dia
 	}
 }
 
+// generatorParamsError marks a generator failure that Argo CD v3.6.1
+// returns from generators.Transform for a reason other than template
+// execution: a list element or elementsYaml that does not decode, a matrix
+// or merge with the wrong number of children, a child that names no
+// generator or more than one, missing or non-unique merge keys, a matrix
+// param clash, or a selector that does not parse.
+// template.GenerateApplications returns the first such error with reason
+// ApplicationParamsGenerationError, and the controller sets an
+// ErrorOccurred condition and reconciles no Applications for the
+// ApplicationSet (applicationset/controllers/applicationset_controller.go:207-224).
+// Other ApplicationSets are not affected, so GenerateWithOptions scopes the
+// failure to this ApplicationSet, like a template render failure.
+type generatorParamsError struct {
+	err error
+}
+
+func (e *generatorParamsError) Error() string {
+	return e.err.Error()
+}
+
+func (e *generatorParamsError) Unwrap() error {
+	return e.err
+}
+
+// paramsError wraps err as a generatorParamsError. It keeps an error that
+// is already scoped to the ApplicationSet as it is.
+func paramsError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := errors.AsType[*generatorParamsError](err); ok {
+		return err
+	}
+	if _, ok := errors.AsType[*generatorTemplateError](err); ok {
+		return err
+	}
+	return &generatorParamsError{err: err}
+}
+
+// wrapGeneratorError wraps err with format, as Argo CD wraps a generator
+// error on its way up, and keeps the scope of err: a generatorTemplateError
+// or generatorParamsError stays one, and any other error stays fatal.
+func wrapGeneratorError(err error, format string) error {
+	if templateErr, ok := errors.AsType[*generatorTemplateError](err); ok {
+		return &generatorTemplateError{err: fmt.Errorf(format, err), upstreamPanic: templateErr.upstreamPanic}
+	}
+	if _, ok := errors.AsType[*generatorParamsError](err); ok {
+		return &generatorParamsError{err: fmt.Errorf(format, err)}
+	}
+	return fmt.Errorf(format, err)
+}
+
+// appsetGeneratorFailedDiagnostic reports a generatorParamsError. The
+// "ApplicationSet generator failed" substring is the stable-code dispatch
+// key (appset.generator-failed).
+func appsetGeneratorFailedDiagnostic(manifestPath string, err error) diagnostic.Diagnostic {
+	diag := diagnostic.Diagnostic{
+		Severity:   diagnostic.SeverityWarning,
+		Category:   "appset",
+		Message:    fmt.Sprintf("ApplicationSet generator failed: %v; this ApplicationSet contributes no Applications (Argo CD reports the same failure as an ErrorOccurred condition and reconciles no Applications)", err),
+		Provenance: diagnostic.Provenance{Path: manifestPath, Pointer: "spec.generators"},
+	}
+	diag.Code = diagnostic.StableCode(diag)
+	return diag
+}
+
 // validateGeneratedApplications mirrors the name checks in Argo CD v3.6.1
 // ApplicationSetReconciler.validateGeneratedApplications
 // (applicationset/controllers/applicationset_controller.go). A generated
@@ -66,8 +132,10 @@ func appsetGeneratorTemplateRenderDiagnostic(manifestPath string, err error) dia
 // keeps only Applications whose key has no error, so every Application
 // sharing a duplicated name is dropped, not just the later ones. The
 // remaining Applications still generate. An empty spec.project fails the
-// AppProject lookup that follows. Other project and destination checks need
-// live AppProjects and clusters and stay with the project diagnostics.
+// AppProject lookup that follows. A named AppProject and the destination
+// check need the AppProjects and clusters of the cluster, which drydock
+// does not know offline, so they stay with the project diagnostics
+// (project.missing).
 func validateGeneratedApplications(manifestPath string, appset argoappv1.ApplicationSet, apps []GeneratedApplication) ([]GeneratedApplication, []diagnostic.Diagnostic) {
 	errorsByApp := map[string]generatedApplicationError{}
 	namesSet := map[string]bool{}

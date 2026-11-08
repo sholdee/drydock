@@ -2,8 +2,10 @@ package appset
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"strings"
+	"maps"
+	"slices"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -15,30 +17,34 @@ func evaluateListGenerator(ctx generatorContext, generator argoappv1.Application
 	if err != nil {
 		return nil, nil, true, err
 	}
-	paramSets, diags, err := listGeneratorParamSets(ctx.ManifestPath, generator.List, ctx.AppSet.Spec.GoTemplate)
+	paramSets, err := listGeneratorParamSets(generator.List, ctx.AppSet.Spec.GoTemplate)
 	if err != nil {
-		return nil, diags, true, err
+		return nil, nil, true, err
 	}
 	paramSets = setGeneratorTemplate(paramSets, template)
-	paramSets, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, generator.Selector, paramSets)
-	diags = append(diags, selectorDiags...)
+	paramSets, diags, err := applyGeneratorSelector(ctx.ManifestPath, generator.Selector, paramSets)
 	return paramSets, diags, true, err
 }
 
-func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator, useGoTemplate bool) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+// listGeneratorParamSets mirrors the Argo CD v3.6.1 list generator
+// (applicationset/generators/list.go:33-90). Every decode failure fails the
+// whole ApplicationSet there, so it is a generatorParamsError here: an
+// element that is not a mapping (an element written as null decodes to no
+// JSON at all, which does not decode either), a non-string value or a
+// non-mapping values field without goTemplate, and an elementsYaml that is
+// not a YAML list of mappings. An elementsYaml entry written as null is one
+// empty param set.
+func listGeneratorParamSets(list *argoappv1.ListGenerator, useGoTemplate bool) ([]generatorParamSet, error) {
 	out := make([]generatorParamSet, 0, len(list.Elements))
-	var diags []diagnostic.Diagnostic
-	for i, element := range list.Elements {
-		params := map[string]any{}
-		if len(element.Raw) > 0 {
-			if err := json.Unmarshal(element.Raw, &params); err != nil {
-				return nil, nil, fmt.Errorf("list generator element %d must be a mapping: %w", i, err)
-			}
+	for _, element := range list.Elements {
+		var params map[string]any
+		if err := json.Unmarshal(element.Raw, &params); err != nil {
+			return nil, &generatorParamsError{err: fmt.Errorf("error unmarshling list element %w", err)}
 		}
 		if !useGoTemplate {
-			normalized, err := normalizeListElementParams(i, params)
+			normalized, err := normalizeListElementParams(params)
 			if err != nil {
-				return nil, nil, err
+				return nil, &generatorParamsError{err: err}
 			}
 			params = normalized
 		}
@@ -47,40 +53,46 @@ func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator, 
 			Generator: "list",
 		})
 	}
-	if strings.TrimSpace(list.ElementsYaml) == "" {
-		return out, diags, nil
+	if list.ElementsYaml == "" {
+		return out, nil
 	}
-	var elements []any
+	var elements []map[string]any
 	if err := sigsyaml.Unmarshal([]byte(list.ElementsYaml), &elements); err != nil {
-		diags = append(diags, appsetDiagnostic(manifestPath, fmt.Sprintf("list generator elementsYaml is not valid YAML: %v", err)))
-		return out, diags, nil
+		return nil, &generatorParamsError{err: fmt.Errorf("error unmarshling decoded ElementsYaml %w", err)}
 	}
-	for i, element := range elements {
-		params, ok := element.(map[string]any)
-		if !ok {
-			diags = append(diags, appsetDiagnostic(manifestPath, fmt.Sprintf("list generator elementsYaml entries must be mappings: entry %d", i)))
-			continue
-		}
+	for _, params := range elements {
 		out = append(out, generatorParamSet{
 			Params:    params,
 			Generator: "list",
 		})
 	}
-	return out, diags, nil
+	return out, nil
 }
 
-func normalizeListElementParams(index int, element map[string]any) (map[string]any, error) {
+// errListValueNotString is the text of the Argo CD v3.6.1 list generator
+// error for a non-string value without goTemplate (list.go:70-73). It
+// formats a nil error with %w, so the text ends in "%!w(<nil>)".
+var errListValueNotString = errors.New("error parsing value as string %!w(<nil>)")
+
+// normalizeListElementParams mirrors the fasttemplate branch of the Argo CD
+// v3.6.1 list generator (list.go:55-77), with its error texts. Argo CD
+// walks the element in Go map order, so when several fields fail, which
+// error it reports varies. drydock walks the keys in sorted order, so its
+// report is stable.
+func normalizeListElementParams(element map[string]any) (map[string]any, error) {
 	params := map[string]any{}
-	for key, value := range element {
+	for _, key := range slices.Sorted(maps.Keys(element)) {
+		value := element[key]
 		if key == "values" {
 			values, ok := value.(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("list generator element %d values must be a mapping of strings", index)
+				return nil, errors.New("error parsing values map")
 			}
-			for valueKey, nestedValue := range values {
+			for _, valueKey := range slices.Sorted(maps.Keys(values)) {
+				nestedValue := values[valueKey]
 				rendered, ok := nestedValue.(string)
 				if !ok {
-					return nil, fmt.Errorf("list generator element %d values.%s must be a string", index, valueKey)
+					return nil, errListValueNotString
 				}
 				params["values."+valueKey] = rendered
 			}
@@ -88,7 +100,7 @@ func normalizeListElementParams(index int, element map[string]any) (map[string]a
 		}
 		rendered, ok := value.(string)
 		if !ok {
-			return nil, fmt.Errorf("list generator element %d field %q must be a string", index, key)
+			return nil, errListValueNotString
 		}
 		params[key] = rendered
 	}

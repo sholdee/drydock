@@ -1,0 +1,68 @@
+# Selectors on matrix children. Argo CD v3.6.1 filters a child's params with
+# the selector of the child as written, before it interpolates the child
+# with the first child's params
+# (applicationset/generators/generator_spec_processor.go:34 and :89).
+#
+# The first generator's second child selects env '{{.env}}'. That literal
+# matches no param, so it generates nothing, and no
+# parity-matrix-selector-templated-* name exists.
+#
+# In the second generator, the merge child evaluates its own children from
+# the interpolated spec (matrix.go:117-139, merge.go:137-160), so the
+# selector inside it becomes stage: dev and keeps only inner-dev.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-matrix-child-selector
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - env: dev
+                - env: prod
+          - list:
+              elements:
+                - suffix: templated-dev
+                  env: dev
+                - suffix: templated-prod
+                  env: prod
+            selector:
+              matchLabels:
+                env: "{{.env}}"
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - env: dev
+          - merge:
+              mergeKeys: [suffix]
+              generators:
+                - list:
+                    elements:
+                      - suffix: inner-dev
+                        stage: dev
+                      - suffix: inner-prod
+                        stage: prod
+                  selector:
+                    matchLabels:
+                      stage: "{{.env}}"
+                - list:
+                    elements:
+                      - suffix: inner-dev
+  template:
+    metadata:
+      name: "parity-matrix-selector-{{.suffix}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/validation/empty-name-alpha
+      destination:
+        name: in-cluster
+        namespace: "parity-matrix-selector-{{.suffix}}"

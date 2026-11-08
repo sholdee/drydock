@@ -143,6 +143,28 @@ name, finds nothing, and creates only the first Application. drydock drops
 the second with `appset.application-validation-failed`, and the inventory
 comparison requires the same list on both sides.
 
+`../missing-project/applicationset.yaml`
+(`parity-validation-missing-project`) generates `parity-missing-project-kept`
+with the project `default` and `parity-missing-project-dropped` with the
+project `parity-missing-project`. No AppProject has that name. The
+ApplicationSet controller does not create the second Application, and it
+sets an `ErrorOccurred` condition with the message `application references
+project parity-missing-project which does not exist`
+(`applicationset_controller.go:626-633`). This is a recorded divergence.
+drydock does not know the AppProjects of the cluster offline, so it keeps
+the second Application and warns `project.missing` for it, with a note that
+the ApplicationSet controller does not create it. The fixture lives in its
+own directory with one AppProject, `../missing-project/project.yaml`, so
+that the kept Application stays out of the main inventory comparison.
+`run_missing_project_smoke` applies the directory after the main
+comparisons. It waits for the condition, and it requires
+`parity-missing-project-kept` and no `parity-missing-project-dropped` in
+Argo CD. Then it runs `drydock get apps`, `drydock diag`, and `drydock build
+apps` on the directory alone, with the fixture URL mapped to this
+repository. drydock must list both Applications and warn `project.missing`
+for the second one only. The build checks the AppProject before and after
+rendering, and it must give exactly one warning.
+
 `../crd-rejected/apps/parity-crd-sync-path-dot.yaml` sets
 `syncSource.path: "."`. The CRD schema rejects it, so Argo CD never holds it.
 `assert_crd_rejected_application` applies it with `--dry-run=server` and
@@ -1070,6 +1092,51 @@ the Application lists instead. It already compares the Argo CD list with the
 the fixture repository and compares that list with the same array. Without
 the second check, an Application that drydock keeps by mistake would go
 unnoticed, because the smoke renders only the Applications it names.
+
+## ApplicationSet generator fixtures
+
+Argo CD v3.6.1 runs each generator through `generators.Transform`
+(`applicationset/generators/generator_spec_processor.go`). These fixtures pin
+how it reads selectors and generator fields, and which generator errors fail
+the whole ApplicationSet.
+
+`applicationsets/matrix-child-selector.yaml` has two matrix generators. In
+the first one, the second child selects `env: "{{.env}}"`. Transform filters
+the child's params with the selector as written, before it fills in the
+params of the first child (lines 34 and 89). The literal text matches no
+param, so no `parity-matrix-selector-templated-*` Application exists. In the
+second matrix, the second child is a merge. The merge runs its own children
+from the filled-in spec, so the selector inside it becomes `stage: dev`.
+Only `parity-matrix-selector-inner-dev` exists.
+
+`applicationsets/generator-two-fields.yaml` sets `list` and `matrix` in one
+`spec.generators` entry. Transform runs every generator field that the entry
+sets (`GetRelevantGenerators`), so both `parity-two-fields-list` and
+`parity-two-fields-matrix` exist.
+
+Each `applicationsets/generator-error-*.yaml` file has a list generator that
+works and one generator that fails:
+
+| File | Failure | Argo CD source |
+| --- | --- | --- |
+| `generator-error-elements-yaml.yaml` | `elementsYaml` holds a scalar entry | `list.go:80-86` |
+| `generator-error-empty-child.yaml` | A matrix child written as `{}` | `matrix.go:129-131` |
+| `generator-error-nested-too-deep.yaml` | A matrix inside a matrix inside a matrix. The middle matrix decodes its children as terminal generators, which have no `matrix` field, so the innermost one names no generator. | `matrix.go:129-131` |
+| `generator-error-selector.yaml` | A selector with the operator `Sometimes` | `generator_spec_processor.go:34-37` |
+| `generator-error-merge-keys.yaml` | A merge whose first child repeats a merge key value | `merge.go:106-134` |
+| `generator-error-matrix-count.yaml` | A matrix with one child | `matrix.go:45-51` |
+| `generator-error-cluster-selector.yaml` | A cluster generator selector whose value is not a valid label value | `cluster.go:194-198` |
+
+Argo CD sets an `ErrorOccurred` condition and creates no Applications for
+each of these ApplicationSets, also none from the list generator that works.
+The condition message is the generator error with the wraps that the matrix
+and merge generators add, for example `failed to get params for second
+generator in the matrix generator: child generator generated no parameters`.
+drydock carries the same text.
+drydock warns `appset.generator-failed` and generates none. The smoke lists
+each one in `APPLICATIONSET_ERRORS` with the text that the condition must
+contain. `compare_applicationset_errors` then requires a drydock warning
+with that code for the file, and the warning must contain the same text.
 
 ## Cluster generator fixture
 

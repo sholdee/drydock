@@ -1,0 +1,51 @@
+# A matrix nested two levels deep. The nested matrix decodes its children
+# as terminal generators, which have no matrix field, so the innermost
+# matrix becomes a child that names no generator. Argo CD v3.6.1 fails with
+# "child generator generated no parameters" (matrix.go:129-131).
+# Argo CD v3.6.1 then fails the whole ApplicationSet with an ErrorOccurred
+# condition, so the sibling list generator generates nothing either, and
+# no parity-gen-error-nested-too-deep-* name exists. drydock must warn
+# appset.generator-failed and generate none. APPLICATIONSET_ERRORS in the
+# smoke waits for the condition.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-gen-error-nested-too-deep
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - suffix: sibling
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - env: dev
+          - matrix:
+              generators:
+                - list:
+                    elements:
+                      - suffix: nested
+                - matrix:
+                    generators:
+                      - list:
+                          elements:
+                            - region: east
+                      - list:
+                          elements:
+                            - zone: a
+  template:
+    metadata:
+      name: "parity-gen-error-nested-too-deep-{{.suffix}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/validation/empty-name-alpha
+      destination:
+        name: in-cluster
+        namespace: "parity-gen-error-nested-too-deep-{{.suffix}}"

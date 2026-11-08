@@ -293,7 +293,7 @@ spec:
 	}
 }
 
-func TestGenerateClusterGeneratorUnsupportedSelectorFailsClosed(t *testing.T) {
+func TestGenerateClusterGeneratorInvalidSelectorFailsApplicationSet(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -316,15 +316,7 @@ spec:
 	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", data, Options{Provider: ProviderOptions{Data: ProviderData{
 		Clusters: []ClusterInput{{Name: "prod-a", Server: "https://prod-a.example.invalid"}},
 	}}})
-	if err != nil {
-		t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
-	}
-	if len(apps) != 0 {
-		t.Fatalf("generated apps = %#v, want none", apps)
-	}
-	if len(diags) != 1 || diags[0].Code != "appset.provider-unsupported-filter" {
-		t.Fatalf("diagnostics = %#v, want unsupported selector diagnostic", diags)
-	}
+	requireGeneratorFailed(t, apps, diags, err, `error parsing label selector: "Sometimes" is not a valid pod selector operator`)
 }
 
 // reservedClusterAnnotations are the keys Argo CD v3.6.1 drops from cluster
