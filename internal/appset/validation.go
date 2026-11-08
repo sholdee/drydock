@@ -57,6 +57,59 @@ func appsetGeneratorTemplateRenderDiagnostic(manifestPath string, err error) dia
 	}
 }
 
+// generatorParamsError marks a generator failure that Argo CD v3.6.1
+// returns from generators.Transform for a reason other than template
+// execution: a list element or elementsYaml that does not decode, a matrix
+// or merge with the wrong number of children, a child that names no
+// generator or more than one, missing or non-unique merge keys, a matrix
+// param clash, or a selector that does not parse.
+// template.GenerateApplications returns the first such error with reason
+// ApplicationParamsGenerationError, and the controller sets an
+// ErrorOccurred condition and reconciles no Applications for the
+// ApplicationSet (applicationset/controllers/applicationset_controller.go:207-224).
+// Other ApplicationSets are not affected, so GenerateWithOptions scopes the
+// failure to this ApplicationSet, like a template render failure.
+type generatorParamsError struct {
+	err error
+}
+
+func (e *generatorParamsError) Error() string {
+	return e.err.Error()
+}
+
+func (e *generatorParamsError) Unwrap() error {
+	return e.err
+}
+
+// paramsError wraps err as a generatorParamsError. It keeps an error that
+// is already scoped to the ApplicationSet as it is.
+func paramsError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := errors.AsType[*generatorParamsError](err); ok {
+		return err
+	}
+	if _, ok := errors.AsType[*generatorTemplateError](err); ok {
+		return err
+	}
+	return &generatorParamsError{err: err}
+}
+
+// appsetGeneratorFailedDiagnostic reports a generatorParamsError. The
+// "ApplicationSet generator failed" substring is the stable-code dispatch
+// key (appset.generator-failed).
+func appsetGeneratorFailedDiagnostic(manifestPath string, err error) diagnostic.Diagnostic {
+	diag := diagnostic.Diagnostic{
+		Severity:   diagnostic.SeverityWarning,
+		Category:   "appset",
+		Message:    fmt.Sprintf("ApplicationSet generator failed: %v; this ApplicationSet contributes no Applications (Argo CD reports the same failure as an ErrorOccurred condition and reconciles no Applications)", err),
+		Provenance: diagnostic.Provenance{Path: manifestPath, Pointer: "spec.generators"},
+	}
+	diag.Code = diagnostic.StableCode(diag)
+	return diag
+}
+
 // validateGeneratedApplications mirrors the name checks in Argo CD v3.6.1
 // ApplicationSetReconciler.validateGeneratedApplications
 // (applicationset/controllers/applicationset_controller.go). A generated
@@ -66,8 +119,10 @@ func appsetGeneratorTemplateRenderDiagnostic(manifestPath string, err error) dia
 // keeps only Applications whose key has no error, so every Application
 // sharing a duplicated name is dropped, not just the later ones. The
 // remaining Applications still generate. An empty spec.project fails the
-// AppProject lookup that follows. Other project and destination checks need
-// live AppProjects and clusters and stay with the project diagnostics.
+// AppProject lookup that follows. A named AppProject that the repository
+// does not declare is checked after discovery, when every AppProject is
+// known (pruneMissingProjectApplications in internal/app). The destination
+// check needs live clusters and stays with the project diagnostics.
 func validateGeneratedApplications(manifestPath string, appset argoappv1.ApplicationSet, apps []GeneratedApplication) ([]GeneratedApplication, []diagnostic.Diagnostic) {
 	errorsByApp := map[string]generatedApplicationError{}
 	namesSet := map[string]bool{}
@@ -108,6 +163,17 @@ func validateGeneratedApplications(manifestPath string, appset argoappv1.Applica
 		diags = append(diags, generatedApplicationValidationDiagnostic(manifestPath, errorsByApp[key]))
 	}
 	return valid, diags
+}
+
+// MissingProjectDiagnostic reports a generated Application whose AppProject
+// does not exist. The Argo CD v3.6.1 ApplicationSet controller looks the
+// AppProject up for each generated Application, and when it is not found it
+// does not create or update that Application and sets an
+// ApplicationValidationError condition with this message
+// (applicationset/controllers/applicationset_controller.go:627-633). The
+// other Applications of the ApplicationSet still generate.
+func MissingProjectDiagnostic(manifestPath, projectName string) diagnostic.Diagnostic {
+	return generatedApplicationValidationDiagnostic(manifestPath, generatedApplicationError{fmt.Sprintf("application references project %s which does not exist", projectName), "spec.template.spec.project"})
 }
 
 // generatedApplicationValidationDiagnostic carries the upstream validation

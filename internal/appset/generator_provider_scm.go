@@ -33,6 +33,9 @@ func evaluateSCMProviderGenerator(ctx generatorContext, generator argoappv1.Appl
 }
 
 func scmProviderParamSets(manifestPath string, generator *argoappv1.SCMProviderGenerator, inputs []SCMRepositoryInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	if err := compileSCMProviderFilters(generator.Filters); err != nil {
+		return nil, nil, &generatorParamsError{err: fmt.Errorf("error listing repos: %w", err)}
+	}
 	if len(inputs) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "scmProvider")}, nil
 	}
@@ -83,6 +86,31 @@ func scmProviderParamSets(manifestPath string, generator *argoappv1.SCMProviderG
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "scmProvider")}, nil
 	}
 	return out, nil, nil
+}
+
+// compileSCMProviderFilters mirrors compileFilters in Argo CD v3.6.1
+// (applicationset/services/scm_provider/utils.go:13-50). ListRepos compiles
+// every filter before it lists repositories, so a regexp that does not
+// compile fails the ApplicationSet whatever the provider returns.
+func compileSCMProviderFilters(filters []argoappv1.SCMProviderGeneratorFilter) error {
+	for _, filter := range filters {
+		if filter.RepositoryMatch != nil {
+			if _, err := regexp.Compile(*filter.RepositoryMatch); err != nil {
+				return fmt.Errorf("error compiling RepositoryMatch regexp %q: %w", *filter.RepositoryMatch, err)
+			}
+		}
+		if filter.LabelMatch != nil {
+			if _, err := regexp.Compile(*filter.LabelMatch); err != nil {
+				return fmt.Errorf("error compiling LabelMatch regexp %q: %w", *filter.LabelMatch, err)
+			}
+		}
+		if filter.BranchMatch != nil {
+			if _, err := regexp.Compile(*filter.BranchMatch); err != nil {
+				return fmt.Errorf("error compiling BranchMatch regexp %q: %w", *filter.BranchMatch, err)
+			}
+		}
+	}
+	return nil
 }
 
 func scmProviderMatchesScope(generator *argoappv1.SCMProviderGenerator, input SCMRepositoryInput) bool {

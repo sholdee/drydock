@@ -9,6 +9,7 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
@@ -31,13 +32,20 @@ func evaluateClustersGenerator(ctx generatorContext, generator argoappv1.Applica
 }
 
 func clusterGeneratorParamSets(manifestPath string, clusters *argoappv1.ClusterGenerator, inputs []ClusterInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	// Argo CD v3.6.1 lists the cluster Secrets with
+	// metav1.LabelSelectorAsSelector, which also checks label values, and
+	// fails the ApplicationSet when the selector does not parse
+	// (applicationset/generators/cluster.go:194-198).
+	if _, err := metav1.LabelSelectorAsSelector(clusters.Selector.DeepCopy()); err != nil {
+		return nil, nil, &generatorParamsError{err: fmt.Errorf("error converting label selector: %w", err)}
+	}
 	if len(inputs) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusters")}, nil
 	}
 
 	selector, err := appsetutils.LabelSelectorAsSelector(&clusters.Selector)
 	if err != nil {
-		return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, fmt.Sprintf("clusters selector: %v", err))}, nil
+		return nil, nil, &generatorParamsError{err: fmt.Errorf("error converting label selector: %w", err)}
 	}
 
 	var out []generatorParamSet

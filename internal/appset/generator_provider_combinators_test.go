@@ -53,7 +53,7 @@ spec:
 	}
 }
 
-func TestProviderGeneratorMatrixSelectorUnsupportedFailsClosed(t *testing.T) {
+func TestProviderGeneratorMatrixInvalidSelectorFailsApplicationSet(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -82,15 +82,7 @@ spec:
 	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", data, Options{Provider: ProviderOptions{Data: ProviderData{
 		Clusters: []ClusterInput{{Name: "prod-a", Server: "https://prod-a.example.invalid"}},
 	}}})
-	if err != nil {
-		t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
-	}
-	if len(apps) != 0 {
-		t.Fatalf("generated apps = %#v, want none", apps)
-	}
-	if len(diags) != 1 || diags[0].Code != "appset.provider-unsupported-filter" {
-		t.Fatalf("diagnostics = %#v, want unsupported selector diagnostic", diags)
-	}
+	requireGeneratorFailed(t, apps, diags, err, `error parsing label selector: "Sometimes" is not a valid pod selector operator`)
 }
 
 func TestProviderGeneratorsWorkAsMergeChildren(t *testing.T) {
@@ -147,7 +139,7 @@ spec:
 	}
 }
 
-func TestProviderGeneratorMergeSelectorUnsupportedFailsClosed(t *testing.T) {
+func TestProviderGeneratorMergeInvalidSelectorFailsApplicationSet(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -177,15 +169,7 @@ spec:
 	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", data, Options{Provider: ProviderOptions{Data: ProviderData{
 		Clusters: []ClusterInput{{Name: "prod-a", Server: "https://prod-a.example.invalid"}},
 	}}})
-	if err != nil {
-		t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
-	}
-	if len(apps) != 0 {
-		t.Fatalf("generated apps = %#v, want none", apps)
-	}
-	if len(diags) != 1 || diags[0].Code != "appset.provider-unsupported-filter" {
-		t.Fatalf("diagnostics = %#v, want unsupported selector diagnostic", diags)
-	}
+	requireGeneratorFailed(t, apps, diags, err, `error parsing label selector: "Sometimes" is not a valid pod selector operator`)
 }
 
 func TestGeneratePluginGeneratorWorksAsMatrixChild(t *testing.T) {

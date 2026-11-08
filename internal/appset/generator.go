@@ -78,13 +78,19 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 		Options:      options,
 	}
 	templateRenderFailed := false
-	for _, generator := range appset.Spec.Generators {
+	for _, generator := range topLevelGenerators(appset.Spec.Generators) {
 		paramSets, generatorDiags, supported, err := evaluateGenerator(ctx, generator)
 		if err != nil {
 			if _, ok := errors.AsType[*generatorTemplateError](err); ok {
 				templateRenderFailed = true
 				diags = append(diags, generatorDiags...)
 				diags = append(diags, appsetGeneratorTemplateRenderDiagnostic(manifestPath, err))
+				continue
+			}
+			if _, ok := errors.AsType[*generatorParamsError](err); ok {
+				templateRenderFailed = true
+				diags = append(diags, generatorDiags...)
+				diags = append(diags, appsetGeneratorFailedDiagnostic(manifestPath, err))
 				continue
 			}
 			return out, append(diags, generatorDiags...), err
@@ -169,24 +175,46 @@ func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetG
 	}
 }
 
+// evaluateNestedGenerator evaluates one matrix or merge child the way the
+// Argo CD v3.6.1 matrix and merge getParams do: they build the child
+// generator (nestedGeneratorSpec) and run generators.Transform on it
+// (applicationset/generators/matrix.go:117-139 and merge.go:137-177).
+// Transform finds no generator in a child that sets none, such as `{}` or a
+// matrix nested one level too deep (the terminal generator type has no
+// matrix or merge field, so decoding drops it). It finds two in a child that
+// sets two. getParams then fails with "child generator generated no
+// parameters" or ErrMoreThenOneInnerGenerators, and the whole
+// ApplicationSet fails.
 func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationSetNestedGenerator, inheritedParams map[string]any) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
 	generator, err := generatorFromNested(nested)
 	if err != nil {
-		return nil, nil, true, err
+		return nil, nil, true, &generatorParamsError{err: err}
 	}
-	supported, err := supportedGeneratorTree(generator, ctx.Options)
-	if err != nil {
-		return nil, nil, true, err
+	switch generatorCount(generator) {
+	case 0:
+		return nil, nil, true, &generatorParamsError{err: errors.New("child generator generated no parameters")}
+	case 1:
+	default:
+		return nil, nil, true, &generatorParamsError{err: errors.New("found more than one generator in matrix.Generators")}
 	}
-	if !supported {
+	if !supportedGeneratorTree(generator, ctx.Options) {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
 	if len(inheritedParams) != 0 {
+		// Transform interpolates the child generator with the parameters
+		// of the first matrix child, but it filters the child's params with
+		// the selector of the generator it was given, before interpolation
+		// (applicationset/generators/generator_spec_processor.go:34 and
+		// :89). So a template in the child's own selector stays literal.
+		// The selectors of generators inside the child are interpolated,
+		// because the child evaluates them from the interpolated spec.
+		selector := generator.Selector
 		rendered, err := (&appsetutils.Render{}).RenderGeneratorParams(&generator, inheritedParams, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
 		if err != nil {
 			return nil, nil, true, &generatorTemplateError{err: fmt.Errorf("interpolate nested generator: %w", err)}
 		}
 		generator = *rendered
+		generator.Selector = selector
 	}
 	if generator.Merge != nil {
 		return mergeGeneratorParamSets(ctx, generator.Merge, generator.Selector)
@@ -194,51 +222,103 @@ func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationS
 	return evaluateGenerator(ctx, generator)
 }
 
-func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator, options Options) (bool, error) {
+// supportedGeneratorTree reports whether drydock can evaluate every
+// generator in the tree. A malformed tree counts as supported, so that
+// evaluation reports the error that Argo CD reports.
+func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator, options Options) bool {
 	switch {
 	case generator.List != nil || generator.Git != nil:
-		return true, nil
+		return true
 	case generator.Clusters != nil || generator.ClusterDecisionResource != nil || generator.SCMProvider != nil || generator.PullRequest != nil || generator.Plugin != nil:
-		return options.Provider.Supplied(), nil
+		return options.Provider.Supplied()
 	case generator.Oci != nil:
-		return options.OCI != nil, nil
+		return options.OCI != nil
 	case generator.Matrix != nil:
-		if err := validateMatrixGenerator(generator.Matrix); err != nil {
-			return true, err
-		}
 		return supportedNestedGeneratorTrees(generator.Matrix.Generators, options)
 	case generator.Merge != nil:
-		if err := validateMergeGenerator(generator.Merge); err != nil {
-			return true, err
-		}
 		return supportedNestedGeneratorTrees(generator.Merge.Generators, options)
 	default:
-		return false, nil
+		// A generator that sets nothing fails in Argo CD when it is a
+		// matrix or merge child (evaluateNestedGenerator).
+		return true
 	}
 }
 
-func supportedNestedGeneratorTrees(nestedGenerators []argoappv1.ApplicationSetNestedGenerator, options Options) (bool, error) {
+func supportedNestedGeneratorTrees(nestedGenerators []argoappv1.ApplicationSetNestedGenerator, options Options) bool {
 	for _, nested := range nestedGenerators {
 		generator, err := generatorFromNested(nested)
 		if err != nil {
-			return false, err
+			continue
 		}
-		supported, err := supportedGeneratorTree(generator, options)
-		if err != nil || !supported {
-			return supported, err
+		if !supportedGeneratorTree(generator, options) {
+			return false
 		}
 	}
-	return true, nil
+	return true
+}
+
+// generatorCount counts the generator fields that a generator sets, as
+// Argo CD v3.6.1 GetRelevantGenerators does: every non-nil field except the
+// selector (applicationset/generators/generator_spec_processor.go:104-124).
+func generatorCount(generator argoappv1.ApplicationSetGenerator) int {
+	return len(splitGenerator(generator))
+}
+
+// splitGenerator returns one generator for each generator field that
+// generator sets, in the field order of ApplicationSetGenerator, each with
+// the shared selector. Argo CD v3.6.1 Transform runs each one in that order
+// (GetRelevantGenerators), so a top-level generator that sets both list and
+// clusters generates from both.
+func splitGenerator(generator argoappv1.ApplicationSetGenerator) []argoappv1.ApplicationSetGenerator {
+	var out []argoappv1.ApplicationSetGenerator
+	for _, single := range []argoappv1.ApplicationSetGenerator{
+		{List: generator.List},
+		{Clusters: generator.Clusters},
+		{Git: generator.Git},
+		{SCMProvider: generator.SCMProvider},
+		{ClusterDecisionResource: generator.ClusterDecisionResource},
+		{PullRequest: generator.PullRequest},
+		{Matrix: generator.Matrix},
+		{Merge: generator.Merge},
+		{Plugin: generator.Plugin},
+		{Oci: generator.Oci},
+	} {
+		if single == (argoappv1.ApplicationSetGenerator{}) {
+			continue
+		}
+		single.Selector = generator.Selector
+		out = append(out, single)
+	}
+	return out
+}
+
+// topLevelGenerators expands each spec.generators entry into its generator
+// fields (splitGenerator). An entry that sets none stays, so that it is
+// reported as unsupported. Argo CD skips it (Transform finds no generator)
+// and logs CheckInvalidGenerators.
+func topLevelGenerators(generators []argoappv1.ApplicationSetGenerator) []argoappv1.ApplicationSetGenerator {
+	out := make([]argoappv1.ApplicationSetGenerator, 0, len(generators))
+	for _, generator := range generators {
+		split := splitGenerator(generator)
+		if len(split) == 0 {
+			out = append(out, generator)
+			continue
+		}
+		out = append(out, split...)
+	}
+	return out
 }
 
 func generatorFromNested(nested argoappv1.ApplicationSetNestedGenerator) (argoappv1.ApplicationSetGenerator, error) {
+	// Argo CD v3.6.1 getMatrixGenerator and getMergeGenerator
+	// (applicationset/generators/utils.go).
 	matrix, err := argoappv1.ToNestedMatrixGenerator(nested.Matrix)
 	if err != nil {
 		return argoappv1.ApplicationSetGenerator{}, fmt.Errorf("convert nested matrix generator: %w", err)
 	}
 	merge, err := argoappv1.ToNestedMergeGenerator(nested.Merge)
 	if err != nil {
-		return argoappv1.ApplicationSetGenerator{}, fmt.Errorf("convert nested merge generator: %w", err)
+		return argoappv1.ApplicationSetGenerator{}, fmt.Errorf("error converting to nested merge generator: %w", err)
 	}
 	var matrixGenerator *argoappv1.MatrixGenerator
 	if matrix != nil {

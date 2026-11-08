@@ -3,7 +3,6 @@ package appset
 import (
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -96,13 +95,8 @@ spec:
         namespace: list
 `)
 
-	_, _, err := GenerateFromYAML(t.TempDir(), "appset.yaml", data)
-	if err == nil {
-		t.Fatal("GenerateFromYAML() error = nil, want non-string element value error")
-	}
-	if !strings.Contains(err.Error(), `field "enabled" must be a string`) {
-		t.Fatalf("GenerateFromYAML() error = %v, want non-string enabled field", err)
-	}
+	apps, diags, err := GenerateFromYAML(t.TempDir(), "appset.yaml", data)
+	requireGeneratorFailed(t, apps, diags, err, `field "enabled" must be a string`)
 }
 
 func TestGenerateGitFilesGeneratorReadsFilesLikeArgoCD(t *testing.T) {

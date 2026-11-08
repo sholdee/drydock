@@ -126,13 +126,8 @@ spec:
       name: '{{env}}'
 `)
 
-	_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
-	if err == nil {
-		t.Fatalf("expected duplicate key error")
-	}
-	if !strings.Contains(err.Error(), "duplicate key env") {
-		t.Fatalf("error = %v, want duplicate key env", err)
-	}
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	requireGeneratorFailed(t, apps, diags, err, "found duplicate key env with different value")
 }
 func TestGenerateMatrixGeneratorRejectsWrongChildCount(t *testing.T) {
 	root := t.TempDir()
@@ -176,13 +171,8 @@ spec:
       name: '{{name}}'
 `)
 
-			_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
-			if err == nil {
-				t.Fatalf("expected matrix child count error")
-			}
-			if !strings.Contains(err.Error(), "matrix support only two") {
-				t.Fatalf("error = %v, want matrix support only two", err)
-			}
+			apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+			requireGeneratorFailed(t, apps, diags, err, "Matrix support only two")
 		})
 	}
 }
@@ -369,7 +359,11 @@ spec:
 		t.Fatalf("diagnostics = %#v, want unsupported generator diagnostic", diags)
 	}
 }
-func TestGenerateMatrixGeneratorRejectsInvalidNestedChildWhenFirstChildEmpty(t *testing.T) {
+
+// Argo CD v3.6.1 runs the second matrix child once for each param set of
+// the first (applicationset/generators/matrix.go:62-86). With none, it never
+// runs the second child, so its error never shows.
+func TestGenerateMatrixGeneratorSkipsInvalidNestedChildWhenFirstChildEmpty(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -402,9 +396,9 @@ spec:
         namespace: default
 `)
 
-	_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
-	if err == nil || !strings.Contains(err.Error(), "matrix support only two child generators") {
-		t.Fatalf("GenerateFromYAML() error = %v, want nested matrix child count error", err)
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil || len(apps) != 0 || len(diags) != 0 {
+		t.Fatalf("GenerateFromYAML() = %#v, %#v, %v; want no Applications, no diagnostics, and no error", generatedNames(apps), diags, err)
 	}
 }
 func TestGenerateMatrixGeneratorPreservesAllChildSourcePaths(t *testing.T) {
@@ -735,7 +729,7 @@ func TestGenerateMergeGeneratorRejectsInvalidConfiguration(t *testing.T) {
           - list:
               elements:
                 - name: alpha`,
-			want: "merge requires at least one merge key",
+			want: "no merge keys were specified, Merge requires at least one",
 		},
 		{
 			name: "one child",
@@ -745,7 +739,7 @@ func TestGenerateMergeGeneratorRejectsInvalidConfiguration(t *testing.T) {
           - list:
               elements:
                 - name: alpha`,
-			want: "merge requires two or more",
+			want: "found less than two generators, Merge requires two or more",
 		},
 		{
 			name: "duplicate base key",
@@ -759,7 +753,7 @@ func TestGenerateMergeGeneratorRejectsInvalidConfiguration(t *testing.T) {
           - list:
               elements:
                 - name: alpha`,
-			want: "parameters from a generator were not unique",
+			want: "the parameters from a generator were not unique by the given mergeKeys",
 		},
 		{
 			name: "duplicate override key",
@@ -773,7 +767,7 @@ func TestGenerateMergeGeneratorRejectsInvalidConfiguration(t *testing.T) {
               elements:
                 - name: alpha
                 - name: alpha`,
-			want: "parameters from a generator were not unique",
+			want: "the parameters from a generator were not unique by the given mergeKeys",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -791,13 +785,8 @@ spec:
       name: '{{.name}}'
 `)
 
-			_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
-			if err == nil {
-				t.Fatalf("expected merge error")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %v, want %q", err, tc.want)
-			}
+			apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+			requireGeneratorFailed(t, apps, diags, err, tc.want)
 		})
 	}
 }

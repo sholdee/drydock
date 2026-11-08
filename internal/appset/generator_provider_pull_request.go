@@ -30,6 +30,9 @@ func evaluatePullRequestGenerator(ctx generatorContext, generator argoappv1.Appl
 }
 
 func pullRequestParamSets(manifestPath string, generator *argoappv1.PullRequestGenerator, inputs []PullRequestInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	if err := compilePullRequestFilters(generator.Filters); err != nil {
+		return nil, nil, &generatorParamsError{err: fmt.Errorf("error listing repos: %w", err)}
+	}
 	if len(inputs) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "pullRequest")}, nil
 	}
@@ -81,6 +84,31 @@ func pullRequestParamSets(manifestPath string, generator *argoappv1.PullRequestG
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "pullRequest")}, nil
 	}
 	return out, nil, nil
+}
+
+// compilePullRequestFilters mirrors compileFilters in Argo CD v3.6.1
+// (applicationset/services/pull_request/utils.go:11-37). ListPullRequests
+// compiles every filter before it lists pull requests, so a regexp that
+// does not compile fails the ApplicationSet whatever the provider returns.
+func compilePullRequestFilters(filters []argoappv1.PullRequestGeneratorFilter) error {
+	for _, filter := range filters {
+		if filter.BranchMatch != nil {
+			if _, err := regexp.Compile(*filter.BranchMatch); err != nil {
+				return fmt.Errorf("error compiling BranchMatch regexp %q: %w", *filter.BranchMatch, err)
+			}
+		}
+		if filter.TargetBranchMatch != nil {
+			if _, err := regexp.Compile(*filter.TargetBranchMatch); err != nil {
+				return fmt.Errorf("error compiling TargetBranchMatch regexp %q: %w", *filter.TargetBranchMatch, err)
+			}
+		}
+		if filter.TitleMatch != nil {
+			if _, err := regexp.Compile(*filter.TitleMatch); err != nil {
+				return fmt.Errorf("error compiling TitleMatch regexp %q: %w", *filter.TitleMatch, err)
+			}
+		}
+	}
+	return nil
 }
 
 func pullRequestMatchesScope(generator *argoappv1.PullRequestGenerator, input PullRequestInput) bool {
