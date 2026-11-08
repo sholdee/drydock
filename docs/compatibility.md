@@ -883,7 +883,13 @@ not download Git LFS objects:
 - A pointer file that drydock cannot fill stays a pointer, and drydock
   warns `render.lfs-pointer`. This happens for every pointer file of a
   fetched Git source, for a snapshot whose object is not in `.git/lfs`,
-  and for a working-tree file that still holds the pointer of `HEAD`.
+  and for a working-tree file that still holds the pointer of `HEAD`. For a
+  fetched Git source this is a recorded difference: the repo-server
+  downloads the objects, and drydock has no Git LFS network client.
+- The render cache keys a working-tree file on its bytes on disk when they
+  differ from the committed blob. `git status` reports a file that git-lfs
+  smudged as unchanged, but drydock compares the bytes itself, so a cache
+  entry for the pointer is never served for the content, or the reverse.
 - drydock never writes a working tree. A working tree with Git LFS content
   from `git lfs pull` renders that content also without `enableLfs`, where
   the repo-server renders the pointer. This is a working-tree preview
