@@ -36,7 +36,12 @@ func newAppsetOCIArtifactFetcher(ctx context.Context, o Orchestrator, root strin
 	return &appsetOCIArtifactFetcher{
 		ctx: ctx,
 		newProvider: func(recorder *cacheevent.Recorder) (localProvider, func(), error) {
-			return newLocalProvider(ctx, o, root, config.ArgoSettings{}, request, recorder, "drydock-appset-oci-cache-snapshots-*")
+			// It never renders from root, so it leaves the submodules of a
+			// snapshot root to the providers that read the settings: its
+			// empty settings would turn them back on.
+			ociRequest := request
+			ociRequest.rootSnapshot.options = nil
+			return newLocalProvider(ctx, o, root, config.ArgoSettings{}, ociRequest, recorder, "drydock-appset-oci-cache-snapshots-*")
 		},
 		recorder: cacheevent.NewRecorder(request.RecordCacheEvents),
 	}

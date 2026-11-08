@@ -18,6 +18,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/utils/merkletrie"
+	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/source"
 )
 
@@ -148,7 +149,7 @@ func headTreeFiles(headTree *object.Tree) ([]object.File, error) {
 func changedWorktreeFiles(root string, files []object.File) ([]bool, error) {
 	changed := make([]bool, len(files))
 	errs := make([]error, len(files))
-	workers := materializeTreeParallelism(len(files))
+	workers := gittree.Parallelism(len(files))
 	if workers > 0 {
 		jobs := make(chan int)
 		var wg sync.WaitGroup

@@ -59,6 +59,27 @@ func (m *symlinkBoundsMemo) entry(key string) *symlinkBoundsEntry {
 	return entry
 }
 
+// invalidateUnder drops the kept checks of root and of every tree below
+// it, after a change to the tree. A nil memo keeps nothing.
+func (m *symlinkBoundsMemo) invalidateUnder(root string) {
+	if m == nil {
+		return
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return
+	}
+	abs = filepath.Clean(abs)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key := range m.entries {
+		path := key[strings.LastIndex(key, "\x00")+1:]
+		if path == abs || strings.HasPrefix(path, abs+string(filepath.Separator)) {
+			delete(m.entries, key)
+		}
+	}
+}
+
 // findOutOfBoundsSymlink returns the first out-of-bounds symlink of the tree
 // at root, as the repo-server's CheckOutOfBoundsSymlinks names it, or "".
 // A repository scope skips the root .git entry, as the repo-server does for

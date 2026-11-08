@@ -60,7 +60,11 @@ type DiffRequest struct {
 	symlinkBounds         *symlinkBoundsMemo
 	leftPathRevision      string
 	rightPathRevision     string
-	selfRepo              selfRepoRefs
+	// leftSnapshot and rightSnapshot describe the submodules of the
+	// snapshot of a side that renders a Git ref.
+	leftSnapshot  snapshotSubmodules
+	rightSnapshot snapshotSubmodules
+	selfRepo      selfRepoRefs
 }
 
 type DiffAppRequest struct {
@@ -391,6 +395,7 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 		}
 		request.LeftPath = result.Path
 		request.leftPathRevision = result.Revision
+		request.leftSnapshot = snapshotSubmodulesOf(result, request.snapshotSubmoduleOptions(repoPath))
 		cleanups = append(cleanups, result.Cleanup)
 		forbiddenRoots = append(forbiddenRoots, result.Path)
 	}
@@ -406,6 +411,7 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 		}
 		request.RightPath = result.Path
 		request.rightPathRevision = result.Revision
+		request.rightSnapshot = snapshotSubmodulesOf(result, request.snapshotSubmoduleOptions(repoPath))
 		cleanups = append(cleanups, result.Cleanup)
 	}
 	request.selfRepo = detectSelfRepoRefs(request, repoPath)

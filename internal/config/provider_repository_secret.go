@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"strconv"
+	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
@@ -52,7 +53,7 @@ func invalidSecretBoolDiagnostic(provenance diagnostic.Provenance) *diagnostic.D
 	return &diagnostic.Diagnostic{
 		Severity:   diagnostic.SeverityError,
 		Category:   "settings",
-		Message:    "invalid repository Secret enableOCI value",
+		Message:    "invalid repository Secret " + secretPointerKey(provenance.Pointer) + " value",
 		Provenance: provenance,
 	}
 }
@@ -61,4 +62,14 @@ func secretFieldPointer(stringData map[string]string, key string) string {
 		return "stringData." + key
 	}
 	return "data." + key
+}
+
+// secretPointerKey returns the Secret key of a stringData.<key> or
+// data.<key> pointer.
+func secretPointerKey(pointer string) string {
+	_, key, ok := strings.Cut(pointer, ".")
+	if !ok {
+		return pointer
+	}
+	return key
 }

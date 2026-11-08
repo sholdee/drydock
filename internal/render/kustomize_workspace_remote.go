@@ -258,10 +258,11 @@ func remoteRequestForKustomizeRef(ref string) (remote.Request, kustomizeRemoteRe
 		}, parsed, true, nil
 	case kustomizeRemoteGit:
 		return remote.Request{
-			URL:      parsed.Original,
-			Kind:     remote.RequestGitRepo,
-			RepoURL:  parsed.RepoURL,
-			Revision: parsed.Revision,
+			URL:        parsed.Original,
+			Kind:       remote.RequestGitRepo,
+			RepoURL:    parsed.RepoURL,
+			Revision:   parsed.Revision,
+			Submodules: parsed.Submodules,
 		}, parsed, true, nil
 	default:
 		return remote.Request{}, parsed, false, nil

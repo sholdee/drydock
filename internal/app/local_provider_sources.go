@@ -97,10 +97,13 @@ func (p localProvider) acquireGitSource(ctx context.Context, source render.Resol
 		URL:      source.RepoURL,
 		Revision: source.TargetRevision,
 	}, sourcepkg.GitOptions{
-		AllowNetwork: !p.offline,
-		CacheDir:     p.gitCacheDir,
-		Refresh:      p.refreshGit,
-		Credentials:  p.gitCredentials,
+		AllowNetwork:                !p.offline,
+		CacheDir:                    p.gitCacheDir,
+		Refresh:                     p.refreshGit,
+		Credentials:                 p.gitCredentials,
+		Submodules:                  p.gitSubmodules,
+		AllowFileSubmoduleTransport: allowFileSubmoduleTransport,
+		LFS:                         p.lfsEnabled(source.RepoURL),
 	})
 	if err != nil {
 		acquireError := cacheevent.NewAcquisitionError(cacheevent.AcquisitionEventInput{
@@ -126,6 +129,9 @@ func (p localProvider) acquireGitSource(ctx context.Context, source render.Resol
 		Offline:           p.offline,
 		Refresh:           p.refreshGit,
 	}))
+	if len(acquired.LFSPointers) > 0 && p.lfsFetched != nil {
+		p.lfsFetched.Store(filepath.Clean(acquired.Path), acquired.LFSPointers)
+	}
 	p.recordAcquisition(cacheevent.AcquisitionRecord{
 		Kind:              cacheevent.AcquisitionGit,
 		RequestedRevision: source.TargetRevision,

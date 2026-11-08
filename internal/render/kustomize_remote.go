@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/remote"
@@ -26,6 +27,9 @@ type kustomizeRemoteRef struct {
 	RepoURL  string
 	Revision string
 	Subpath  string
+	// Submodules is the ?submodules= query parameter of a Git ref, true
+	// by default (kustomizeRemoteQuery).
+	Submodules bool
 }
 
 func parseKustomizeRemoteRef(ref string) (kustomizeRemoteRef, bool, error) {
@@ -82,7 +86,7 @@ func parseKustomizeGitURLRef(original, raw string) (kustomizeRemoteRef, bool, er
 	if parsed.Fragment != "" {
 		return kustomizeRemoteRef{}, true, fmt.Errorf("kustomize remote ref %q must not include a fragment", redactKustomizeRemoteRef(original))
 	}
-	revision, err := kustomizeRemoteRevision(parsed.RawQuery, original)
+	revision, submodules, err := kustomizeRemoteQuery(parsed.RawQuery, original)
 	if err != nil {
 		return kustomizeRemoteRef{}, true, err
 	}
@@ -106,11 +110,12 @@ func parseKustomizeGitURLRef(original, raw string) (kustomizeRemoteRef, bool, er
 	repo.RawQuery = ""
 	repo.Fragment = ""
 	return kustomizeRemoteRef{
-		Original: strings.TrimSpace(original),
-		Kind:     kustomizeRemoteGit,
-		RepoURL:  repo.String(),
-		Revision: revision,
-		Subpath:  path.Clean(subpath),
+		Original:   strings.TrimSpace(original),
+		Kind:       kustomizeRemoteGit,
+		RepoURL:    repo.String(),
+		Revision:   revision,
+		Subpath:    path.Clean(subpath),
+		Submodules: submodules,
 	}, true, nil
 }
 
@@ -158,7 +163,7 @@ func parseKustomizeGitSCPRef(original, raw string) (kustomizeRemoteRef, bool, er
 		return kustomizeRemoteRef{}, true, fmt.Errorf("kustomize remote ref %q must not include a fragment", redactKustomizeRemoteRef(original))
 	}
 	beforeQuery, rawQuery, _ := strings.Cut(beforeFragment, "?")
-	revision, err := kustomizeRemoteRevision(rawQuery, original)
+	revision, submodules, err := kustomizeRemoteQuery(rawQuery, original)
 	if err != nil {
 		return kustomizeRemoteRef{}, true, err
 	}
@@ -184,11 +189,12 @@ func parseKustomizeGitSCPRef(original, raw string) (kustomizeRemoteRef, bool, er
 	}
 
 	return kustomizeRemoteRef{
-		Original: strings.TrimSpace(original),
-		Kind:     kustomizeRemoteGit,
-		RepoURL:  repo,
-		Revision: revision,
-		Subpath:  path.Clean(subpath),
+		Original:   strings.TrimSpace(original),
+		Kind:       kustomizeRemoteGit,
+		RepoURL:    repo,
+		Revision:   revision,
+		Subpath:    path.Clean(subpath),
+		Submodules: submodules,
 	}, true, nil
 }
 
@@ -200,24 +206,36 @@ func cleanKustomizeGitSubpath(subpath string) string {
 	return cleaned
 }
 
-func kustomizeRemoteRevision(rawQuery, original string) (string, error) {
+// kustomizeRemoteQuery reads the query of a Git ref: the ref, and
+// whether kustomize checks out submodules. kustomize clones submodules by
+// default and reads ?submodules= with strconv.ParseBool, keeping the
+// default for a value it cannot parse (sigs.k8s.io/kustomize/api
+// internal/git/repospec.go parseQuery). Any other parameter is
+// unsupported.
+func kustomizeRemoteQuery(rawQuery, original string) (string, bool, error) {
 	if rawQuery == "" {
-		return "HEAD", nil
+		return "HEAD", true, nil
 	}
 	values, err := url.ParseQuery(rawQuery)
 	if err != nil {
-		return "", fmt.Errorf("parse kustomize remote ref query %q: invalid query syntax", redactKustomizeRemoteRef(original))
+		return "", false, fmt.Errorf("parse kustomize remote ref query %q: invalid query syntax", redactKustomizeRemoteRef(original))
 	}
 	for key := range values {
-		if key != "ref" {
-			return "", fmt.Errorf("kustomize remote ref %q uses unsupported query parameter", redactKustomizeRemoteRef(original))
+		if key != "ref" && key != "submodules" {
+			return "", false, fmt.Errorf("kustomize remote ref %q uses unsupported query parameter", redactKustomizeRemoteRef(original))
+		}
+	}
+	submodules := true
+	if value := values.Get("submodules"); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			submodules = parsed
 		}
 	}
 	revisions := values["ref"]
 	if len(revisions) == 0 || revisions[len(revisions)-1] == "" {
-		return "HEAD", nil
+		return "HEAD", submodules, nil
 	}
-	return revisions[len(revisions)-1], nil
+	return revisions[len(revisions)-1], submodules, nil
 }
 
 func redactKustomizeRemoteRef(ref string) string {

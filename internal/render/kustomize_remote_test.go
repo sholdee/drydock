@@ -297,3 +297,24 @@ func assertDoesNotLeakKustomizeSecret(t *testing.T, got string) {
 		}
 	}
 }
+
+// TestParseKustomizeRemoteRefReadsSubmodulesQuery pins kustomize's
+// ?submodules= parameter: on by default, off for a value strconv.ParseBool
+// reads as false, and on again for a value it cannot parse.
+func TestParseKustomizeRemoteRefReadsSubmodulesQuery(t *testing.T) {
+	for ref, want := range map[string]bool{
+		"https://github.com/org/repo//base?ref=v1":                    true,
+		"https://github.com/org/repo//base?ref=v1&submodules=false":   false,
+		"https://github.com/org/repo//base?submodules=0":              false,
+		"https://github.com/org/repo//base?submodules=nope":           true,
+		"git@github.com:org/repo.git//base?submodules=false&ref=main": false,
+	} {
+		parsed, ok, err := parseKustomizeRemoteRef(ref)
+		if err != nil || !ok {
+			t.Fatalf("parseKustomizeRemoteRef(%q) = ok %v, error %v", ref, ok, err)
+		}
+		if parsed.Submodules != want {
+			t.Fatalf("parseKustomizeRemoteRef(%q).Submodules = %v, want %v", ref, parsed.Submodules, want)
+		}
+	}
+}

@@ -58,6 +58,10 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	// the Git and OCI directory generators list.
 	"EnableNewGitFileGlobbing": settingsRenderAll,
 	"IncludeHiddenDirectories": settingsRenderAll,
+	// Whether every fetched Git source and snapshot holds submodule
+	// content, and whether the Git generators see it.
+	"EnableGitSubmodules":       settingsRenderAll,
+	"AppSetEnableGitSubmodules": settingsRenderAll,
 	// Diff: which rendered resources survive, and normalization.
 	"ResourceExclusions": settingsRenderAll,
 	"ResourceInclusions": settingsRenderAll,
@@ -127,10 +131,13 @@ var fingerprintedResourceCustomizationFields = map[string]bool{
 // an OCI URL, whose OCI repository set every render reads.
 var (
 	repositorySettingsFieldClasses = map[string]settingsChangeClass{
-		"Name":       settingsScoped,
-		"Type":       settingsScoped,
-		"URL":        settingsScoped,
-		"EnableOCI":  settingsScoped,
+		"Name":      settingsScoped,
+		"Type":      settingsScoped,
+		"URL":       settingsScoped,
+		"EnableOCI": settingsScoped,
+		// Whether the Git sources of the Applications that use the entry
+		// render Git LFS content.
+		"EnableLFS":  settingsScoped,
 		"Project":    settingsScoped,
 		"Provenance": settingsNoEffect,
 	}
@@ -276,10 +283,13 @@ func assertSettingsChangeClass(t *testing.T, name string, left, right config.Arg
 // controller reads a controller.ignore.normalizer.jq.timeout value that is
 // not a duration as the default.
 var nonZeroOverrides = map[string]any{
-	"ArgoSettings.AllowOutOfBoundsSymlinks.Value":  "true",
-	"ArgoSettings.EnableProgressiveSyncs.Value":    "true",
-	"ArgoSettings.EnableNewGitFileGlobbing.Value":  "true",
-	"ArgoSettings.IncludeHiddenDirectories.Value":  "true",
+	"ArgoSettings.AllowOutOfBoundsSymlinks.Value": "true",
+	"ArgoSettings.EnableProgressiveSyncs.Value":   "true",
+	"ArgoSettings.EnableNewGitFileGlobbing.Value": "true",
+	"ArgoSettings.IncludeHiddenDirectories.Value": "true",
+	// Both submodule keys default to true, so only "false" changes them.
+	"ArgoSettings.EnableGitSubmodules.Value":       "false",
+	"ArgoSettings.AppSetEnableGitSubmodules.Value": "false",
 	"ArgoSettings.IgnoreNormalizerJQTimeout.Value": "5s",
 	// Only a known key with a value other than "true" turns a tool off.
 	"ArgoSettings.SourceTypeEnable{}":      config.HelmEnableKey,

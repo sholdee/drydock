@@ -159,8 +159,14 @@ data:
 	if acquirer.requests[0] != (sourcepkg.GitRequest{URL: "https://github.com/example/external", Revision: "main"}) {
 		t.Fatalf("git request = %#v", acquirer.requests[0])
 	}
-	if acquirer.options[0] != (sourcepkg.GitOptions{AllowNetwork: true, CacheDir: cacheDir, Refresh: true}) {
-		t.Fatalf("git options = %#v", acquirer.options[0])
+	// Submodules is on by default, as reposerver.enable.git.submodule is.
+	// The session sets LockEntry, which is a function.
+	options := acquirer.options[0]
+	if options.LockEntry == nil {
+		t.Fatal("git options LockEntry = nil, want the session's entry lock")
+	}
+	if !options.AllowNetwork || options.CacheDir != cacheDir || !options.Refresh || !options.Submodules || options.AllowFileSubmoduleTransport || options.Credentials != (sourcepkg.GitCredentials{}) {
+		t.Fatalf("git options = %#v", options)
 	}
 	value, found, err := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "source")
 	if err != nil || !found || value != "fetched" {

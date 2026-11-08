@@ -151,6 +151,24 @@ Rendering intentionally does not call live Argo CD, Kubernetes, `kubectl`,
 `argocd`, Helm CLI, or Kustomize CLI. That keeps local and CI analysis fast,
 portable, and reproducible.
 
+#### Git submodules and Git LFS
+
+drydock checks out submodule content as the Argo CD repo-server does, unless
+`reposerver.enable.git.submodule` in `argocd-cmd-params-cm` is `false`. A
+fetched Git source keeps it in the Git cache. A `--ref` snapshot reads it
+from the repository's `.git/modules` store, the Git cache, or the network.
+When drydock cannot find a submodule of a snapshot, it warns once, and the
+sources whose path is in that submodule or holds it fail. A working tree is
+rendered as it is, and drydock warns for a submodule that is not
+initialized. drydock refuses submodule URLs that git and its own Git client
+read differently, local paths, and `http` URLs with a query. No cache entry
+stores a user or password from a URL.
+
+drydock reads `enableLfs` from repository Secrets. It does not run git-lfs
+and does not download Git LFS objects. A `--ref` snapshot reads Git LFS
+content from the repository's `.git/lfs` store. Any pointer file that
+drydock cannot fill stays a pointer, with a `render.lfs-pointer` warning.
+
 Covered rendering semantics are validated against real Argo CD through the
 [render parity smoke](/concepts/argocd-render-parity/).
 

@@ -412,13 +412,18 @@ func renderCacheOperation(cmd *cobra.Command, output cliformat.Output, result ca
 	}
 }
 
-// versionRecordsSuffix words the chart version lists that a prune removed,
-// or would remove, for the table output. It is empty when there are none.
+// versionRecordsSuffix words the chart version lists and the stale
+// submodule store clones that a prune or delete removed, or would remove,
+// for the table output. It is empty when there are none.
 func versionRecordsSuffix(result cache.OperationResult) string {
-	if result.VersionRecordsRemoved == 0 {
-		return ""
+	suffix := ""
+	if result.VersionRecordsRemoved > 0 {
+		suffix = fmt.Sprintf(" and %d chart version lists", result.VersionRecordsRemoved)
 	}
-	return fmt.Sprintf(" and %d chart version lists", result.VersionRecordsRemoved)
+	if result.StaleClonesRemoved > 0 {
+		suffix += fmt.Sprintf(" and %d stale submodule store clones", result.StaleClonesRemoved)
+	}
+	return suffix
 }
 
 func cacheEntryRows(entries []cache.Entry) []map[string]string {

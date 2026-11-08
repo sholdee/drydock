@@ -693,8 +693,9 @@ func (g indexGitlinks) Gitlinks() []string   { return g }
 // holds them: the checkout holds each one as an empty directory. The Git
 // directories generator lists it, `git ls-files` lists it as one entry,
 // also for its name with a trailing slash, and the repo-server fails to
-// read it. With .gitmodules, Argo CD fetches submodule content, which
-// drydock does not, so drydock warns.
+// read it. With .gitmodules, Argo CD checks out submodule content, which
+// this working tree does not hold, so drydock warns and names the empty
+// submodule.
 //
 //nolint:gocyclo // One table drives both matching modes.
 func TestGenerateGitGeneratorSeesIndexGitlinks(t *testing.T) {
@@ -726,8 +727,17 @@ func TestGenerateGitGeneratorSeesIndexGitlinks(t *testing.T) {
 	}
 	writeAppsetTestFile(t, filepath.Join(root, ".gitmodules"), "[submodule \"sub\"]\n")
 	_, diags, err = GenerateFromYAMLWithOptions(root, "app-set.yaml", gitDirectoriesAppSet("apps/*"), Options{Worktree: indexGitlinks{"apps/mod"}})
-	if err != nil || len(diags) != 1 || !strings.Contains(diags[0].Message, "ARGOCD_GIT_MODULES_ENABLED") {
+	if err != nil || len(diags) != 1 || !strings.Contains(diags[0].Message, `submodule "apps/mod" holds nothing in the tree that drydock reads`) {
 		t.Fatalf("error = %v, diagnostics = %#v, want the submodule content warning", err, diags)
+	}
+	writeAppsetTestFile(t, filepath.Join(root, ".gitmodules"), "[submodule \"mod\"]\n\tpath = apps/mod\n\turl = ../mod.git\n\tupdate = none\n")
+	_, diags, err = GenerateFromYAMLWithOptions(root, "app-set.yaml", gitDirectoriesAppSet("apps/*"), Options{Worktree: indexGitlinks{"apps/mod"}})
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("update = none: error = %v, diagnostics = %#v, want no warning for a skipped submodule", err, diags)
+	}
+	_, diags, err = GenerateFromYAMLWithOptions(root, "app-set.yaml", gitDirectoriesAppSet("apps/*"), Options{Worktree: indexGitlinks{"apps/mod"}, SubmodulesDisabled: true})
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("submodules disabled: error = %v, diagnostics = %#v, want no warning", err, diags)
 	}
 }
 
@@ -845,8 +855,8 @@ func TestGenerateGitFilesSymlinkToFIFOFailsOnlyTheApplicationSet(t *testing.T) {
 // gitlink whose content is on disk, in a repository without .gitmodules.
 // Argo CD fetches submodule content only when .gitmodules exists
 // (util/git/client.go:812-817) and then cleans the checkout, so the gitlink
-// is an empty directory: no generator sees what is in it. With
-// .gitmodules, drydock keeps the local content and warns.
+// is an empty directory: no generator sees what is in it
+// (TestGenerateGitGeneratorSeesSubmoduleContent covers .gitmodules).
 func TestGenerateGitGeneratorHidesGitlinkContentWithoutGitmodules(t *testing.T) {
 	root := writeGitParityTree(t, "params/a.yaml", "params/sub/x.yaml", "params/sub/inner/cm.yaml", "vendor/sub/inner/cm.yaml")
 	if err := os.WriteFile(filepath.Join(root, "params", "sub", ".git"), []byte("gitdir: ../../.git/modules/sub\n"), 0o644); err != nil {
@@ -867,11 +877,36 @@ func TestGenerateGitGeneratorHidesGitlinkContentWithoutGitmodules(t *testing.T) 
 	if err != nil || len(diags) != 0 || !slices.Equal(generatedNames(apps), []string{"dir-params-sub"}) {
 		t.Fatalf("apps = %q, diagnostics = %#v, error = %v, want params/sub only", generatedNames(apps), diags, err)
 	}
+}
 
+// TestGenerateGitGeneratorSeesSubmoduleContent pins a gitlink whose
+// content is on disk, in a repository with .gitmodules: the generators see
+// the submodule content, as Argo CD's do after `git submodule update
+// --init --recursive`, without a warning. With
+// applicationsetcontroller.enable.git.submodule off, the gitlinks are empty
+// again. ls-files still lists a gitlink as one entry, and the new globbing
+// walks the submodule content.
+func TestGenerateGitGeneratorSeesSubmoduleContent(t *testing.T) {
+	root := writeGitParityTree(t, "params/a.yaml", "params/sub/x.yaml", "params/sub/inner/cm.yaml", "vendor/sub/inner/cm.yaml")
 	writeAppsetTestFile(t, filepath.Join(root, ".gitmodules"), "[submodule \"sub\"]\n")
-	apps, diags, err = GenerateFromYAMLWithOptions(root, "app-set.yaml", gitDirectoriesAppSet("params/*", "params/*/*", "vendor/sub/*"), options)
-	if err != nil || len(diags) != 1 || !slices.Equal(generatedNames(apps), []string{"dir-params-sub", "dir-params-sub-inner", "dir-vendor-sub-inner"}) {
-		t.Fatalf("with .gitmodules: apps = %q, diagnostics = %#v, error = %v, want the local submodule content and a warning", generatedNames(apps), diags, err)
+	options := Options{Worktree: indexGitlinks{"params/sub", "vendor/sub"}}
+	directories := gitDirectoriesAppSet("params/*", "params/*/*", "vendor/sub/*")
+	cases := []struct {
+		name     string
+		options  Options
+		appSet   []byte
+		expected []string
+	}{
+		{"directories", options, directories, []string{"dir-params-sub", "dir-params-sub-inner", "dir-vendor-sub-inner"}},
+		{"submodules disabled", Options{Worktree: options.Worktree, SubmodulesDisabled: true}, directories, []string{"dir-params-sub"}},
+		{"ls-files", options, gitFilesAppSet("params/*.yaml"), []string{"params-a-yaml"}},
+		{"new globbing", Options{Worktree: options.Worktree, NewGitFileGlobbing: true}, gitFilesAppSet("params/**/*.yaml"), []string{"params-a-yaml", "params-sub-inner-cm-yaml", "params-sub-x-yaml"}},
+	}
+	for _, tc := range cases {
+		apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", tc.appSet, tc.options)
+		if err != nil || len(diags) != 0 || !slices.Equal(generatedNames(apps), tc.expected) {
+			t.Fatalf("%s: apps = %q, diagnostics = %#v, error = %v, want %q", tc.name, generatedNames(apps), diags, err, tc.expected)
+		}
 	}
 }
 

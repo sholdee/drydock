@@ -14,11 +14,28 @@ import (
 
 	"github.com/sholdee/drydock/internal/cache"
 	"github.com/sholdee/drydock/internal/gitauth"
+	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/giturl"
 )
 
-//nolint:gocyclo // Git acquisition has distinct cache hit, refresh, offline, auth, clone, and checkout branches.
+// acquireGitRepo checks the Git repository of request out in the remote
+// cache, with the content of its submodules when request asks for it.
 func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Request, opts Options) (Result, error) {
+	result, err := acquirer.checkoutGitRepo(ctx, request, opts)
+	if err != nil {
+		return result, err
+	}
+	if err := acquirer.syncGitSubmodules(ctx, result, request, opts); err != nil {
+		if result.Release != nil {
+			result.Release()
+		}
+		return Result{}, err
+	}
+	return result, nil
+}
+
+//nolint:gocyclo // Git acquisition has distinct cache hit, refresh, offline, auth, clone, and checkout branches.
+func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Request, opts Options) (Result, error) {
 	repoURL := strings.TrimSpace(request.RepoURL)
 	if repoURL == "" {
 		repoURL = strings.TrimSpace(request.URL)
@@ -42,6 +59,8 @@ func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Requ
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	// The cache key already ignores userinfo. The clone must not store it.
+	repoURL, opts.GitCredentials = cloneURLAndCredentials(repoURL, opts.GitCredentials)
 
 	repo, cacheHit, err := openCachedGitRepository(cachePath, repoURL, opts.GitCredentials)
 	if err != nil {
@@ -61,7 +80,7 @@ func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Requ
 			return Result{Path: cachePath, URL: normalizedURL, Revision: revision, FromCache: true}, nil
 		}
 		if !opts.Refresh {
-			revision, err := checkoutGitRevision(repo, worktree, request.Revision)
+			revision, err := checkoutOrFetchCommit(ctx, repo, worktree, repoURL, request.Revision, opts)
 			if err == nil {
 				writeGitRepoMetadata(filepath.Dir(cachePath), key, normalizedURL, revision)
 				return Result{Path: cachePath, URL: normalizedURL, Revision: revision, FromCache: true}, nil
@@ -103,7 +122,7 @@ func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Requ
 	if err != nil {
 		return Result{}, fmt.Errorf("open remote Git repository %s worktree: %s", RedactGitRepoURL(repoURL), redactGitError(err, repoURL, opts.GitCredentials))
 	}
-	revision, err := checkoutGitRevision(repo, worktree, request.Revision)
+	revision, err := checkoutOrFetchCommit(ctx, repo, worktree, repoURL, request.Revision, opts)
 	if err != nil {
 		return Result{}, fmt.Errorf("checkout remote Git repository %s revision %q: %s", RedactGitRepoURL(repoURL), strings.TrimSpace(request.Revision), redactGitError(err, repoURL, opts.GitCredentials))
 	}
@@ -124,7 +143,9 @@ func writeGitRepoMetadata(entryRoot, key, target, revision string) {
 func openCachedGitRepository(cachePath, repoURL string, credentials GitCredentials) (*git.Repository, bool, error) {
 	repo, err := git.PlainOpen(cachePath)
 	if err == nil {
-		return repo, true, nil
+		// An entry that an older drydock cloned from a URL with userinfo
+		// loses it now.
+		return repo, true, gittree.ScrubRemoteUserinfo(repo)
 	}
 	if errors.Is(err, git.ErrRepositoryNotExists) || errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
@@ -172,6 +193,9 @@ func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL strin
 }
 
 func pullGitRepository(ctx context.Context, worktree *git.Worktree, repoURL string, auth transport.AuthMethod, credentials GitCredentials) error {
+	if err := gittree.ClearCacheSubmodules(worktree.Filesystem.Root(), plumbing.ZeroHash); err != nil {
+		return fmt.Errorf("clear submodule content of remote Git repository %s: %w", RedactGitRepoURL(repoURL), err)
+	}
 	err := worktree.PullContext(ctx, &git.PullOptions{
 		RemoteName: "origin",
 		Auth:       auth,
@@ -215,6 +239,10 @@ func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision 
 
 	hash, err := resolveGitRevision(repo, cleanRevision)
 	if err != nil {
+		return "", err
+	}
+	// Submodule content of another commit must not meet the checkout.
+	if err := gittree.ClearCacheSubmodules(worktree.Filesystem.Root(), *hash); err != nil {
 		return "", err
 	}
 	if err := worktree.Checkout(&git.CheckoutOptions{Hash: *hash, Force: true}); err != nil {

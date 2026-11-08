@@ -92,6 +92,42 @@ emits a `source.self-repo-near-miss` warning and keeps remote acquisition; add
 `--repo-map URL=PATH` if they are the same repository. The warning is advisory
 only: `--strict` neither escalates it nor fails the run on it.
 
+### Git Submodules
+
+A submodule is a Git repository that another repository pins at one
+commit. The Argo CD repo-server checks out submodule content by default
+(`reposerver.enable.git.submodule`). drydock reads that content from these
+places:
+
+- A fetched Git source checks out its submodules into the Git cache. Each
+  submodule URL has one cache entry that holds every commit drydock
+  fetched for it, so `--offline` reads it.
+- A `--ref` or `--ref-orig` snapshot reads each submodule commit from the
+  repository's `.git/modules` store first. That needs no network. Then it
+  reads the Git cache, and then, unless `--offline` is set, it fetches the
+  submodule into the Git cache.
+- A remote Kustomize Git base checks out its submodules into the remote
+  cache, unless the ref says `?submodules=false`.
+- A self-repository source in a working tree reads the submodule as the
+  working tree holds it. If the submodule is not initialized, drydock warns.
+
+With `--offline`, a submodule commit that drydock has no copy of is an
+offline cache miss. A fetched Git source then fails. A `--ref` snapshot
+keeps the submodule empty, warns once, and fails only the sources whose
+path holds the submodule or is in it. drydock removes a user and password
+from submodule URLs before it fetches, so no cache entry stores a token. drydock never
+writes to your repository or its `.git` directory. Relative submodule URLs
+resolve against the repository URL. drydock sends HTTP credentials only to
+a submodule on the same host and port as the repository, never from
+`https` to `http`. It refuses `file` URLs and local paths, as the
+repo-server's git does.
+
+drydock does not download Git LFS objects. When a repository Secret sets
+`enableLfs`, a `--ref` snapshot reads Git LFS content from the repository's
+`.git/lfs` store, and drydock warns `render.lfs-pointer` for each source
+whose tree still holds pointer files. See
+[Compatibility](/compatibility/#git-submodules-and-git-lfs).
+
 ## Helm Sources
 
 Chart-only HTTP(S) and OCI Helm sources may be fetched into the chart cache
@@ -795,6 +831,14 @@ effort: drydock skips it when the cache is read-only, when another process
 holds the lock on the lists for more than 5 seconds, or when the write fails. `cache list` does not show the lists,
 and `cache prune` reports how many it removed. A list keeps its fetch time
 apart from its last use, and `--chart-cache-max-age` judges that fetch time.
+
+A submodule store clones into a temporary `<entry>.clone-*` directory and
+moves it into place when the clone is complete. A drydock process that is
+killed during a clone leaves that directory behind. `cache prune` removes
+such a directory in the Git and remote caches when nothing in it changed
+for one hour, so it never removes a clone that another process is still
+writing. `cache delete` of a Git entry removes the stale clones of that
+entry the same way. Both commands report how many they removed.
 
 ### Pruning by size (`--max-size`)
 

@@ -361,7 +361,7 @@ func settingsCandidate(rel string, documentIndex int, kind string, obj *unstruct
 func settingsCandidateObject(kind string, obj *unstructured.Unstructured) *unstructured.Unstructured {
 	switch kind {
 	case "repository-secret":
-		return sanitizedSecretObject(obj, []string{"name", "type", "url", "enableOCI", "project"})
+		return sanitizedSecretObject(obj, []string{"name", "type", "url", "enableOCI", "enableLfs", "project"})
 	case "cluster-secret":
 		return sanitizedSecretObject(obj, []string{"name", "server", "namespaces", "clusterResources", "project"})
 	case RepoServerDeploymentKind:

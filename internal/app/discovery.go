@@ -78,7 +78,7 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 // hasGenerationSensitiveApplicationSet reports a discovered ApplicationSet
 // that some value of appsetGenerationSettings changes.
 func hasGenerationSensitiveApplicationSet(discovered discovery.Result) bool {
-	all := appsetGenerationSettings{ProgressiveSyncs: true, NewGitFileGlobbing: true, IncludeHiddenDirectories: true}
+	all := appsetGenerationSettings{ProgressiveSyncs: true, NewGitFileGlobbing: true, IncludeHiddenDirectories: true, SubmodulesDisabled: true}
 	for _, appSetFile := range discovered.ApplicationSets {
 		if all.affectsApplicationSet(appsetGenerationSettings{}, appSetFile) {
 			return true
@@ -98,6 +98,9 @@ type appsetGenerationSettings struct {
 	NewGitFileGlobbing bool
 	// IncludeHiddenDirectories is reposerver.include.hidden.directories.
 	IncludeHiddenDirectories bool
+	// SubmodulesDisabled is applicationsetcontroller.enable.git.submodule
+	// turned off.
+	SubmodulesDisabled bool
 }
 
 func appsetGenerationSettingsFrom(settings config.ArgoSettings) appsetGenerationSettings {
@@ -105,6 +108,7 @@ func appsetGenerationSettingsFrom(settings config.ArgoSettings) appsetGeneration
 		ProgressiveSyncs:         config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value),
 		NewGitFileGlobbing:       config.ParseEnableNewGitFileGlobbing(settings.EnableNewGitFileGlobbing.Value),
 		IncludeHiddenDirectories: config.ParseIncludeHiddenDirectories(settings.IncludeHiddenDirectories.Value),
+		SubmodulesDisabled:       !config.ParseEnableGitSubmodules(settings.AppSetEnableGitSubmodules.Value),
 	}
 }
 
@@ -112,6 +116,7 @@ func (s appsetGenerationSettings) apply(options *appset.Options) {
 	options.ProgressiveSyncs = s.ProgressiveSyncs
 	options.NewGitFileGlobbing = s.NewGitFileGlobbing
 	options.IncludeHiddenDirectories = s.IncludeHiddenDirectories
+	options.SubmodulesDisabled = s.SubmodulesDisabled
 }
 
 // affects reports whether s differs from used in a value that changes a
@@ -135,12 +140,13 @@ func (s appsetGenerationSettings) affectsApplicationSet(used appsetGenerationSet
 	if s.ProgressiveSyncs != used.ProgressiveSyncs && appset.IsRollingSyncStrategy(appSetFile.ApplicationSet) {
 		return true
 	}
-	if s.NewGitFileGlobbing == used.NewGitFileGlobbing && s.IncludeHiddenDirectories == used.IncludeHiddenDirectories {
+	if s.NewGitFileGlobbing == used.NewGitFileGlobbing && s.IncludeHiddenDirectories == used.IncludeHiddenDirectories && s.SubmodulesDisabled == used.SubmodulesDisabled {
 		return false
 	}
 	uses := appset.RepositoryGeneratorsOf(appSetFile.ApplicationSet)
 	return (s.NewGitFileGlobbing != used.NewGitFileGlobbing && uses.GitFiles) ||
-		(s.IncludeHiddenDirectories != used.IncludeHiddenDirectories && uses.Directories)
+		(s.IncludeHiddenDirectories != used.IncludeHiddenDirectories && uses.Directories) ||
+		(s.SubmodulesDisabled != used.SubmodulesDisabled && (uses.GitFiles || uses.Directories))
 }
 
 // appsetGenerationCycleDiagnostics warns for each value that a second
@@ -156,6 +162,9 @@ func appsetGenerationCycleDiagnostics(used, final appsetGenerationSettings, sett
 	}
 	if used.IncludeHiddenDirectories != final.IncludeHiddenDirectories && (appsetGenerationSettings{IncludeHiddenDirectories: final.IncludeHiddenDirectories}).affects(appsetGenerationSettings{IncludeHiddenDirectories: used.IncludeHiddenDirectories}, discovered) {
 		diags = append(diags, appsetGenerationCycleDiagnostic("reposerver.include.hidden.directories", "a Git or OCI directory generator", used.IncludeHiddenDirectories, settings.IncludeHiddenDirectories.Provenance))
+	}
+	if used.SubmodulesDisabled != final.SubmodulesDisabled && (appsetGenerationSettings{SubmodulesDisabled: final.SubmodulesDisabled}).affects(appsetGenerationSettings{SubmodulesDisabled: used.SubmodulesDisabled}, discovered) {
+		diags = append(diags, appsetGenerationCycleDiagnostic("applicationsetcontroller.enable.git.submodule", "a Git generator", !used.SubmodulesDisabled, settings.AppSetEnableGitSubmodules.Provenance))
 	}
 	return diags
 }
@@ -222,7 +231,7 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 	request.appsetGenerationMemo = &sync.Map{}
 	request.settingsInstallMemo = &sync.Map{}
 
-	discovered, externalDiags, err := scanRepositoryDiscovery(root, request)
+	discovered, externalDiags, err := scanRepositoryWithSubmodules(ctx, root, request)
 	if err != nil {
 		return discovered, externalDiags, nil, renderCache, "", err
 	}
@@ -297,7 +306,7 @@ func applicationSetOptionsForRun(ctx context.Context, root string, request Build
 	if request.rootRevision == "" {
 		appsetOptions.Worktree = newLazyWorktreeFilter(ctx, root)
 	} else {
-		appsetOptions.Worktree = &snapshotGitlinks{root: root}
+		appsetOptions.Worktree = &snapshotGitlinks{root: root, links: request.rootSnapshot.gitlinks, listed: request.rootSnapshot.gitlinks != nil}
 	}
 	return appsetOptions, diags, nil
 }
@@ -619,4 +628,36 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 
 func (o Orchestrator) discoveryProvider(ctx context.Context, root string, settings config.ArgoSettings, request BuildRequest, recorder *cacheevent.Recorder) (localProvider, func(), error) {
 	return newLocalProvider(ctx, o, root, settings, request, recorder, "drydock-discovery-cache-snapshots-*")
+}
+
+// scanRepositoryWithSubmodules scans the repository at root, and then
+// checks out the submodules of a snapshot root before its ApplicationSets
+// read it (fillSnapshotSubmodulesForDiscovery), with a warning for the
+// submodules it could not check out.
+func scanRepositoryWithSubmodules(ctx context.Context, root string, request BuildRequest) (discovery.Result, []diagnostic.Diagnostic, error) {
+	discovered, diags, err := scanRepositoryDiscovery(root, request)
+	if err != nil {
+		return discovered, diags, err
+	}
+	if request.rootSnapshot.options == nil {
+		return discovered, diags, nil
+	}
+	fill, err := fillSnapshotSubmodulesForDiscovery(ctx, root, request, discovered)
+	if diag, ok := fill.missingDiagnostic(); ok {
+		diags = append(diags, diag)
+	}
+	return discovered, diags, err
+}
+
+// fillSnapshotSubmodulesForDiscovery checks out the submodules of a
+// snapshot root before its ApplicationSets read it, with the settings that
+// discovery found (fillSnapshotSubmodules). It fails only when it cannot
+// read the settings: a configuration that git refuses, or a submodule
+// that drydock cannot find, fails the sources that render from it.
+func fillSnapshotSubmodulesForDiscovery(ctx context.Context, root string, request BuildRequest, discovered discovery.Result) (*snapshotFill, error) {
+	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	if err != nil {
+		return nil, err
+	}
+	return fillSnapshotSubmodules(ctx, root, request, settings), nil
 }

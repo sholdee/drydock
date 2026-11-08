@@ -525,7 +525,7 @@ drydock diag --path . --render -o json
 `argocd-cmd-params-cm` settings are parsed as runtime-boundary metadata when
 they imply live repo-server, controller, or ApplicationSet controller behavior.
 They may produce diagnostics and settings summaries, but they do not mutate
-drydock render behavior. There are five exceptions:
+drydock render behavior. There are seven exceptions:
 
 - `reposerver.max.combined.directory.manifests.size`: drydock applies it as
   the limit on the combined file size of one directory source, with the
@@ -546,6 +546,13 @@ drydock render behavior. There are five exceptions:
 - `reposerver.include.hidden.directories`: when it is `true`, the Git and
   OCI directory generators also list hidden directories. See
   [Git Generators](/docs/applicationsets/#git-generators).
+- `reposerver.enable.git.submodule`: unless it is `false`, a fetched Git
+  source and a `--ref` snapshot hold the content of their submodules, as
+  the repo-server checkout does. See
+  [Git submodules and Git LFS](/compatibility/#git-submodules-and-git-lfs).
+- `applicationsetcontroller.enable.git.submodule`: unless it is `false`,
+  the Git generators see submodule content. Both keys read `false` in any
+  case as off, and any other value as on.
 
 drydock also applies one key to diffs:
 
