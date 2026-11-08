@@ -79,3 +79,41 @@ func TestPullRequestParamsUseArgoCDSlug(t *testing.T) {
 		t.Fatalf("slugs = %q, %q; want fix-cafe-creme, release-2026-ete", params["branch_slug"], params["target_branch_slug"])
 	}
 }
+
+// The "en" table of gosimple/slug includes defaultSub: quotes are removed,
+// and the figure, en, and em dashes and the horizontal bar become "-".
+func TestPullRequestBranchSlugDefaultSubstitutions(t *testing.T) {
+	for _, tc := range []struct {
+		branch string
+		want   string
+	}{
+		{branch: "fix/don't-break", want: "fix-dont-break"},
+		{branch: "fix/it’s", want: "fix-its"},
+		{branch: `feat/"quoted"`, want: "feat-quoted"},
+		{branch: "a—b–c‒d―e", want: "a-b-c-d-e"},
+	} {
+		upstream := upstreamPullRequestSlug(t, tc.branch)
+		if upstream != tc.want {
+			t.Fatalf("slug.Make(%q) = %q, table wants %q", tc.branch, upstream, tc.want)
+		}
+		if got := pullRequestBranchSlug(tc.branch); got != upstream {
+			t.Fatalf("pullRequestBranchSlug(%q) = %q, want %q", tc.branch, got, upstream)
+		}
+	}
+}
+
+// TestPullRequestBranchSlugMatchesSlugMakeForEveryRune keeps the copied
+// substitution table in step with the slug library: every rune of the Basic
+// Multilingual Plane, between two letters, must slug as slug.Make does.
+func TestPullRequestBranchSlugMatchesSlugMakeForEveryRune(t *testing.T) {
+	upstreamPullRequestSlug(t, "") // sets the slug options for the loop
+	for r := rune(0); r <= 0xFFFF; r++ {
+		if r >= 0xD800 && r <= 0xDFFF {
+			continue
+		}
+		branch := "a" + string(r) + "b"
+		if got, want := pullRequestBranchSlug(branch), slug.Make(branch); got != want {
+			t.Fatalf("pullRequestBranchSlug(%q) = %q, slug.Make = %q (rune %U)", branch, got, want, r)
+		}
+	}
+}

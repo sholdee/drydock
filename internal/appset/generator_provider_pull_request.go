@@ -290,9 +290,22 @@ var (
 	// generator sets (pull_request.go:90-93).
 	pullRequestSlugCustomSub = map[string]string{"_": "-"}
 	// pullRequestSlugEnglishSub is the "en" language table of
-	// github.com/gosimple/slug v1.15.0 (languages_substitution.go), which
-	// slug.Make uses.
-	pullRequestSlugEnglishSub     = map[rune]string{'&': "and", '@': "at"}
+	// github.com/gosimple/slug v1.15.0, which slug.Make uses: enSub with
+	// defaultSub merged in by the package init (languages_substitution.go:8-50).
+	// TestPullRequestBranchSlugMatchesSlugMakeForEveryRune compares it with
+	// slug.Make over every rune of the Basic Multilingual Plane, so a new
+	// slug release that changes the table fails the test.
+	pullRequestSlugEnglishSub = map[rune]string{
+		'&':  "and",
+		'@':  "at",
+		'"':  "",
+		'\'': "",
+		'’':  "",
+		'‒':  "-", // figure dash
+		'–':  "-", // en dash
+		'—':  "-", // em dash
+		'―':  "-", // horizontal bar
+	}
 	pullRequestSlugNonAuthorized  = regexp.MustCompile("[^a-zA-Z0-9-_]")
 	pullRequestSlugMultipleDashes = regexp.MustCompile("-+")
 )

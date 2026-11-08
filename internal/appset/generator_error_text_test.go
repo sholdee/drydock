@@ -237,7 +237,11 @@ spec:
 
 // Argo CD runs the spec checks of a generator whatever the cluster or SCM
 // provider returns, so they fail the ApplicationSet also when drydock has no
-// provider fixture for the generator.
+// provider fixture for the generator. The pull request and SCM provider
+// texts assume that Argo CD selects the provider without error first, and
+// the clusterDecisionResource text assumes that it reads the configMapRef
+// ConfigMap (duck_type.go:80-97). If those cluster lookups fail, Argo CD
+// reports their error instead, and the ApplicationSet still fails.
 func TestGeneratorSpecChecksRunWithoutProviderFixture(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -372,5 +376,176 @@ func TestClusterDecisionResourceUnknownConfigMapRefIsNoMatch(t *testing.T) {
 	}
 	if len(diags) != 1 || diags[0].Code != "appset.provider-no-match" {
 		t.Fatalf("diagnostics = %#v, want one provider no-match diagnostic", diags)
+	}
+}
+
+// TestGeneratorErrorTextPrefixMatchesArgoCD pins errors whose end comes from
+// encoding/json, so only the Argo CD part of the text is fixed.
+func TestGeneratorErrorTextPrefixMatchesArgoCD(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		generators string
+		want       string
+	}{
+		{
+			// getMatrixGenerator returns the decode error as it is
+			// (matrix.go:308-317).
+			name: "matrix child matrix that does not decode",
+			generators: `
+    - matrix:
+        generators:
+          - matrix: "str"
+          - list: {elements: [{name: a}]}`,
+			want: "error failed to get params for first generator in matrix generator: json: cannot unmarshal",
+		},
+		{
+			// nestedGeneratorSpec wraps a merge decode error
+			// (matrix.go:146-149).
+			name: "matrix child merge that does not decode",
+			generators: `
+    - matrix:
+        generators:
+          - merge: "str"
+          - list: {elements: [{name: a}]}`,
+			want: "error failed to get params for first generator in matrix generator: error retrieving merge generator: error converting to nested merge generator: json: cannot unmarshal",
+		},
+		{
+			// The merge generator's getParams does not wrap either decode
+			// error (merge.go:137-145).
+			name: "merge child merge that does not decode",
+			generators: `
+    - merge:
+        mergeKeys: [name]
+        generators:
+          - merge: "str"
+          - list: {elements: [{name: a}]}`,
+			want: "error getting param sets from generators: error getting params from generator 1 of 2: error converting to nested merge generator: json: cannot unmarshal",
+		},
+		{
+			name: "merge child matrix that does not decode",
+			generators: `
+    - merge:
+        mergeKeys: [name]
+        generators:
+          - matrix: "str"
+          - list: {elements: [{name: a}]}`,
+			want: "error getting param sets from generators: error getting params from generator 1 of 2: json: cannot unmarshal",
+		},
+		{
+			// Transform runs both generators of a two-generator child, and
+			// getParams reports the first error before the count
+			// (generator_spec_processor.go:43-101, matrix.go:125-135).
+			name: "two-generator child whose list fails",
+			generators: `
+    - matrix:
+        generators:
+          - list:
+              elementsYaml: "notalist"
+            clusters: {}
+          - list: {elements: [{name: a}]}`,
+			want: "error failed to get params for first generator in matrix generator: child generator returned an error on parameter generation: error unmarshling decoded ElementsYaml ",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: error-text
+spec:
+  generators:` + tc.generators + `
+  template:
+    metadata:
+      name: 'app-{{name}}'
+    spec:
+      project: default
+      source: {repoURL: https://github.com/example/repo, path: apps, targetRevision: main}
+      destination: {name: in-cluster, namespace: default}
+`)
+			apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+			if err != nil || len(apps) != 0 {
+				t.Fatalf("GenerateFromYAML() = %#v, %v; want no Applications and no error", generatedNames(apps), err)
+			}
+			if got := generatorFailedMessage(t, diags); !strings.HasPrefix(got, tc.want) {
+				t.Fatalf("message = %q\nwant prefix %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Argo CD v3.6.1 checks the merge keys after every child ran
+// (merge.go:62-76 and :106-109). A missing merge key list, or a repeated
+// merge key value in a child that drydock can run, fails the ApplicationSet
+// whatever a child that needs provider data returns.
+func TestMergeKeyChecksRunBeforeUnsupportedChild(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mergeKeys string
+		elements  string
+		want      string
+	}{
+		{
+			name:     "no merge keys",
+			elements: "[{name: a}]",
+			want:     "error getting param sets by merge key: no merge keys were specified, Merge requires at least one",
+		},
+		{
+			name:      "repeated merge key value",
+			mergeKeys: "mergeKeys: [name]",
+			elements:  "[{name: a}, {name: a}]",
+			want:      `error getting param sets by merge key: the parameters from a generator were not unique by the given mergeKeys, Merge requires all param sets to be unique. Duplicate key was {"name":"a"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", []byte(noFixtureAppSetHead+`
+    - merge:
+        `+tc.mergeKeys+`
+        generators:
+          - clusters: {}
+          - list: {elements: `+tc.elements+`}`))
+			if err != nil || len(apps) != 0 {
+				t.Fatalf("GenerateFromYAML() = %#v, %v; want no Applications and no error", generatedNames(apps), err)
+			}
+			if got := generatorFailedMessage(t, diags); got != tc.want {
+				t.Fatalf("message = %q\nwant      %q", got, tc.want)
+			}
+		})
+	}
+	// Control: valid merge keys leave the ApplicationSet unsupported.
+	apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", []byte(noFixtureAppSetHead+`
+    - merge:
+        mergeKeys: [name]
+        generators:
+          - clusters: {}
+          - list: {elements: [{name: a}]}`))
+	if err != nil || len(apps) != 1 || len(diags) != 1 || diagnostic.StableCode(diags[0]) != "appset.unsupported-generator" {
+		t.Fatalf("GenerateFromYAML() = %#v, %#v, %v; want the sibling and one unsupported generator warning", generatedNames(apps), diags, err)
+	}
+}
+
+// Argo CD walks a list element in Go map order, so which error it reports
+// for an element with two bad fields varies. drydock reports the first in
+// key order every time.
+func TestListElementErrorIsStable(t *testing.T) {
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: error-text
+spec:
+  generators:
+    - list: {elements: [{name: a, a: 1, b: 2, c: 3, d: 4, e: 5, values: text}]}
+  template:
+    metadata:
+      name: 'app-{{name}}'
+`)
+	for range 40 {
+		_, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := generatorFailedMessage(t, diags); got != "error parsing value as string %!w(<nil>)" {
+			t.Fatalf("message = %q, want the first key in order (a)", got)
+		}
 	}
 }

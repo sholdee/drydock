@@ -186,28 +186,32 @@ func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetG
 // Argo CD v3.6.1 matrix and merge getParams do: they build the child
 // generator (nestedGeneratorSpec) and run generators.Transform on it
 // (applicationset/generators/matrix.go:117-139 and merge.go:137-177).
+// parent is "matrix" or "merge", the generator that holds the child.
 // Transform parses the child's selector first. It finds no generator in a
 // child that sets none, such as `{}` or a matrix nested one level too deep
 // (the terminal generator type has no matrix or merge field, so decoding
-// drops it). It finds two in a child that sets two. getParams then fails
-// with "child generator generated no parameters" or
-// ErrMoreThenOneInnerGenerators, and the whole ApplicationSet fails. Every
-// error that Transform returns, getParams wraps as "child generator
-// returned an error on parameter generation".
-func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationSetNestedGenerator, inheritedParams map[string]any) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+// drops it). For a child that sets two generators, Transform runs both, and
+// getParams reports ErrMoreThenOneInnerGenerators only when neither fails
+// (matrix.go:125-135, merge.go:165-175). Every error that Transform
+// returns, getParams wraps as "child generator returned an error on
+// parameter generation".
+func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationSetNestedGenerator, inheritedParams map[string]any, parent string) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
 	generator, err := generatorFromNested(nested)
 	if err != nil {
+		// The matrix generator wraps a merge child that does not decode
+		// (matrix.go:146-149). The merge generator does not
+		// (merge.go:142-145), and neither wraps a matrix child.
+		if _, ok := errors.AsType[*nestedMergeDecodeError](err); ok && parent == "matrix" {
+			err = fmt.Errorf("error retrieving merge generator: %w", err)
+		}
 		return nil, nil, true, &generatorParamsError{err: err}
 	}
 	if err := parseGeneratorSelector(generator.Selector); err != nil {
 		return nil, nil, true, wrapGeneratorError(err, childGeneratorErrorFormat)
 	}
-	switch generatorCount(generator) {
-	case 0:
+	count := generatorCount(generator)
+	if count == 0 {
 		return nil, nil, true, &generatorParamsError{err: errors.New("child generator generated no parameters")}
-	case 1:
-	default:
-		return nil, nil, true, &generatorParamsError{err: errors.New("found more than one generator in matrix.Generators")}
 	}
 	if len(inheritedParams) != 0 {
 		// Transform interpolates the child generator with the parameters
@@ -225,18 +229,29 @@ func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationS
 		generator = *rendered
 		generator.Selector = selector
 	}
-	var paramSets []generatorParamSet
-	var diags []diagnostic.Diagnostic
-	var supported bool
-	if generator.Merge != nil {
-		paramSets, diags, supported, err = mergeGeneratorParamSets(ctx, generator.Merge, generator.Selector)
-	} else {
-		paramSets, diags, supported, err = evaluateGenerator(ctx, generator)
+	if count > 1 {
+		for _, single := range splitGenerator(generator) {
+			if _, _, _, err := evaluateChildGenerator(ctx, single); err != nil {
+				return nil, nil, true, wrapGeneratorError(err, childGeneratorErrorFormat)
+			}
+		}
+		return nil, nil, true, &generatorParamsError{err: errors.New("found more than one generator in matrix.Generators")}
 	}
+	paramSets, diags, supported, err := evaluateChildGenerator(ctx, generator)
 	if err != nil {
 		err = wrapGeneratorError(err, childGeneratorErrorFormat)
 	}
 	return paramSets, diags, supported, err
+}
+
+// evaluateChildGenerator runs the one generator of a matrix or merge child.
+// A merge child uses no template of its own (Transform gets an empty base
+// template from getParams).
+func evaluateChildGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if generator.Merge != nil {
+		return mergeGeneratorParamSets(ctx, generator.Merge, generator.Selector)
+	}
+	return evaluateGenerator(ctx, generator)
 }
 
 // childGeneratorErrorFormat is how Argo CD v3.6.1 getParams wraps a Transform
@@ -304,16 +319,32 @@ func topLevelGenerators(generators []argoappv1.ApplicationSetGenerator) []argoap
 	return out
 }
 
+// nestedMergeDecodeError is a nested merge generator that does not decode,
+// with the text of Argo CD v3.6.1 getMergeGenerator (merge.go:216-225).
+type nestedMergeDecodeError struct {
+	err error
+}
+
+func (e *nestedMergeDecodeError) Error() string {
+	return e.err.Error()
+}
+
+func (e *nestedMergeDecodeError) Unwrap() error {
+	return e.err
+}
+
 func generatorFromNested(nested argoappv1.ApplicationSetNestedGenerator) (argoappv1.ApplicationSetGenerator, error) {
 	// Argo CD v3.6.1 getMatrixGenerator and getMergeGenerator
 	// (applicationset/generators/utils.go).
 	matrix, err := argoappv1.ToNestedMatrixGenerator(nested.Matrix)
 	if err != nil {
-		return argoappv1.ApplicationSetGenerator{}, fmt.Errorf("convert nested matrix generator: %w", err)
+		// getMatrixGenerator returns the decode error as it is
+		// (matrix.go:308-317).
+		return argoappv1.ApplicationSetGenerator{}, err
 	}
 	merge, err := argoappv1.ToNestedMergeGenerator(nested.Merge)
 	if err != nil {
-		return argoappv1.ApplicationSetGenerator{}, fmt.Errorf("error converting to nested merge generator: %w", err)
+		return argoappv1.ApplicationSetGenerator{}, &nestedMergeDecodeError{err: fmt.Errorf("error converting to nested merge generator: %w", err)}
 	}
 	var matrixGenerator *argoappv1.MatrixGenerator
 	if matrix != nil {

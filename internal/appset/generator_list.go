@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -74,16 +76,21 @@ func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator, 
 var errListValueNotString = errors.New("error parsing value as string %!w(<nil>)")
 
 // normalizeListElementParams mirrors the fasttemplate branch of the Argo CD
-// v3.6.1 list generator (list.go:55-77), with its error texts.
+// v3.6.1 list generator (list.go:55-77), with its error texts. Argo CD
+// walks the element in Go map order, so when several fields fail, which
+// error it reports varies. drydock walks the keys in sorted order, so its
+// report is stable.
 func normalizeListElementParams(element map[string]any) (map[string]any, error) {
 	params := map[string]any{}
-	for key, value := range element {
+	for _, key := range slices.Sorted(maps.Keys(element)) {
+		value := element[key]
 		if key == "values" {
 			values, ok := value.(map[string]any)
 			if !ok {
 				return nil, errors.New("error parsing values map")
 			}
-			for valueKey, nestedValue := range values {
+			for _, valueKey := range slices.Sorted(maps.Keys(values)) {
+				nestedValue := values[valueKey]
 				rendered, ok := nestedValue.(string)
 				if !ok {
 					return nil, errListValueNotString
