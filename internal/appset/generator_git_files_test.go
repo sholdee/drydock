@@ -1,6 +1,7 @@
 package appset
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -392,9 +393,11 @@ spec:
 // repo-server reads a listed symlink: `git ls-files` lists the symlink
 // itself, and os.ReadFile follows it
 // (reposerver/repository/repository.go:3363-3369 at v3.6.1). A target
-// inside the repository is read. drydock never reads a target outside the
-// repository or in .git; it warns about that file only, and not about a
-// symlink that no pattern matches.
+// inside the repository is read, and a symlink that no pattern matches
+// changes nothing. drydock never reads a target outside the repository or
+// in .git. Argo CD reads such a target in its own file system, or fails
+// when it does not exist there, so drydock cannot tell what the
+// ApplicationSet generates and reports it unsupported.
 func TestGenerateGitFilesReadsSymlinksLikeTheRepoServer(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -404,9 +407,9 @@ func TestGenerateGitFilesReadsSymlinksLikeTheRepoServer(t *testing.T) {
 	writeAppsetTestFile(t, filepath.Join(root, ".git", "config.yaml"), "name: git\n")
 	for link, target := range map[string]string{
 		"files/linked.yaml":    "../real/config.yaml",
-		"files/outside.yaml":   filepath.Join(outside, "outside.yaml"),
-		"files/climb.yaml":     "../../outside.yaml",
-		"files/in-git.yaml":    "../.git/config.yaml",
+		"blocked/outside.yaml": filepath.Join(outside, "outside.yaml"),
+		"blocked/climb.yaml":   "../../outside.yaml",
+		"blocked/in-git.yaml":  "../.git/config.yaml",
 		"unmatched/link.yaml":  filepath.Join(outside, "outside.yaml"),
 		"unmatched/dangling":   "missing",
 		"files/dir-link/x.txt": "ignored",
@@ -418,7 +421,8 @@ func TestGenerateGitFilesReadsSymlinksLikeTheRepoServer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	data := []byte(`
+	appSet := func(pattern string) []byte {
+		return []byte(`
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -428,32 +432,28 @@ spec:
   generators:
     - git:
         files:
-          - path: files/*.yaml
+          - path: ` + pattern + `
   template:
     metadata:
       name: '{{.name}}'
     spec:
       project: default
 `)
+	}
 
-	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
-	if err != nil {
-		t.Fatalf("GenerateFromYAML() error = %v", err)
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", appSet("files/*.yaml"))
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("GenerateFromYAML() error = %v, diagnostics = %#v", err, diags)
 	}
 	if got := generatedNames(apps); !slices.Equal(got, []string{"real", "valid"}) {
 		t.Fatalf("generated names = %#v, want real and valid", got)
 	}
-	messages := make([]string, 0, len(diags))
-	for _, diag := range diags {
-		messages = append(messages, diag.Message)
-	}
-	want := []string{
-		`git files path "files/climb.yaml" is a symlink to a target outside the repository; drydock does not read it and skips the file`,
-		`git files path "files/in-git.yaml" is a symlink into .git; drydock does not read .git and skips the file`,
-		`git files path "files/outside.yaml" is a symlink to a target outside the repository; drydock does not read it and skips the file`,
-	}
-	if !slices.Equal(messages, want) {
-		t.Fatalf("diagnostics = %q, want %q", messages, want)
+	for _, name := range []string{"outside", "climb", "in-git"} {
+		apps, diags, err := GenerateFromYAML(root, "app-set.yaml", appSet("blocked/"+name+".yaml"))
+		if !errors.Is(err, ErrUnsupportedGenerator) || len(apps) != 0 || len(diags) != 1 ||
+			diagnostic.StableCode(diags[0]) != "appset.unsupported-generator" || !strings.Contains(diags[0].Message, "blocked/"+name+".yaml") {
+			t.Fatalf("%s: apps = %q, diagnostics = %#v, error = %v, want an unsupported ApplicationSet", name, generatedNames(apps), diags, err)
+		}
 	}
 }
 

@@ -352,7 +352,10 @@ func TestGitRepositoryDirectoriesMatchCheckoutWalk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"a", "a/b", "a-c", "apps", "apps/alpha", "apps/only-hidden-file", "nested", "nested/sub"}
+	// nested holds its own .git, so it is a gitlink. Without .gitmodules,
+	// Argo CD fetches no submodule content, and the checkout holds an empty
+	// directory there.
+	want := []string{"a", "a/b", "a-c", "apps", "apps/alpha", "apps/only-hidden-file", "nested"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("directories(false) = %q, want %q", got, want)
 	}
@@ -360,7 +363,7 @@ func TestGitRepositoryDirectoriesMatchCheckoutWalk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = []string{".git", ".top", "a", "a/b", "a-c", "apps", "apps/.hidden", "apps/.hidden/nested", "apps/alpha", "apps/only-hidden-file", "nested", "nested/sub"}
+	want = []string{".git", ".top", "a", "a/b", "a-c", "apps", "apps/.hidden", "apps/.hidden/nested", "apps/alpha", "apps/only-hidden-file", "nested"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("directories(true) = %q, want %q", got, want)
 	}
@@ -627,8 +630,12 @@ func TestGenerateGitFilesListsGitlinkAsOneEntry(t *testing.T) {
 
 // TestGenerateGitFilesResolvesSymlinksLikeTheKernel pins symlink targets
 // that os.ReadFile refuses: a path through a regular file fails with
-// ENOTDIR. A target with a .git component is never read, also when a ".."
-// leaves .git again, and a chain of symlinks is followed.
+// ENOTDIR, and a path that the checkout does not hold, such as a .git
+// entry below the top level, ".GIT", or a name in another letter case,
+// fails with ENOENT, also on a file system that ignores case. Each fails
+// the ApplicationSet. A target in the top-level .git directory, also when a
+// ".." leaves .git again, or outside the repository, is never read, so the
+// ApplicationSet is unsupported. A chain of symlinks is followed.
 func TestGenerateGitFilesResolvesSymlinksLikeTheKernel(t *testing.T) {
 	for _, tc := range []struct {
 		target string
@@ -637,8 +644,14 @@ func TestGenerateGitFilesResolvesSymlinksLikeTheKernel(t *testing.T) {
 		{"../targets/t.yaml/", "not a directory"},
 		{"../targets/t.yaml/.", "not a directory"},
 		{"../targets/t.yaml/../t.yaml", "not a directory"},
-		{"../.git/HEAD", "is a symlink into .git"},
-		{"../.git/../targets/t.yaml", "is a symlink into .git"},
+		{"../.git/HEAD", "is a symlink into the .git directory"},
+		{"../.git/../targets/t.yaml", "is a symlink into the .git directory"},
+		{"../.git", "is a directory"},
+		{"../targets/.git/HEAD", "no such file or directory"},
+		{"../.GIT/HEAD", "no such file or directory"},
+		{"../../outside.yaml", "a target outside the repository"},
+		{"/etc/hostname", "a target outside the repository"},
+		{"../targets/T.yaml", "no such file or directory"},
 		{"../l1/l2/x.yaml", ""},
 	} {
 		t.Run(tc.target, func(t *testing.T) {
@@ -652,7 +665,7 @@ func TestGenerateGitFilesResolvesSymlinksLikeTheKernel(t *testing.T) {
 				}
 			}
 			apps, diags, err := GenerateFromYAML(root, "app-set.yaml", gitFilesAppSet("params/link.yaml"))
-			if err != nil {
+			if err != nil && !errors.Is(err, ErrUnsupportedGenerator) {
 				t.Fatal(err)
 			}
 			if tc.want == "" {
@@ -824,5 +837,110 @@ func TestGenerateGitFilesSymlinkToFIFOFailsOnlyTheApplicationSet(t *testing.T) {
 	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", gitFilesAppSet("params/*.yaml"))
 	if err != nil || len(apps) != 0 || len(diags) != 1 || !strings.Contains(diags[0].Message, "no such file or directory") {
 		t.Fatalf("apps = %q, diagnostics = %#v, error = %v, want a no such file generator failure", generatedNames(apps), diags, err)
+	}
+}
+
+// TestGenerateGitGeneratorHidesGitlinkContentWithoutGitmodules pins a
+// gitlink whose content is on disk, in a repository without .gitmodules.
+// Argo CD fetches submodule content only when .gitmodules exists
+// (util/git/client.go:812-817) and then cleans the checkout, so the gitlink
+// is an empty directory: no generator sees what is in it. With
+// .gitmodules, drydock keeps the local content and warns.
+func TestGenerateGitGeneratorHidesGitlinkContentWithoutGitmodules(t *testing.T) {
+	root := writeGitParityTree(t, "params/a.yaml", "params/sub/x.yaml", "params/sub/inner/cm.yaml", "vendor/sub/inner/cm.yaml")
+	if err := os.WriteFile(filepath.Join(root, "params", "sub", ".git"), []byte("gitdir: ../../.git/modules/sub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{Worktree: indexGitlinks{"vendor/sub"}}
+	// A pathspec "*" matches "/", and "**" of a doublestar glob matches
+	// any number of directories.
+	for newGlobbing, pattern := range map[bool]string{false: "params/*.yaml", true: "params/**/*.yaml"} {
+		options.NewGitFileGlobbing = newGlobbing
+		apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitFilesAppSet(pattern), options)
+		if err != nil || len(diags) != 0 || !slices.Equal(generatedNames(apps), []string{"params-a-yaml"}) {
+			t.Fatalf("new globbing %t: apps = %q, diagnostics = %#v, error = %v, want params/a.yaml only", newGlobbing, generatedNames(apps), diags, err)
+		}
+	}
+	options.NewGitFileGlobbing = false
+	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitDirectoriesAppSet("params/*", "params/*/*", "vendor/sub/*"), options)
+	if err != nil || len(diags) != 0 || !slices.Equal(generatedNames(apps), []string{"dir-params-sub"}) {
+		t.Fatalf("apps = %q, diagnostics = %#v, error = %v, want params/sub only", generatedNames(apps), diags, err)
+	}
+
+	writeAppsetTestFile(t, filepath.Join(root, ".gitmodules"), "[submodule \"sub\"]\n")
+	apps, diags, err = GenerateFromYAMLWithOptions(root, "app-set.yaml", gitDirectoriesAppSet("params/*", "params/*/*", "vendor/sub/*"), options)
+	if err != nil || len(diags) != 1 || !slices.Equal(generatedNames(apps), []string{"dir-params-sub", "dir-params-sub-inner", "dir-vendor-sub-inner"}) {
+		t.Fatalf("with .gitmodules: apps = %q, diagnostics = %#v, error = %v, want the local submodule content and a warning", generatedNames(apps), diags, err)
+	}
+}
+
+// TestGenerateGitFilesNewGlobbingThroughOutsideSymlinks pins a glob that
+// lists a symlink to a target outside the repository, or goes through one.
+// Argo CD lists and reads what is there, in its own file system, which
+// drydock does not read, so the ApplicationSet is unsupported.
+func TestGenerateGitFilesNewGlobbingThroughOutsideSymlinks(t *testing.T) {
+	for _, tc := range []struct {
+		target  string
+		pattern string
+	}{
+		{"../b/d.yaml", "**/.h"},
+		{"..", ".h/*"},
+		{"/etc", ".h/hostname"},
+	} {
+		root := writeGitParityTree(t, "params/a.yaml")
+		if err := os.Symlink(tc.target, filepath.Join(root, ".h")); err != nil {
+			t.Fatal(err)
+		}
+		apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitFilesAppSet(tc.pattern), Options{NewGitFileGlobbing: true})
+		if !errors.Is(err, ErrUnsupportedGenerator) || len(apps) != 0 || len(diags) != 1 || diagnostic.StableCode(diags[0]) != "appset.unsupported-generator" {
+			t.Fatalf(".h -> %s, pattern %q: apps = %q, diagnostics = %#v, error = %v, want an unsupported ApplicationSet", tc.target, tc.pattern, generatedNames(apps), diags, err)
+		}
+	}
+}
+
+// TestGenerateGitFilesNewGlobbingMatchesExactNames pins that a literal
+// pattern part matches the exact name, as on Linux, where the repo-server
+// runs, also on a file system that ignores case.
+func TestGenerateGitFilesNewGlobbingMatchesExactNames(t *testing.T) {
+	root := writeGitParityTree(t, "params/a.yaml")
+	for _, pattern := range []string{"params/A.yaml", "Params/a.yaml", "PARAMS/*.yaml"} {
+		apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", gitFilesAppSet(pattern), Options{NewGitFileGlobbing: true})
+		if err != nil || len(diags) != 0 || len(apps) != 0 {
+			t.Fatalf("pattern %q: apps = %q, diagnostics = %#v, error = %v, want no match", pattern, generatedNames(apps), diags, err)
+		}
+	}
+}
+
+// TestGitlinkPathsFromTheIndexAreChecked pins the gitlink names that
+// drydock accepts from the index: the ones a commit can hold, so never an
+// absolute name, one with ".." or a .git part, or one that is not clean.
+// A trailing space is a legal name and stays.
+func TestGitlinkPathsFromTheIndexAreChecked(t *testing.T) {
+	for name, want := range map[string]bool{
+		"params/sub":       true,
+		"params/sub" + " ": true, // A trailing space is legal.
+		"/x":               false,
+		"/":                false,
+		"a/../b":           false,
+		"../b":             false,
+		"a/.git/b":         false,
+		"a/.GIT":           false,
+		"a//b":             false,
+		"a/b/":             false,
+		"":                 false,
+		".":                false,
+	} {
+		if got := validGitlinkPath(name); got != want {
+			t.Fatalf("validGitlinkPath(%q) = %t, want %t", name, got, want)
+		}
+	}
+	root := writeGitParityTree(t, "params/a.yaml")
+	tree := newGitRepositoryTree(root, indexGitlinks{"/x", "a/../b", "params/sub "})
+	dirs, err := tree.directories(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(dirs, []string{"params", "params/sub "}) {
+		t.Fatalf("directories = %q, want params and the gitlink with a trailing space", dirs)
 	}
 }

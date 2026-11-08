@@ -45,6 +45,13 @@ type gitRepositoryTree struct {
 	// directory.
 	gitlinks   []string
 	gitlinkSet map[string]bool
+	// submodules reports a .gitmodules file at the root. Without one, Argo
+	// CD fetches no submodule content (util/git/client.go:812-817), so each
+	// gitlink is an empty directory, and drydock does not look into it.
+	submodules bool
+	// childSet holds "dir/name" for every entry of children, so a lookup
+	// matches the exact name, also on a file system that ignores case.
+	childSet map[string]bool
 	// children lists the files, symlinks, and directories of the checkout
 	// in each directory, for the glob.
 	children map[string][]gitTreeChild
@@ -91,6 +98,9 @@ func (t *gitRepositoryTree) scan() error {
 	t.scanned = true
 	t.contentDirs = map[string]bool{}
 	t.gitlinkSet = map[string]bool{}
+	if info, err := os.Lstat(filepath.Join(t.root, ".gitmodules")); err == nil && info.Mode().IsRegular() {
+		t.submodules = true
+	}
 	if lister, ok := t.worktree.(GitlinkLister); ok {
 		for _, link := range lister.Gitlinks() {
 			t.addGitlink(link)
@@ -144,6 +154,10 @@ func (t *gitRepositoryTree) visit(abs string, entry fs.DirEntry, err error) erro
 		if _, err := os.Lstat(filepath.Join(abs, ".git")); err == nil {
 			t.addGitlink(rel)
 		}
+		if t.gitlinkSet[rel] && !t.submodules {
+			// The checkout holds an empty directory here.
+			return filepath.SkipDir
+		}
 	case entry.Type()&fs.ModeSymlink != 0:
 		t.addFile(rel, true)
 	case entry.Type().IsRegular():
@@ -159,8 +173,7 @@ func compareWalkOrder(a, b string) int {
 }
 
 func (t *gitRepositoryTree) addGitlink(rel string) {
-	rel = path.Clean(strings.TrimSpace(rel))
-	if rel == "." || rel == "" || t.gitlinkSet[rel] {
+	if !validGitlinkPath(rel) || t.gitlinkSet[rel] {
 		return
 	}
 	t.gitlinkSet[rel] = true
@@ -170,21 +183,46 @@ func (t *gitRepositoryTree) addGitlink(rel string) {
 	}
 }
 
+// validGitlinkPath reports whether rel is a gitlink path that the index or
+// a commit can hold: relative, clean, and without a ".." or .git part, as
+// materializeGitlinks requires.
+func validGitlinkPath(rel string) bool {
+	if rel == "" || path.IsAbs(rel) || path.Clean(rel) != rel || rel == "." {
+		return false
+	}
+	for component := range strings.SplitSeq(rel, "/") {
+		if component == ".." || strings.EqualFold(component, ".git") {
+			return false
+		}
+	}
+	return true
+}
+
+// hasChild reports whether the scan holds name, exactly as spelled, in the
+// directory dir.
+func (t *gitRepositoryTree) hasChild(dir, name string) bool {
+	return t.childSet[dir+"/"+name]
+}
+
 // indexChildren fills children from the scan: the files and symlinks, and
 // the directories of the checkout.
 func (t *gitRepositoryTree) indexChildren() {
 	t.children = map[string][]gitTreeChild{}
+	t.childSet = map[string]bool{}
+	add := func(rel string, kind gitTreeKind) {
+		parent := path.Dir(rel)
+		t.children[parent] = append(t.children[parent], gitTreeChild{name: path.Base(rel), kind: kind})
+		t.childSet[parent+"/"+path.Base(rel)] = true
+	}
 	for _, dir := range t.dirs {
-		parent := path.Dir(dir.rel)
-		t.children[parent] = append(t.children[parent], gitTreeChild{name: path.Base(dir.rel), kind: gitTreeKindDir})
+		add(dir.rel, gitTreeKindDir)
 	}
 	for _, file := range t.files {
 		kind := gitTreeKindFile
 		if file.symlink {
 			kind = gitTreeKindSymlink
 		}
-		parent := path.Dir(file.rel)
-		t.children[parent] = append(t.children[parent], gitTreeChild{name: path.Base(file.rel), kind: kind})
+		add(file.rel, kind)
 	}
 }
 
@@ -219,11 +257,7 @@ func hiddenPath(rel string) bool {
 // hasSubmoduleConfig reports whether the tree has gitlinks and a
 // .gitmodules file, so that Argo CD fetches submodule content.
 func (t *gitRepositoryTree) hasSubmoduleConfig() bool {
-	if len(t.gitlinks) == 0 {
-		return false
-	}
-	_, err := os.Lstat(filepath.Join(t.root, ".gitmodules"))
-	return err == nil
+	return len(t.gitlinks) > 0 && t.submodules
 }
 
 // directories mirrors the repo-server's walkDirectoryTree
@@ -360,12 +394,24 @@ func (t *gitRepositoryTree) globFiles(manifestPath, pattern string) ([]gitTreeFi
 		return nil, nil, fmt.Errorf("%s git generator: list files: %w", manifestPath, err)
 	}
 	fsys := newGitGlobFS(t)
+	// The glob starts at the static part of the pattern. When that part
+	// leads out of the checkout, Argo CD lists what is there, which drydock
+	// does not read.
+	base, _ := doublestar.SplitPattern(relPattern)
+	for prefix := base; prefix != "." && prefix != ""; prefix = path.Dir(prefix) {
+		if node, err := fsys.lookup(prefix); err == nil && node.outside {
+			return nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files pattern %q goes through %s, a symlink to a target outside the repository, which drydock does not read", pattern, prefix)}
+		}
+	}
 	matches, err := doublestar.Glob(fsys, relPattern)
 	if fsys.exhausted {
 		return nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files pattern %q visits more than %d paths through the symlinks of the repository", pattern, maxGlobVisits)}
 	}
 	if err != nil {
 		return nil, nil, paramsError(fmt.Errorf("unable to list files. pattern %s: %w", pattern, err))
+	}
+	if len(fsys.outside) > 0 {
+		return nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files pattern %q lists %s, a symlink to a target outside the repository, which drydock does not read", pattern, fsys.outside[0])}
 	}
 	out := make([]gitTreeFile, 0, len(matches))
 	for _, match := range matches {
@@ -405,7 +451,10 @@ const maxGlobVisits = 1 << 17
 // not exist for Stat, as the kernel reports. The .git directory of the
 // checkout holds the names of checkoutGitPaths.
 type gitGlobFS struct {
-	tree      *gitRepositoryTree
+	tree *gitRepositoryTree
+	// outside lists the symlinks out of the checkout that the glob tried
+	// to list.
+	outside   []string
 	nodes     map[string]gitGlobNode
 	gitDirs   map[string][]gitTreeChild
 	visits    int
@@ -420,6 +469,8 @@ type gitGlobNode struct {
 	inGit bool
 	// hops is the number of symlinks the path followed.
 	hops int
+	// outside reports a path whose symlinks lead out of the checkout.
+	outside bool
 }
 
 func newGitGlobFS(t *gitRepositoryTree) *gitGlobFS {
@@ -471,20 +522,21 @@ func (f *gitGlobFS) resolve(name string) gitGlobNode {
 	if parent.inGit {
 		return f.gitNode(path.Join(parent.real, component))
 	}
-	if strings.EqualFold(component, ".git") {
-		if parent.real == "." && component == ".git" {
-			return f.gitNode(".git")
-		}
-		// Another .git entry, or another spelling of it, which drydock
-		// never reads.
-		return gitGlobNode{}
+	if parent.real == "." && component == ".git" {
+		return f.gitNode(".git")
 	}
 	candidate := path.Join(parent.real, component)
+	// The exact name of the scan, also on a file system that ignores case.
+	// A path that the scan left out, such as one in .git, in a gitlink
+	// without .gitmodules, or one that Git ignores, does not exist.
+	if !f.tree.hasChild(parent.real, component) {
+		return gitGlobNode{}
+	}
 	if f.tree.contentDirs[candidate] {
 		return gitGlobNode{exists: true, dir: true, real: candidate, hops: parent.hops}
 	}
 	info, err := os.Lstat(filepath.Join(f.tree.root, filepath.FromSlash(candidate)))
-	if err != nil || f.tree.skip(candidate, info.IsDir()) {
+	if err != nil {
 		return gitGlobNode{}
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
@@ -494,7 +546,7 @@ func (f *gitGlobFS) resolve(name string) gitGlobNode {
 		// An empty directory, a FIFO, or a socket is no entry of a checkout.
 		return gitGlobNode{}
 	}
-	resolution, err := resolveRepoPath(f.tree.root, candidate, f.tree.skip)
+	resolution, err := f.tree.resolve(candidate)
 	hops := parent.hops + resolution.hops
 	if err != nil || hops > maxRepoSymlinkHops {
 		return gitGlobNode{}
@@ -502,11 +554,8 @@ func (f *gitGlobFS) resolve(name string) gitGlobNode {
 	switch resolution.state {
 	case repoSymlinkInside:
 	case repoSymlinkOutside:
-		return gitGlobNode{}
+		return gitGlobNode{outside: true}
 	case repoSymlinkInGit:
-		if resolution.gitRest == "" {
-			return gitGlobNode{}
-		}
 		return f.gitNode(resolution.gitRest)
 	}
 	real := resolution.path
@@ -557,6 +606,9 @@ func (f *gitGlobFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	node, err := f.lookup(name)
 	if err != nil {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
+	}
+	if node.outside {
+		f.outside = append(f.outside, name)
 	}
 	if !node.exists || !node.dir {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
@@ -637,18 +689,21 @@ func (t *gitRepositoryTree) readFile(manifestPath, pattern string, file gitTreeF
 	if t.gitlinkSet[file.rel] {
 		return nil, nil, nil, paramsError(fmt.Errorf("unable to read files. pattern %s: read %s: is a directory", pattern, file.rel))
 	}
-	resolution, err := resolveRepoPath(t.root, file.rel, t.skip)
+	resolution, err := t.resolve(file.rel)
 	if err != nil {
 		return nil, nil, nil, paramsError(fmt.Errorf("unable to read files. pattern %s: %s: %w", pattern, file.rel, err))
 	}
 	switch resolution.state {
 	case repoSymlinkInside:
 	case repoSymlinkOutside:
-		diag := appsetDiagnostic(manifestPath, fmt.Sprintf("git files path %q is a symlink to a target outside the repository; drydock does not read it and skips the file", file.rel))
-		return nil, nil, &diag, nil
+		// Argo CD reads the target in its own file system, or fails when
+		// it does not exist there.
+		return nil, nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files path %q is a symlink to a target outside the repository, which drydock does not read", file.rel)}
 	case repoSymlinkInGit:
-		diag := appsetDiagnostic(manifestPath, fmt.Sprintf("git files path %q is a symlink into .git; drydock does not read .git and skips the file", file.rel))
-		return nil, nil, &diag, nil
+		if resolution.gitRest == ".git" || slices.Contains(checkoutGitPaths, resolution.gitRest+"/") {
+			return nil, nil, nil, paramsError(fmt.Errorf("unable to read files. pattern %s: read %s: is a directory", pattern, file.rel))
+		}
+		return nil, nil, nil, &generatorUnsupportedError{err: fmt.Errorf("git files path %q is a symlink into the .git directory of the checkout, which Argo CD reads and drydock does not", file.rel)}
 	}
 	resolved := resolution.path
 	if t.gitlinkSet[resolved] || (resolved != "." && t.contentDirs[resolved] && !t.isOnDisk(resolved)) {
@@ -731,18 +786,26 @@ type repoResolution struct {
 	gitRest string
 }
 
+// resolve is resolveRepoPath over the scan of t: a component must be an
+// entry of the scan with that exact name.
+func (t *gitRepositoryTree) resolve(rel string) (repoResolution, error) {
+	return resolveRepoPath(t.root, rel, t.hasChild)
+}
+
 // resolveRepoPath resolves every symlink of rel, a path below root, one
 // component at a time, as the kernel does. It never touches a path outside
 // root or in .git: a symlink with an absolute target, or a ".." above
-// root, gives repoSymlinkOutside, and a .git component gives
+// root, gives repoSymlinkOutside, and the top-level .git directory gives
 // repoSymlinkInGit, before anything there is read. An Argo CD checkout
 // lives in a temporary directory, so an absolute target never points into
-// it. A component after a file fails with ENOTDIR, a missing component or
-// one that skip skips with ENOENT, and more than maxRepoSymlinkHops
-// symlinks with ELOOP, as os.ReadFile would.
+// it. A component after a file fails with ENOTDIR, a component that exists
+// does not report with ENOENT, and more than maxRepoSymlinkHops symlinks
+// with ELOOP, as os.ReadFile would. exists is asked for every component
+// below root with the exact name, so a file system that ignores case does
+// not change the answer.
 //
 //nolint:gocyclo // One case per step of kernel path resolution.
-func resolveRepoPath(root, rel string, skip func(string, bool) bool) (repoResolution, error) {
+func resolveRepoPath(root, rel string, exists func(dir, name string) bool) (repoResolution, error) {
 	pending := strings.Split(rel, "/")
 	var resolved []string
 	var result repoResolution
@@ -764,24 +827,27 @@ func resolveRepoPath(root, rel string, skip func(string, bool) bool) (repoResolu
 			resolved = resolved[:len(resolved)-1]
 			continue
 		}
-		if strings.EqualFold(component, ".git") {
+		if len(resolved) == 0 && component == ".git" {
 			result.state = repoSymlinkInGit
-			if len(resolved) == 0 && component == ".git" {
-				rest := path.Clean(path.Join(append([]string{".git"}, pending...)...))
-				if rest == ".git" || strings.HasPrefix(rest, ".git/") {
-					result.gitRest = rest
-				}
+			rest := path.Clean(path.Join(append([]string{".git"}, pending...)...))
+			if rest == ".git" || strings.HasPrefix(rest, ".git/") {
+				result.gitRest = rest
 			}
 			return result, nil
 		}
-		current := path.Join(append(append([]string(nil), resolved...), component)...)
+		dir := path.Join(resolved...)
+		if dir == "" {
+			dir = "."
+		}
+		// Another .git entry is no path of a checkout, and the scan holds
+		// none.
+		if strings.EqualFold(component, ".git") || (exists != nil && !exists(dir, component)) {
+			return result, &fs.PathError{Op: "open", Path: rel, Err: syscall.ENOENT}
+		}
+		current := path.Join(dir, component)
 		info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(current)))
 		if err != nil {
 			return result, err
-		}
-		if skip != nil && skip(current, info.IsDir()) {
-			// No checkout holds a path that Git ignores and does not track.
-			return result, &fs.PathError{Op: "open", Path: rel, Err: syscall.ENOENT}
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
 			resolved = append(resolved, component)
