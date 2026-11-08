@@ -96,7 +96,7 @@ spec:
 `)
 
 	apps, diags, err := GenerateFromYAML(t.TempDir(), "appset.yaml", data)
-	requireGeneratorFailed(t, apps, diags, err, `field "enabled" must be a string`)
+	requireGeneratorFailed(t, apps, diags, err, "error parsing value as string %!w(<nil>)")
 }
 
 func TestGenerateGitFilesGeneratorReadsFilesLikeArgoCD(t *testing.T) {

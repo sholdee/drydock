@@ -2,6 +2,7 @@ package appset
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -34,13 +35,13 @@ func evaluateListGenerator(ctx generatorContext, generator argoappv1.Application
 // empty param set.
 func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator, useGoTemplate bool) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
 	out := make([]generatorParamSet, 0, len(list.Elements))
-	for i, element := range list.Elements {
+	for _, element := range list.Elements {
 		var params map[string]any
 		if err := json.Unmarshal(element.Raw, &params); err != nil {
-			return nil, nil, &generatorParamsError{err: fmt.Errorf("error unmarshling list element %d: %w", i, err)}
+			return nil, nil, &generatorParamsError{err: fmt.Errorf("error unmarshling list element %w", err)}
 		}
 		if !useGoTemplate {
-			normalized, err := normalizeListElementParams(i, params)
+			normalized, err := normalizeListElementParams(params)
 			if err != nil {
 				return nil, nil, &generatorParamsError{err: err}
 			}
@@ -67,18 +68,25 @@ func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator, 
 	return out, nil, nil
 }
 
-func normalizeListElementParams(index int, element map[string]any) (map[string]any, error) {
+// errListValueNotString is the text of the Argo CD v3.6.1 list generator
+// error for a non-string value without goTemplate (list.go:70-73). It
+// formats a nil error with %w, so the text ends in "%!w(<nil>)".
+var errListValueNotString = errors.New("error parsing value as string %!w(<nil>)")
+
+// normalizeListElementParams mirrors the fasttemplate branch of the Argo CD
+// v3.6.1 list generator (list.go:55-77), with its error texts.
+func normalizeListElementParams(element map[string]any) (map[string]any, error) {
 	params := map[string]any{}
 	for key, value := range element {
 		if key == "values" {
 			values, ok := value.(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("list generator element %d values must be a mapping of strings", index)
+				return nil, errors.New("error parsing values map")
 			}
 			for valueKey, nestedValue := range values {
 				rendered, ok := nestedValue.(string)
 				if !ok {
-					return nil, fmt.Errorf("list generator element %d values.%s must be a string", index, valueKey)
+					return nil, errListValueNotString
 				}
 				params["values."+valueKey] = rendered
 			}
@@ -86,7 +94,7 @@ func normalizeListElementParams(index int, element map[string]any) (map[string]a
 		}
 		rendered, ok := value.(string)
 		if !ok {
-			return nil, fmt.Errorf("list generator element %d field %q must be a string", index, key)
+			return nil, errListValueNotString
 		}
 		params[key] = rendered
 	}

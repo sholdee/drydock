@@ -15,6 +15,9 @@ import (
 )
 
 func evaluateSCMProviderGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if err := compileSCMProviderFilters(generator.SCMProvider.Filters); err != nil {
+		return nil, nil, true, &generatorParamsError{err: fmt.Errorf("error listing repos: %w", err)}
+	}
 	if !ctx.Options.Provider.Supplied() {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}

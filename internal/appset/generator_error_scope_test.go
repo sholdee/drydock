@@ -308,7 +308,7 @@ spec:
           - name: alpha
           - null` + errorScopeTemplate)
 	apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
-	requireGeneratorFailed(t, apps, diags, err, "error unmarshling list element 1")
+	requireGeneratorFailed(t, apps, diags, err, "error unmarshling list element unexpected end of JSON input")
 }
 
 // A selector that does not parse fails the ApplicationSet in Transform before

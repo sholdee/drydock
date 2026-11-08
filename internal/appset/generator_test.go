@@ -612,7 +612,7 @@ func TestGenerateListGeneratorRejectsNonStringFasttemplateElements(t *testing.T)
 			element: `
           - name: alpha
             replicas: 2`,
-			wantText: `field "replicas" must be a string`,
+			wantText: "error parsing value as string %!w(<nil>)",
 		},
 		{
 			name: "nested values",
@@ -620,7 +620,7 @@ func TestGenerateListGeneratorRejectsNonStringFasttemplateElements(t *testing.T)
           - name: beta
             values:
               region: true`,
-			wantText: "values.region must be a string",
+			wantText: "error parsing value as string %!w(<nil>)",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1037,11 +1037,5 @@ func TestGeneratorFromNestedCarriesOciGenerator(t *testing.T) {
 	}
 	if generator.Oci != oci {
 		t.Fatalf("generatorFromNested().Oci = %#v, want the nested oci generator", generator.Oci)
-	}
-	if supportedGeneratorTree(generator, Options{}) {
-		t.Fatal("supportedGeneratorTree(oci, no fetcher) = true; want unsupported")
-	}
-	if !supportedGeneratorTree(generator, Options{OCI: &fakeOCIFetcher{}}) {
-		t.Fatal("supportedGeneratorTree(oci, fetcher) = false; want supported")
 	}
 }

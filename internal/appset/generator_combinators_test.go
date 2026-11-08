@@ -1,6 +1,7 @@
 package appset
 
 import (
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"os"
 	"path/filepath"
 	"slices"
@@ -220,7 +221,11 @@ spec:
 		t.Fatalf("diagnostics = %#v, want unsupported generator diagnostic", diags)
 	}
 }
-func TestGenerateMatrixGeneratorKeepsSupportedOutputWhenTemplatedChildUnsupported(t *testing.T) {
+
+// Argo CD v3.6.1 interpolates a matrix child before it runs it, so a
+// template error in a child that drydock cannot evaluate still fails the
+// ApplicationSet (applicationset/generators/generator_spec_processor.go:52-63).
+func TestGenerateMatrixGeneratorTemplatedUnsupportedChildFailsApplicationSet(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -260,14 +265,19 @@ spec:
 	if err != nil {
 		t.Fatalf("GenerateFromYAML() error = %v", err)
 	}
-	if got := generatedNames(apps); !slices.Equal(got, []string{"supported"}) {
-		t.Fatalf("generated names = %#v, want supported", got)
+	if len(apps) != 0 {
+		t.Fatalf("generated names = %#v, want none", generatedNames(apps))
 	}
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "unsupported ApplicationSet generator") {
-		t.Fatalf("diagnostics = %#v, want unsupported generator diagnostic", diags)
+	if len(diags) != 1 || diagnostic.StableCode(diags[0]) != "appset.template-render-failed" || !strings.Contains(diags[0].Message, "failed to replace parameters in generator") {
+		t.Fatalf("diagnostics = %#v, want one template render failure", diags)
 	}
 }
-func TestGenerateMatrixGeneratorReportsUnsupportedSecondChildWhenFirstChildEmpty(t *testing.T) {
+
+// Argo CD v3.6.1 runs the second matrix child only for the param sets of the
+// first (applicationset/generators/matrix.go:62-86). With none, the matrix
+// generates nothing, and that the second child needs provider data does
+// not matter.
+func TestGenerateMatrixGeneratorSkipsSecondChildWhenFirstChildEmpty(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -306,11 +316,16 @@ spec:
 	if got := generatedNames(apps); !slices.Equal(got, []string{"supported"}) {
 		t.Fatalf("generated names = %#v, want supported", got)
 	}
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "unsupported ApplicationSet generator") {
-		t.Fatalf("diagnostics = %#v, want unsupported generator diagnostic", diags)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
 	}
 }
-func TestGenerateMatrixGeneratorReportsUnsupportedNestedChildWhenFirstChildEmpty(t *testing.T) {
+
+// Argo CD v3.6.1 runs the second matrix child only for the param sets of the
+// first (applicationset/generators/matrix.go:62-86). With none, the matrix
+// generates nothing, and that the second child needs provider data does
+// not matter.
+func TestGenerateMatrixGeneratorSkipsNestedChildWhenFirstChildEmpty(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -355,8 +370,8 @@ spec:
 	if got := generatedNames(apps); !slices.Equal(got, []string{"supported"}) {
 		t.Fatalf("generated names = %#v, want supported", got)
 	}
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "unsupported ApplicationSet generator") {
-		t.Fatalf("diagnostics = %#v, want unsupported generator diagnostic", diags)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
 	}
 }
 

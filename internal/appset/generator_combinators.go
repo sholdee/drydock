@@ -44,13 +44,14 @@ func matrixGeneratorParamSets(ctx generatorContext, matrix *argoappv1.MatrixGene
 	if err := validateMatrixGenerator(matrix); err != nil {
 		return nil, nil, true, err
 	}
-	if !supportedNestedGeneratorTrees(matrix.Generators, ctx.Options) {
-		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
-	}
 
+	// Argo CD v3.6.1 wraps the child errors (matrix.go:55-58 and :80-82).
 	first, firstDiags, supported, err := evaluateNestedGenerator(ctx, matrix.Generators[0], nil)
-	if err != nil || !supported {
-		return nil, firstDiags, supported, err
+	if err != nil {
+		return nil, firstDiags, true, wrapGeneratorError(err, "error failed to get params for first generator in matrix generator: %w")
+	}
+	if !supported {
+		return nil, firstDiags, false, nil
 	}
 
 	var out []generatorParamSet
@@ -59,8 +60,11 @@ func matrixGeneratorParamSets(ctx generatorContext, matrix *argoappv1.MatrixGene
 	for _, firstSet := range first {
 		second, secondDiags, supported, err := evaluateNestedGenerator(ctx, matrix.Generators[1], firstSet.Params)
 		diags = append(diags, secondDiags...)
-		if err != nil || !supported {
-			return nil, diags, supported, err
+		if err != nil {
+			return nil, diags, true, wrapGeneratorError(err, "failed to get params for second generator in the matrix generator: %w")
+		}
+		if !supported {
+			return nil, diags, false, nil
 		}
 		for _, secondSet := range second {
 			params, err := combineMatrixParams(ctx.AppSet.Name, firstSet.Params, secondSet.Params, ctx.AppSet.Spec.GoTemplate)
@@ -95,7 +99,7 @@ func combineMatrixParams(appSetName string, first, second map[string]any, useGoT
 	}
 	out, err := appsetutils.CombineStringMaps(first, second)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to combine string maps with merging params for the matrix generator: %w", err)
 	}
 	return out, nil
 }
@@ -176,17 +180,25 @@ func cloneParamValue(value any) any {
 }
 
 func mergeGeneratorParamSets(ctx generatorContext, merge *argoappv1.MergeGenerator, selector *metav1.LabelSelector) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
-	if err := validateMergeGenerator(merge); err != nil {
-		return nil, nil, true, err
+	if len(merge.Generators) < 2 {
+		return nil, nil, true, &generatorParamsError{err: errors.New("found less than two generators, Merge requires two or more")}
 	}
 
 	allSets, allDiags, supported, err := mergeGeneratorChildSets(ctx, merge)
-	if err != nil || !supported {
-		return nil, allDiags, supported, err
+	if err != nil {
+		return nil, allDiags, true, wrapGeneratorError(err, "error getting param sets from generators: %w")
+	}
+	if !supported {
+		return nil, allDiags, false, nil
+	}
+	// Argo CD v3.6.1 checks the merge keys after it ran every child
+	// (merge.go:62-76 and :106-109).
+	if len(merge.MergeKeys) == 0 {
+		return nil, allDiags, true, &generatorParamsError{err: errors.New("error getting param sets by merge key: no merge keys were specified, Merge requires at least one")}
 	}
 	out, baseByKey, err := baseMergeParamSets(allSets[0], merge.MergeKeys)
 	if err != nil {
-		return nil, allDiags, true, paramsError(err)
+		return nil, allDiags, true, paramsError(fmt.Errorf("error getting param sets by merge key: %w", err))
 	}
 	for _, paramSets := range allSets[1:] {
 		if err := applyMergeParamSets(ctx.AppSet.Name, out, baseByKey, paramSets, merge.MergeKeys, ctx.AppSet.Spec.GoTemplate); err != nil {
@@ -200,16 +212,29 @@ func mergeGeneratorParamSets(ctx generatorContext, merge *argoappv1.MergeGenerat
 	return out, allDiags, true, err
 }
 
+// mergeGeneratorChildSets runs every merge child in order, as Argo CD
+// v3.6.1 getParamSetsForAllGenerators does (merge.go:39-50), and returns
+// the first error with its wrap. A child that drydock cannot evaluate does
+// not stop the later ones, so that an error in a later child still fails
+// the ApplicationSet.
 func mergeGeneratorChildSets(ctx generatorContext, merge *argoappv1.MergeGenerator) ([][]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
 	allSets := make([][]generatorParamSet, 0, len(merge.Generators))
 	var allDiags []diagnostic.Diagnostic
-	for _, generator := range merge.Generators {
+	allSupported := true
+	for i, generator := range merge.Generators {
 		paramSets, diags, supported, err := evaluateNestedGenerator(ctx, generator, nil)
 		allDiags = append(allDiags, diags...)
-		if err != nil || !supported {
-			return nil, allDiags, supported, err
+		if err != nil {
+			return nil, allDiags, true, wrapGeneratorError(err, fmt.Sprintf("error getting params from generator %d of %d: %%w", i+1, len(merge.Generators)))
+		}
+		if !supported {
+			allSupported = false
+			continue
 		}
 		allSets = append(allSets, paramSets)
+	}
+	if !allSupported {
+		return nil, allDiags, false, nil
 	}
 	return allSets, allDiags, true, nil
 }
@@ -252,7 +277,7 @@ func applyMergeParamSet(appSetName string, out []generatorParamSet, baseByKey ma
 		return err
 	}
 	if _, exists := seen[key]; exists {
-		return fmt.Errorf("the parameters from a generator were not unique by the given mergeKeys, Merge requires all param sets to be unique. Duplicate key was %s", key)
+		return fmt.Errorf("error getting param sets by merge key: the parameters from a generator were not unique by the given mergeKeys, Merge requires all param sets to be unique. Duplicate key was %s", key)
 	}
 	seen[key] = struct{}{}
 	baseIndex, exists := baseByKey[key]
@@ -281,22 +306,9 @@ func applyMergeGeneratorSelector(ctx generatorContext, merge *argoappv1.MergeGen
 func validateMatrixGenerator(matrix *argoappv1.MatrixGenerator) error {
 	switch {
 	case len(matrix.Generators) < 2:
-		return &generatorParamsError{err: fmt.Errorf("found less than two generators, Matrix support only two (found %d)", len(matrix.Generators))}
+		return &generatorParamsError{err: errors.New("found less than two generators, Matrix support only two")}
 	case len(matrix.Generators) > 2:
-		return &generatorParamsError{err: fmt.Errorf("found more than two generators, Matrix support only two (found %d)", len(matrix.Generators))}
-	}
-	return nil
-}
-
-// validateMergeGenerator mirrors the child count and merge key checks of
-// the Argo CD v3.6.1 merge generator (applicationset/generators/merge.go:58-60
-// and :107-109).
-func validateMergeGenerator(merge *argoappv1.MergeGenerator) error {
-	if len(merge.Generators) < 2 {
-		return &generatorParamsError{err: fmt.Errorf("found less than two generators, Merge requires two or more (found %d)", len(merge.Generators))}
-	}
-	if len(merge.MergeKeys) == 0 {
-		return &generatorParamsError{err: errors.New("no merge keys were specified, Merge requires at least one")}
+		return &generatorParamsError{err: errors.New("found more than two generators, Matrix support only two")}
 	}
 	return nil
 }

@@ -12,6 +12,9 @@ import (
 )
 
 func evaluateClusterDecisionResourceGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if err := validateClusterDecisionResourceGenerator(generator.ClusterDecisionResource); err != nil {
+		return nil, nil, true, &generatorParamsError{err: err}
+	}
 	if !ctx.Options.Provider.Supplied() {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -30,9 +33,6 @@ func evaluateClusterDecisionResourceGenerator(ctx generatorContext, generator ar
 }
 
 func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, data ProviderData, useGoTemplate bool) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
-	if err := validateClusterDecisionResourceGenerator(generator); err != nil {
-		return nil, nil, &generatorParamsError{err: err}
-	}
 	if len(data.ClusterDecisions) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
 	}
@@ -46,10 +46,15 @@ func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.
 		return nil, nil, err
 	}
 	if !matchedResource {
+		if !clusterDecisionFixtureHasConfigMapRef(data.ClusterDecisions, generator.ConfigMapRef) {
+			// The fixture holds no decision resources for this
+			// configMapRef, so it does not describe them.
+			return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
+		}
 		// Argo CD v3.6.1 fails the ApplicationSet when it lists no
 		// decision resource (applicationset/generators/duck_type.go:129-132).
-		// The fixture supplies decision resources, so none of them is the
-		// one this generator names or selects.
+		// The fixture holds decision resources for this configMapRef, but
+		// none of them is the one this generator names or selects.
 		return nil, nil, &generatorParamsError{err: errors.New("no clusterDecisionResources found")}
 	}
 	if len(out) == 0 {
@@ -58,20 +63,36 @@ func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.
 	return out, nil, nil
 }
 
+// clusterDecisionFixtureHasConfigMapRef reports whether the fixture holds a
+// decision resource for configMapRef.
+func clusterDecisionFixtureHasConfigMapRef(inputs []ClusterDecisionInput, configMapRef string) bool {
+	for _, input := range inputs {
+		if input.ConfigMapRef == configMapRef {
+			return true
+		}
+	}
+	return false
+}
+
 // validateClusterDecisionResourceGenerator mirrors the definition check of
 // the Argo CD v3.6.1 clusterDecisionResource generator
 // (applicationset/generators/duck_type.go:99-104): exactly one of name and
 // labelSelector, where a labelSelector counts as set when matchLabels or
 // matchExpressions is present, even empty. Argo CD then lists the decision
-// resources with the selector. One that does not parse makes the list call
-// fail (duck_type.go:113-127).
+// resources with metav1.FormatLabelSelector of the selector
+// (duck_type.go:113-127). That gives "<none>" for an empty selector and
+// "<error>" for one that does not parse, and the API server rejects both,
+// so the list call fails. drydock parses the same text with labels.Parse,
+// as the API server does. The checks need only the spec, so they run also
+// without provider fixtures.
 func validateClusterDecisionResourceGenerator(generator *argoappv1.DuckTypeGenerator) error {
 	hasLabelSelector := generator.LabelSelector.MatchLabels != nil || generator.LabelSelector.MatchExpressions != nil
 	if (generator.Name == "" && !hasLabelSelector) || (generator.Name != "" && hasLabelSelector) {
 		return errors.New("there is a problem with the definition of the ClusterDecisionResource generator")
 	}
 	if generator.Name == "" {
-		if _, err := metav1.LabelSelectorAsSelector(&generator.LabelSelector); err != nil {
+		formatted := metav1.FormatLabelSelector(generator.LabelSelector.DeepCopy())
+		if _, err := labels.Parse(formatted); err != nil {
 			return fmt.Errorf("failed to get dynamic resources: %w", err)
 		}
 	}
