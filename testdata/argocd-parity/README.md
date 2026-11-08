@@ -159,9 +159,11 @@ that the kept Application stays out of the main inventory comparison.
 `run_missing_project_smoke` applies the directory after the main
 comparisons. It waits for the condition, and it requires
 `parity-missing-project-kept` and no `parity-missing-project-dropped` in
-Argo CD. Then it runs `drydock get apps` and `drydock diag` on the directory
-alone, with the fixture URL mapped to this repository. drydock must list
-both Applications and warn `project.missing` for the second one only.
+Argo CD. Then it runs `drydock get apps`, `drydock diag`, and `drydock build
+apps` on the directory alone, with the fixture URL mapped to this
+repository. drydock must list both Applications and warn `project.missing`
+for the second one only. The build checks the AppProject before and after
+rendering, and it must give exactly one warning.
 
 `../crd-rejected/apps/parity-crd-sync-path-dot.yaml` sets
 `syncSource.path: "."`. The CRD schema rejects it, so Argo CD never holds it.

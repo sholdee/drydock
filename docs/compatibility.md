@@ -390,10 +390,12 @@ Supported:
     (`generator_spec_processor.go:34-37`).
   - A fasttemplate matrix whose two children set one key to two values.
 
-  The warning carries the exact Argo CD text, with the wraps that the matrix
-  and merge generators add, such as `failed to get params for second
-  generator in the matrix generator: child generator generated no
-  parameters`. drydock checks a matrix or merge child in the Argo CD order:
+  When several generators of one ApplicationSet fail, Argo CD keeps only the
+  first error for its condition, so drydock stops at the first one and
+  warns once. The warning carries the exact Argo CD text, with the wraps
+  that the matrix and merge generators add, such as `failed to get params
+  for second generator in the matrix generator: child generator generated
+  no parameters`. drydock checks a matrix or merge child in the Argo CD order:
   first its selector, then its generator count. A merge runs every child, so
   an error in a later child fails the ApplicationSet also when an earlier
   child needs provider data that drydock does not have. The merge key checks

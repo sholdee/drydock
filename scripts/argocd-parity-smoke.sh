@@ -1778,10 +1778,11 @@ wait_for_applicationset_errors() {
 # create parity-missing-project-dropped. drydock does not know the AppProjects
 # of the cluster offline, so it must keep both Applications and warn
 # project.missing for parity-missing-project-dropped, with the note that the
-# ApplicationSet controller does not create it.
+# ApplicationSet controller does not create it, once in diag and once in
+# build.
 run_missing_project_smoke() {
-  local output_dir list_file list_stderr diag_file diag_stderr names
-  # drydock diag writes its warnings to stderr.
+  local output_dir list_file list_stderr diag_file diag_stderr build_stderr names count
+  # drydock diag and build write their warnings to stderr.
   log_step "Checking a generated Application whose AppProject is missing"
   kubectl apply -f "${MISSING_PROJECT_DIR}" >/dev/null
   wait_for_applicationset_error "${MISSING_PROJECT_APPLICATIONSET}" "${MISSING_PROJECT_MESSAGE}"
@@ -1816,6 +1817,19 @@ run_missing_project_smoke() {
   if grep -F "warning " "${diag_stderr}" | grep -qF "parity-missing-project-kept"; then
     fail "drydock warned for parity-missing-project-kept, whose AppProject exists; see ${diag_stderr}"
   fi
+  # build validates the AppProject before and after rendering. Both checks
+  # give the same text, so exactly one warning must remain.
+  build_stderr="${output_dir}/drydock-build.stderr"
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build apps \
+    --path "${MISSING_PROJECT_DIR}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --offline > "${output_dir}/drydock-build.yaml" 2> "${build_stderr}"); then
+    cat "${build_stderr}" >&2 || true
+    fail "drydock build apps on ${MISSING_PROJECT_DIR} failed; see ${build_stderr}"
+  fi
+  count="$(grep -cF "warning project.missing: Application argocd/parity-missing-project-dropped " "${build_stderr}" || true)"
+  [[ "${count}" == "1" ]] \
+    || fail "drydock build apps gave ${count} project.missing warnings for parity-missing-project-dropped; want exactly one; see ${build_stderr}"
   kubectl delete -f "${MISSING_PROJECT_DIR}" --wait=false >/dev/null || true
   echo "Missing AppProject: Argo CD drops the Application, drydock keeps it and warns project.missing (recorded divergence)" >&2
 }
