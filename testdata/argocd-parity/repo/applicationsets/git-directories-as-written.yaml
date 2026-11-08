@@ -1,0 +1,35 @@
+# filterPaths matches each directory pattern with path.Match as written
+# (applicationset/generators/repo_path_utils.go:70-101 at Argo CD v3.6.1):
+# "./..." and a trailing "/" match nothing, and a pattern that path.Match
+# refuses is logged and skipped. The repo-server walk skips hidden
+# directories by default.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-git-directories-as-written
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        revision: HEAD
+        directories:
+          - path: ./workloads/appset/git/*
+          - path: workloads/appset/git/*/
+          - path: workloads/appset/git/[
+          - path: workloads/appset/git/alpha
+          - path: workloads/appset/git-parity/dirs/*
+  template:
+    metadata:
+      name: 'parity-git-written-{{.path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: '{{.path.path}}'
+      destination:
+        name: in-cluster
+        namespace: 'parity-git-written-{{.path.basename}}'

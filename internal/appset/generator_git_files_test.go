@@ -1,10 +1,10 @@
 package appset
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -64,23 +64,6 @@ spec:
 	}
 	if got := generatedNames(apps); !slices.Equal(got, []string{"prod"}) {
 		t.Fatalf("generated names = %#v, want prod", got)
-	}
-}
-
-func TestMatchGitFilesSkipsDotGitDirectory(t *testing.T) {
-	root := t.TempDir()
-	writeAppsetTestFile(t, filepath.Join(root, ".git", "config.json"), `{}`)
-	writeAppsetTestFile(t, filepath.Join(root, ".github", "config.json"), `{}`)
-	writeAppsetTestFile(t, filepath.Join(root, "apps", "config.json"), `{}`)
-
-	matches, _, err := matchGitFiles(root, []string{"**/config.json"}, nil, "appset.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sort.Strings(matches)
-	want := []string{".github/config.json", "apps/config.json"}
-	if !slices.Equal(matches, want) {
-		t.Fatalf("matches = %v, want %v", matches, want)
 	}
 }
 
@@ -357,14 +340,19 @@ spec:
 		t.Fatalf("root path annotations = %#v, want dot path metadata", annotations)
 	}
 }
-func TestGenerateGitFilesGeneratorReportsInvalidFiles(t *testing.T) {
-	root := t.TempDir()
-	writeAppsetTestFile(t, filepath.Join(root, "files", "bad-array.yaml"), `- name: ok
-- item
-`)
-	writeAppsetTestFile(t, filepath.Join(root, "files", "scalar.yaml"), `value`)
-	writeAppsetTestFile(t, filepath.Join(root, "files", "invalid.json"), `{"broken":`)
-	data := []byte(`
+
+// TestGenerateGitFilesInvalidParamFileFailsWholeAppSet pins Argo CD
+// v3.6.1: a param file that does not parse fails the generator
+// (applicationset/generators/repo_path_utils.go:363-367), so the whole
+// ApplicationSet generates nothing, also from its other generators
+// (applicationset/controllers/applicationset_controller.go:199-216).
+func TestGenerateGitFilesInvalidParamFileFailsWholeAppSet(t *testing.T) {
+	for _, content := range []string{"- name: ok\n- item\n", "value", `{"broken":`} {
+		t.Run(content, func(t *testing.T) {
+			root := t.TempDir()
+			writeAppsetTestFile(t, filepath.Join(root, "files", "a-valid.yaml"), "name: valid\n")
+			writeAppsetTestFile(t, filepath.Join(root, "files", "b-invalid.yaml"), content)
+			data := []byte(`
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -372,7 +360,11 @@ metadata:
 spec:
   goTemplate: true
   generators:
+    - list:
+        elements:
+          - name: from-list
     - git:
+        repoURL: https://example.invalid/repo.git
         files:
           - path: files/*
   template:
@@ -382,60 +374,135 @@ spec:
       project: default
 `)
 
-	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
-	if err != nil {
-		t.Fatalf("GenerateFromYAML() error = %v", err)
-	}
-	if len(apps) != 0 {
-		t.Fatalf("generated apps = %#v, want none", apps)
-	}
-	if len(diags) != 3 {
-		t.Fatalf("len(diags) = %d, want 3: %#v", len(diags), diags)
+			apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+			if err != nil {
+				t.Fatalf("GenerateFromYAML() error = %v", err)
+			}
+			if len(apps) != 0 {
+				t.Fatalf("generated names = %v, want none", generatedNames(apps))
+			}
+			if len(diags) != 1 || diagnostic.StableCode(diags[0]) != "appset.generator-failed" ||
+				!strings.Contains(diags[0].Message, "unable to process file 'files/b-invalid.yaml' from repository 'https://example.invalid/repo.git': unable to parse file") {
+				t.Fatalf("diagnostics = %#v, want one appset.generator-failed warning for files/b-invalid.yaml", diags)
+			}
+		})
 	}
 }
-func TestGenerateGitFilesGeneratorReportsSymlinksAndRootEscapes(t *testing.T) {
+
+// TestGenerateGitFilesReadsSymlinksLikeTheRepoServer pins how the
+// repo-server reads a listed symlink: `git ls-files` lists the symlink
+// itself, and os.ReadFile follows it
+// (reposerver/repository/repository.go:3363-3369 at v3.6.1). A target
+// inside the repository is read, and a symlink that no pattern matches
+// changes nothing. drydock never reads a target outside the repository or
+// in .git. Argo CD reads such a target in its own file system, or fails
+// when it does not exist there, so drydock cannot tell what the
+// ApplicationSet generates and reports it unsupported.
+func TestGenerateGitFilesReadsSymlinksLikeTheRepoServer(t *testing.T) {
 	root := t.TempDir()
-	writeAppsetTestFile(t, filepath.Join(root, "files", "valid.yaml"), `name: valid`)
-	writeAppsetTestFile(t, filepath.Join(root, "outside.yaml"), `name: outside`)
-	if err := os.Symlink(filepath.Join(root, "outside.yaml"), filepath.Join(root, "files", "linked.yaml")); err != nil {
-		t.Fatalf("Symlink(file) error = %v", err)
+	outside := t.TempDir()
+	writeAppsetTestFile(t, filepath.Join(root, "files", "valid.yaml"), "name: valid\n")
+	writeAppsetTestFile(t, filepath.Join(root, "real", "config.yaml"), "name: real\n")
+	writeAppsetTestFile(t, filepath.Join(outside, "outside.yaml"), "name: outside\n")
+	writeAppsetTestFile(t, filepath.Join(root, ".git", "config.yaml"), "name: git\n")
+	for link, target := range map[string]string{
+		"files/linked.yaml":    "../real/config.yaml",
+		"blocked/outside.yaml": filepath.Join(outside, "outside.yaml"),
+		"blocked/climb.yaml":   "../../outside.yaml",
+		"blocked/in-git.yaml":  "../.git/config.yaml",
+		"unmatched/link.yaml":  filepath.Join(outside, "outside.yaml"),
+		"unmatched/dangling":   "missing",
+		"files/dir-link/x.txt": "ignored",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, link)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "external"), 0o755); err != nil {
-		t.Fatalf("Mkdir() error = %v", err)
-	}
-	if err := os.Symlink(filepath.Join(root, "external"), filepath.Join(root, "files", "linked-dir")); err != nil {
-		t.Fatalf("Symlink(dir) error = %v", err)
-	}
-	data := []byte(`
+	appSet := func(pattern string) []byte {
+		return []byte(`
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: safe-files
+  name: symlinked-files
 spec:
   goTemplate: true
   generators:
     - git:
         files:
-          - path: files/**/*.yaml
-          - path: ../outside.yaml
+          - path: ` + pattern + `
   template:
     metadata:
       name: '{{.name}}'
     spec:
       project: default
 `)
+	}
 
-	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
-	if err != nil {
-		t.Fatalf("GenerateFromYAML() error = %v", err)
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", appSet("files/*.yaml"))
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("GenerateFromYAML() error = %v, diagnostics = %#v", err, diags)
 	}
-	if got := generatedNames(apps); !slices.Equal(got, []string{"valid"}) {
-		t.Fatalf("generated names = %#v, want only valid", got)
+	if got := generatedNames(apps); !slices.Equal(got, []string{"real", "valid"}) {
+		t.Fatalf("generated names = %#v, want real and valid", got)
 	}
-	if len(diags) < 2 {
-		t.Fatalf("len(diags) = %d, want symlink/root escape diagnostics: %#v", len(diags), diags)
+	for _, name := range []string{"outside", "climb", "in-git"} {
+		apps, diags, err := GenerateFromYAML(root, "app-set.yaml", appSet("blocked/"+name+".yaml"))
+		if !errors.Is(err, ErrUnsupportedGenerator) || len(apps) != 0 || len(diags) != 1 ||
+			diagnostic.StableCode(diags[0]) != "appset.unsupported-generator" || !strings.Contains(diags[0].Message, "blocked/"+name+".yaml") {
+			t.Fatalf("%s: apps = %q, diagnostics = %#v, error = %v, want an unsupported ApplicationSet", name, generatedNames(apps), diags, err)
+		}
 	}
 }
+
+// TestGenerateGitFilesSymlinkThatCannotBeReadFailsWholeAppSet pins the
+// repo-server error for a listed symlink that os.ReadFile cannot read: a
+// missing target, or a directory.
+func TestGenerateGitFilesSymlinkThatCannotBeReadFailsWholeAppSet(t *testing.T) {
+	for name, target := range map[string]string{
+		"dangling":  "missing.yaml",
+		"directory": "../real",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeAppsetTestFile(t, filepath.Join(root, "files", "valid.yaml"), "name: valid\n")
+			writeAppsetTestFile(t, filepath.Join(root, "real", "config.yaml"), "name: real\n")
+			if err := os.Symlink(target, filepath.Join(root, "files", "link.yaml")); err != nil {
+				t.Fatal(err)
+			}
+			apps, diags, err := GenerateFromYAML(root, "app-set.yaml", []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: broken-link
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        files:
+          - path: files/*.yaml
+            exclude: true
+          - path: files/valid.yaml
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+`))
+			if err != nil {
+				t.Fatalf("GenerateFromYAML() error = %v", err)
+			}
+			// The repo-server reads the files of an exclude pattern too.
+			if len(apps) != 0 || len(diags) != 1 || diagnostic.StableCode(diags[0]) != "appset.generator-failed" ||
+				!strings.Contains(diags[0].Message, "files/link.yaml") {
+				t.Fatalf("apps = %v, diagnostics = %#v, want one appset.generator-failed warning for files/link.yaml", generatedNames(apps), diags)
+			}
+		})
+	}
+}
+
 func missingKeyGitFilesAppSet(paramTemplate string) []byte {
 	return []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -707,15 +774,5 @@ spec:
 	}
 	if code := diagnostic.StableCode(diag); code != "appset.template-render-failed" {
 		t.Fatalf("stable code = %q, want appset.template-render-failed", code)
-	}
-}
-
-func TestCleanGitFilePatternTrimsAndNormalizesSlashPath(t *testing.T) {
-	got, err := cleanGitFilePattern(" configs/../apps/app.yaml ")
-	if err != nil {
-		t.Fatalf("cleanGitFilePattern() error = %v", err)
-	}
-	if got != "apps/app.yaml" {
-		t.Fatalf("cleanGitFilePattern() = %q, want apps/app.yaml", got)
 	}
 }

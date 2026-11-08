@@ -69,10 +69,10 @@ type BuildRequest struct {
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map
 	settingsInstallMemo  *sync.Map
-	// progressiveSyncs, when set, is the
-	// applicationsetcontroller.enable.progressive.syncs value of a restarted
-	// discovery run (discoverRepositoryWithOCI).
-	progressiveSyncs *bool
+	// appsetGeneration, when set, holds the argocd-cmd-params-cm values
+	// that change ApplicationSet generation for a restarted discovery run
+	// (discoverRepositoryWithOCI).
+	appsetGeneration *appsetGenerationSettings
 }
 
 type BuildAppRequest struct {
@@ -98,6 +98,9 @@ type ApplicationSelectionInput struct {
 	// generated the Application, or "". Project validation names it
 	// (generatedApplicationSets).
 	ApplicationSet string
+	// GitGeneratorProject is the AppProject that a Git generator of that
+	// ApplicationSet looked up, or "".
+	GitGeneratorProject string
 }
 
 type ApplicationSelector func([]argoappv1.Application) []argoappv1.Application
@@ -379,12 +382,20 @@ func discoveredApplicationSelectionInputs(discovered discovery.Result) []Applica
 
 func discoveredApplicationSelectionInput(appFile discovery.ApplicationFile) ApplicationSelectionInput {
 	return ApplicationSelectionInput{
-		Application:    appFile.Application,
-		Paths:          discoveredApplicationInputPaths(appFile),
-		ParentKey:      appFile.ParentKey,
-		RenderedDir:    appFile.RenderedDir,
-		ApplicationSet: applicationSetDisplayKey(appFile.ApplicationSetKey),
+		Application:         appFile.Application,
+		Paths:               discoveredApplicationInputPaths(appFile),
+		ParentKey:           appFile.ParentKey,
+		RenderedDir:         appFile.RenderedDir,
+		ApplicationSet:      applicationSetDisplayKey(appFile.ApplicationSetKey),
+		GitGeneratorProject: stringValue(appFile.GitGeneratorProject),
 	}
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // applicationSetDisplayKey turns an ApplicationFile.ApplicationSetKey into
@@ -402,14 +413,14 @@ func applicationSetDisplayKey(key string) string {
 
 // generatedApplicationSets returns the ApplicationSet that generated an
 // Application, from the selection inputs, for project validation.
-func generatedApplicationSets(inputs []ApplicationSelectionInput) func(argoappv1.Application) string {
-	byApplication := make(map[string]string, len(inputs))
+func generatedApplicationSets(inputs []ApplicationSelectionInput) project.GeneratedByLookup {
+	byApplication := make(map[string]project.GeneratedBy, len(inputs))
 	for _, input := range inputs {
 		if input.ApplicationSet != "" {
-			byApplication[applicationKey(input.Application)] = input.ApplicationSet
+			byApplication[applicationKey(input.Application)] = project.GeneratedBy{ApplicationSet: input.ApplicationSet, GitGeneratorProject: input.GitGeneratorProject}
 		}
 	}
-	return func(application argoappv1.Application) string {
+	return func(application argoappv1.Application) project.GeneratedBy {
 		return byApplication[applicationKey(application)]
 	}
 }
@@ -532,7 +543,7 @@ type renderApplicationsRequest struct {
 	projects          []argoappv1.AppProject
 	// generatedBy names the ApplicationSet that generated an Application
 	// (generatedApplicationSets), for the project.missing text.
-	generatedBy     func(argoappv1.Application) string
+	generatedBy     project.GeneratedByLookup
 	settings        config.ArgoSettings
 	strict          bool
 	statusOnly      bool

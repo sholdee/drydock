@@ -133,6 +133,11 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	// renders, so it is signed here as the value the controller parses.
 	progressiveSyncs := config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
 	settings.EnableProgressiveSyncs = config.Value[string]{}
+	// The Git file globbing and hidden directory flags change
+	// ApplicationSet generation too, so they are signed the same way.
+	generation := appsetGenerationSettingsFrom(settings)
+	settings.EnableNewGitFileGlobbing = config.Value[string]{}
+	settings.IncludeHiddenDirectories = config.Value[string]{}
 	// Signed below as the parsed duration, so "60s" and "1m" are not a
 	// change.
 	jqTimeout := config.ParseIgnoreNormalizerJQTimeout(settings.IgnoreNormalizerJQTimeout.Value)
@@ -149,7 +154,13 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	for key, plugin := range settings.ConfigManagementPlugins {
 		discover[key] = plugin.Discover
 	}
-	data, err = json.Marshal([]any{renderSig, withoutProvenance(fields), discover, progressiveSyncs, jqTimeout})
+	signed := []any{renderSig, withoutProvenance(fields), discover, progressiveSyncs, jqTimeout}
+	// Appended only when set, so the signature of settings without them
+	// does not change.
+	if generation.NewGitFileGlobbing || generation.IncludeHiddenDirectories {
+		signed = append(signed, generation.NewGitFileGlobbing, generation.IncludeHiddenDirectories)
+	}
+	data, err = json.Marshal(signed)
 	if err != nil {
 		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)
 	}

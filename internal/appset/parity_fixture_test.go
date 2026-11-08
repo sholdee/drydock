@@ -381,3 +381,32 @@ func TestArgoCDParityFixtureGeneratorErrorsFailApplicationSet(t *testing.T) {
 		})
 	}
 }
+
+// TestArgoCDParityFixtureGitGenerator pins the Git generator fixtures: the
+// Applications that the kind smoke expects in APPLICATIONS, and the
+// appset.generator-failed warning of each ApplicationSet that it lists in
+// APPLICATIONSET_ERRORS. The missing AppProject case has its own directory
+// (testdata/argocd-parity/git-missing-project).
+func TestArgoCDParityFixtureGitGenerator(t *testing.T) {
+	for _, tc := range []struct {
+		file  string
+		names []string
+		codes []string
+	}{
+		{"git-files-pathspec.yaml", []string{"parity-git-ps-a-b", "parity-git-ps-a", "parity-git-ps-c", "parity-git-ps-linked", "parity-git-ps-p-two", "parity-git-ps-p-one"}, []string{}},
+		{"git-directories-as-written.yaml", []string{"parity-git-written-alpha", "parity-git-written-visible"}, []string{}},
+		{"git-bad-param.yaml", []string{}, []string{diagnostic.CodeAppSetGeneratorFailed}},
+		{"git-outside-pattern.yaml", []string{}, []string{diagnostic.CodeAppSetGeneratorFailed}},
+		{"git-symlinked-directory.yaml", []string{}, []string{diagnostic.CodeAppSetGeneratorFailed}},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			apps, codes := generateParityAppSet(t, tc.file, Options{})
+			if got := generatedNames(apps); !slices.Equal(got, tc.names) {
+				t.Fatalf("generated names = %#v, want %#v", got, tc.names)
+			}
+			if !slices.Equal(codes, tc.codes) {
+				t.Fatalf("diagnostic codes = %#v, want %#v", codes, tc.codes)
+			}
+		})
+	}
+}

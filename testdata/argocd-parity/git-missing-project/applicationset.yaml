@@ -1,0 +1,39 @@
+# A Git generator gets the AppProject of the ApplicationSet template before it
+# lists anything, and fails the whole ApplicationSet when it does not exist
+# (applicationset/generators/git.go:93-111 at Argo CD v3.6.1).
+#
+# drydock cannot know the AppProjects of the cluster offline, so it keeps
+# the Applications and warns project.missing. The sides differ on purpose,
+# so this fixture lives in its own directory with one AppProject,
+# project.yaml, which makes drydock check the name.
+# run_git_missing_project_smoke applies both files after the main
+# comparisons and runs drydock on this directory alone.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-git-missing-project
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - path: {basename: from-list}
+    - git:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        revision: HEAD
+        directories:
+          - path: workloads/appset/git/*
+  template:
+    metadata:
+      name: 'parity-git-missing-project-{{ .path.basename }}'
+    spec:
+      project: parity-missing-project
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/git/alpha
+      destination:
+        name: in-cluster
+        namespace: parity-git-missing-project

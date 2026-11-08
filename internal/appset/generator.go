@@ -20,6 +20,13 @@ type GeneratedApplication struct {
 	SourcePath  string
 	SourcePaths []string
 	Generator   string
+	// GitGeneratorProject, when set, is the AppProject that a Git generator
+	// of the ApplicationSet looked up before it listed the repository
+	// (lookUpGitGeneratorProject). Argo CD fails the whole ApplicationSet
+	// when that AppProject does not exist, so the caller warns when it does
+	// not see it. Every Application of the ApplicationSet carries the same
+	// value.
+	GitGeneratorProject *string
 }
 
 var ErrUnsupportedGenerator = errors.New("unsupported ApplicationSet generator")
@@ -35,6 +42,89 @@ type Options struct {
 	// ignores a RollingSync strategy. It is part of the generation memo key,
 	// because with it an empty RollingSync steps list generates nothing.
 	ProgressiveSyncs bool `json:"progressiveSyncs,omitempty"`
+	// NewGitFileGlobbing is the parsed argocd-cmd-params-cm key
+	// applicationsetcontroller.enable.new.git.file.globbing. Without it, the
+	// Git files generator matches its patterns as git pathspecs, as `git
+	// ls-files` does; with it, as doublestar globs.
+	NewGitFileGlobbing bool `json:"newGitFileGlobbing,omitempty"`
+	// IncludeHiddenDirectories is the parsed argocd-cmd-params-cm key
+	// reposerver.include.hidden.directories. With it, the Git and OCI
+	// directory generators also see hidden directories.
+	IncludeHiddenDirectories bool `json:"includeHiddenDirectories,omitempty"`
+	// Worktree, when set, filters the repository of a working-tree run: the
+	// Git generator skips every path it reports. drydock sets it to the
+	// paths that Git ignores and does not track, which no commit can hold.
+	// It is excluded from JSON: one discovery run has one repository root,
+	// and the memo is per run.
+	Worktree WorktreeFilter `json:"-"`
+}
+
+// WorktreeFilter reports the paths of a working tree that no Argo CD
+// checkout holds. rel is relative to the repository root, with forward
+// slashes.
+type WorktreeFilter interface {
+	Skip(rel string, isDir bool) bool
+}
+
+// GitlinkLister is implemented by a WorktreeFilter that knows the gitlinks
+// (submodules) of the repository: the index of a working tree, or the
+// commit of a snapshot. Gitlinks returns them relative to the repository
+// root, with forward slashes.
+type GitlinkLister interface {
+	Gitlinks() []string
+}
+
+// RepositoryGenerators names the repository generators an ApplicationSet
+// uses, at any depth of matrix and merge generators.
+type RepositoryGenerators struct {
+	// GitFiles is a Git files generator.
+	GitFiles bool
+	// Directories is a Git or OCI directories generator.
+	Directories bool
+	// Git is any Git generator.
+	Git bool
+}
+
+// RepositoryGeneratorsOf returns the repository generators of appset. A
+// nested generator that does not decode counts as none.
+func RepositoryGeneratorsOf(appset argoappv1.ApplicationSet) RepositoryGenerators {
+	var uses RepositoryGenerators
+	for _, generator := range topLevelGenerators(appset.Spec.Generators) {
+		uses.add(generator)
+	}
+	return uses
+}
+
+func (u *RepositoryGenerators) add(generator argoappv1.ApplicationSetGenerator) {
+	switch {
+	case generator.Git != nil:
+		u.Git = true
+		if len(generator.Git.Directories) > 0 {
+			u.Directories = true
+		} else if len(generator.Git.Files) > 0 {
+			u.GitFiles = true
+		}
+	case generator.Oci != nil:
+		if len(generator.Oci.Directories) > 0 {
+			u.Directories = true
+		}
+	case generator.Matrix != nil:
+		u.addNested(generator.Matrix.Generators)
+	case generator.Merge != nil:
+		u.addNested(generator.Merge.Generators)
+	}
+}
+
+func (u *RepositoryGenerators) addNested(nestedGenerators []argoappv1.ApplicationSetNestedGenerator) {
+	for _, nested := range nestedGenerators {
+		generator, err := generatorFromNested(nested)
+		if err != nil {
+			continue
+		}
+		for _, single := range splitGenerator(generator) {
+			u.add(single)
+		}
+	}
 }
 
 func GenerateFromYAML(repoRoot, manifestPath string, data []byte) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
@@ -76,11 +166,17 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 		AppSet:       appset,
 		BaseTemplate: appset.Spec.Template,
 		Options:      options,
+		state:        &generationState{},
 	}
 	templateRenderFailed := false
 	for _, generator := range topLevelGenerators(appset.Spec.Generators) {
 		paramSets, generatorDiags, supported, err := evaluateGenerator(ctx, generator)
 		if err != nil {
+			if unsupported, ok := unsupportedApplicationSet(manifestPath, err); ok {
+				// drydock cannot tell what Argo CD generates, so the
+				// ApplicationSet is unsupported as a whole.
+				return nil, append(append(diags, generatorDiags...), appsetUnsupportedDiagnostic(manifestPath, err)), unsupported
+			}
 			if _, ok := errors.AsType[*generatorTemplateError](err); ok {
 				templateRenderFailed = true
 				diags = append(diags, generatorDiags...)
@@ -117,6 +213,7 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 			out = append(out, generatedApplication(appset, rendered, paramSet))
 		}
 	}
+	ctx.state.markGitProject(out)
 	if templateRenderFailed {
 		return nil, diags, nil
 	}
@@ -153,6 +250,27 @@ type generatorContext struct {
 	AppSet       argoappv1.ApplicationSet
 	BaseTemplate argoappv1.ApplicationSetTemplate
 	Options      Options
+	// state is shared by every generator of one ApplicationSet. It is nil
+	// in tests that build a context by hand.
+	state *generationState
+}
+
+// markGitProject records on every generated Application the AppProject
+// that a Git generator looked up, if one did.
+func (s *generationState) markGitProject(apps []GeneratedApplication) {
+	if s == nil || s.gitProject == nil {
+		return
+	}
+	for i := range apps {
+		name := *s.gitProject
+		apps[i].GitGeneratorProject = &name
+	}
+}
+
+// generationState records what the generators of one ApplicationSet did.
+type generationState struct {
+	// gitProject is the AppProject that a Git generator looked up.
+	gitProject *string
 }
 
 func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
@@ -381,6 +499,39 @@ const defaultClusterDecisionStatusListKey = "clusters"
 // supportedGeneratorsSummary names every generator drydock evaluates. Keep it
 // in sync with evaluateGenerator.
 const supportedGeneratorsSummary = "supported generators are git directories, git files, oci directories, oci files, list, matrix, and merge, plus clusters, clusterDecisionResource, scmProvider, pullRequest, and plugin from --appset-provider-fixture data"
+
+// generatorUnsupportedError marks a generator input that drydock does not
+// evaluate, where Argo CD generates normally, such as a pathspec with attr
+// magic. drydock cannot tell what the ApplicationSet generates, so
+// GenerateWithOptions reports the whole ApplicationSet as unsupported, as
+// it reports an unsupported generator.
+type generatorUnsupportedError struct {
+	err error
+}
+
+func (e *generatorUnsupportedError) Error() string {
+	return e.err.Error()
+}
+
+func (e *generatorUnsupportedError) Unwrap() error {
+	return e.err
+}
+
+// unsupportedApplicationSet returns the ErrUnsupportedGenerator error of an
+// ApplicationSet whose generator failed with a generatorUnsupportedError.
+func unsupportedApplicationSet(manifestPath string, err error) (error, bool) {
+	if _, ok := errors.AsType[*generatorUnsupportedError](err); !ok {
+		return nil, false
+	}
+	return fmt.Errorf("%w in %s", ErrUnsupportedGenerator, manifestPath), true
+}
+
+// appsetUnsupportedDiagnostic reports a generatorUnsupportedError. The
+// "unsupported ApplicationSet generator" substring is the stable-code
+// dispatch key (appset.unsupported-generator).
+func appsetUnsupportedDiagnostic(manifestPath string, err error) diagnostic.Diagnostic {
+	return appsetDiagnostic(manifestPath, fmt.Sprintf("unsupported ApplicationSet generator input: %v; drydock cannot tell what Argo CD generates, so this ApplicationSet contributes no Applications", err))
+}
 
 func unsupportedGeneratorDiagnostic(manifestPath string) []diagnostic.Diagnostic {
 	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator; "+supportedGeneratorsSummary)}

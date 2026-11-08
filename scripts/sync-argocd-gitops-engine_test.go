@@ -167,3 +167,29 @@ func TestGojqMatchesSelectedArgoCD(t *testing.T) {
 		}
 	}
 }
+
+// TestDoublestarMatchesSelectedArgoCD keeps doublestar at exactly the
+// version the selected Argo CD requires, so that drydock parses glob
+// patterns as Argo CD does. Renovate ignores the module, and the
+// post-upgrade sync helper sets it after an Argo CD upgrade.
+func TestDoublestarMatchesSelectedArgoCD(t *testing.T) {
+	argo, err := goListModule(argoCDModule)
+	if err != nil {
+		t.Fatalf("goListModule(%s) error = %v", argoCDModule, err)
+	}
+	argoGoMod, err := readGoMod(argo.GoMod)
+	if err != nil {
+		t.Fatalf("readGoMod(%s) error = %v", argo.GoMod, err)
+	}
+	want, err := argoRequirement(argoGoMod, doublestarModule)
+	if err != nil {
+		t.Fatalf("argoRequirement(%s) error = %v", doublestarModule, err)
+	}
+	got, err := goListModule(doublestarModule)
+	if err != nil {
+		t.Fatalf("goListModule(%s) error = %v", doublestarModule, err)
+	}
+	if got.Version != want {
+		t.Fatalf("%s is %s, but Argo CD %s requires %s; run go run ./scripts/sync-argocd-gitops-engine.go", doublestarModule, got.Version, argo.Version, want)
+	}
+}

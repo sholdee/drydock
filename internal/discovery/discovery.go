@@ -55,6 +55,11 @@ type ApplicationFile struct {
 	// empty for an Application that a manifest declares. Like ParentKey, it
 	// never keys a cache or fingerprint.
 	ApplicationSetKey string
+	// GitGeneratorProject, when set, is the AppProject that a Git generator
+	// of that ApplicationSet looked up (appset.GeneratedApplication). Argo
+	// CD fails the whole ApplicationSet when it does not exist in the
+	// cluster. Discovery warns when the repository does not declare it.
+	GitGeneratorProject *string
 }
 
 type ApplicationSetFile struct {

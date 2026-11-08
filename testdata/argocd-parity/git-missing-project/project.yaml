@@ -1,0 +1,14 @@
+# The one AppProject of this fixture directory. With it, drydock knows that
+# the repository declares AppProjects, so a project that it does not declare
+# is missing. The smoke applies it to Argo CD too, so both sides hold the
+# same AppProjects apart from the built-in default project.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: parity-git-missing-project-anchor
+  namespace: argocd
+spec:
+  sourceRepos: ["*"]
+  destinations:
+    - server: "*"
+      namespace: "*"

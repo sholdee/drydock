@@ -3,27 +3,31 @@ package appset
 import (
 	"fmt"
 	"maps"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"github.com/sholdee/drydock/internal/pathsafety"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
+// evaluateGitGenerator mirrors Argo CD v3.6.1
+// applicationset/generators/git.go: it looks the AppProject up first
+// (resolveSourceIntegrity), then runs the shared repo-source traversal of
+// repo_path_utils.go over the repository the way the repo-server's
+// GetGitDirectories and GetGitFiles list it.
 func evaluateGitGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
 	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Git.Template)
 	if err != nil {
 		return nil, nil, true, err
 	}
-	paramSets, diags, supported, err := gitGeneratorParamSets(ctx.RepoRoot, ctx.ManifestPath, generator.Git, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+	if err := ctx.lookUpGitGeneratorProject(); err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags, supported, err := gitGeneratorParamSets(ctx, generator.Git)
 	if err != nil || !supported {
 		return paramSets, diags, supported, err
 	}
@@ -33,270 +37,232 @@ func evaluateGitGenerator(ctx generatorContext, generator argoappv1.ApplicationS
 	return paramSets, diags, supported, err
 }
 
-func gitGeneratorParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
-	if len(git.Directories) == 0 && len(git.Files) == 0 {
-		return nil, unsupportedGeneratorDiagnostic(manifestPath), false, nil
+// lookUpGitGeneratorProject mirrors GitGenerator.resolveSourceIntegrity
+// (applicationset/generators/git.go:93-111 at v3.6.1). Before it lists
+// anything, the Git generator gets the AppProject that the ApplicationSet's
+// own spec.template.spec.project names, not the one of a generator
+// template, from the controller namespace, and fails when it does not
+// exist. It skips the lookup when the name holds "{{". An empty name never
+// exists: the controller-runtime cache answers not found, so the
+// ApplicationSet fails here. drydock cannot know the AppProjects of the
+// cluster offline, so for any other name it records the name
+// (GeneratedApplication.GitGeneratorProject), and discovery warns when the
+// repository does not declare that AppProject.
+func (ctx generatorContext) lookUpGitGeneratorProject() error {
+	project := ctx.AppSet.Spec.Template.Spec.Project
+	if strings.Contains(project, "{{") {
+		return nil
 	}
-	if len(git.Directories) > 0 {
-		directorySets, err := gitDirectoryParamSets(repoRoot, manifestPath, git, useGoTemplate, goTemplateOptions)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		return directorySets, nil, true, nil
+	if project == "" {
+		return &generatorParamsError{err: fmt.Errorf("error getting project %s: %s", project, GitGeneratorProjectNotFoundMessage(project))}
 	}
-
-	fileSets, fileDiags, err := gitFileParamSets(repoRoot, manifestPath, git, useGoTemplate, goTemplateOptions)
-	if err != nil {
-		return nil, fileDiags, true, err
+	if ctx.state != nil && ctx.state.gitProject == nil {
+		ctx.state.gitProject = &project
 	}
-	return fileSets, fileDiags, true, nil
+	return nil
 }
 
-func gitDirectoryParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, error) {
-	includes, excludes := splitDirectoryPatterns(git.Directories)
-	matches, err := matchDirectories(repoRoot, includes, excludes)
-	if err != nil {
-		return nil, err
-	}
+// GitGeneratorProjectNotFoundMessage is the error that the Argo CD
+// ApplicationSet controller's cached client returns for an AppProject that
+// does not exist.
+func GitGeneratorProjectNotFoundMessage(project string) string {
+	return fmt.Sprintf("appprojects.argoproj.io %q not found", project)
+}
 
-	out := make([]generatorParamSet, 0, len(matches))
-	for _, match := range matches {
+func gitGeneratorParamSets(ctx generatorContext, git *argoappv1.GitGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if len(git.Directories) == 0 && len(git.Files) == 0 {
+		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+	}
+	tree := newGitRepositoryTree(ctx.RepoRoot, ctx.Options.Worktree)
+	useGoTemplate := ctx.AppSet.Spec.GoTemplate
+	goTemplateOptions := ctx.AppSet.Spec.GoTemplateOptions
+	// When both are set, directories win and files are ignored
+	// (repo_path_utils.go generateRepoSourceParams).
+	var (
+		paramSets []generatorParamSet
+		diags     []diagnostic.Diagnostic
+		err       error
+	)
+	if len(git.Directories) > 0 {
+		paramSets, diags, err = gitDirectoryParamSets(ctx, tree, git, useGoTemplate, goTemplateOptions)
+	} else {
+		paramSets, diags, err = gitFileParamSets(ctx, tree, git, useGoTemplate, goTemplateOptions)
+	}
+	if tree.scanned && tree.scanErr == nil && tree.hasSubmoduleConfig() {
+		diags = append(diags, submoduleContentDiagnostic(ctx.ManifestPath))
+	}
+	if err != nil {
+		return nil, diags, true, err
+	}
+	return paramSets, diags, true, nil
+}
+
+// submoduleContentDiagnostic warns that the repository has submodules. The
+// Argo CD repo-server fetches their content by default
+// (ARGOCD_GIT_MODULES_ENABLED, reposerver.enable.git.submodule), and the
+// Git generator then sees it. drydock does not fetch it: it sees a submodule
+// as the tree holds it, which is an empty directory in a snapshot of a Git
+// ref.
+func submoduleContentDiagnostic(manifestPath string) diagnostic.Diagnostic {
+	return appsetDiagnostic(manifestPath, "the repository has submodules (.gitmodules); Argo CD fetches submodule content by default (ARGOCD_GIT_MODULES_ENABLED) and its Git generator sees it, but drydock does not fetch it and sees each submodule as the local tree holds it")
+}
+
+// gitDirectoryParamSets mirrors generateRepoSourceDirectoryParams: the
+// repo-server lists every directory of the checkout, and filterPaths keeps
+// the ones the patterns select, in walk order.
+func gitDirectoryParamSets(ctx generatorContext, tree *gitRepositoryTree, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	allPaths, err := tree.directories(ctx.Options.IncludeHiddenDirectories)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s git generator: list directories: %w", ctx.ManifestPath, err)
+	}
+	patterns := make([]repoPathPattern, 0, len(git.Directories))
+	for _, dir := range git.Directories {
+		patterns = append(patterns, repoPathPattern{Path: dir.Path, Exclude: dir.Exclude})
+	}
+	var diags []diagnostic.Diagnostic
+	if ctx.Options.IncludeHiddenDirectories {
+		diags = append(diags, gitDirectoryBelowDotGitDiagnostics(ctx.ManifestPath, patterns)...)
+	}
+	requested := filterRepoPaths(patterns, allPaths)
+	out := make([]generatorParamSet, 0, len(requested))
+	for _, match := range requested {
 		params, err := pathParams(match, git.PathParamPrefix, git.Values, useGoTemplate, goTemplateOptions)
 		if err != nil {
-			return nil, fmt.Errorf("%s render %s: %w", manifestPath, match, err)
+			return nil, diags, fmt.Errorf("%s render %s: %w", ctx.ManifestPath, match, err)
+		}
+		sourcePaths := []string{match}
+		if match == ".git" {
+			// drydock never reads the .git directory, so it is no input.
+			sourcePaths = nil
 		}
 		out = append(out, generatorParamSet{
 			Params:      params,
 			SourcePath:  match,
-			SourcePaths: []string{match},
+			SourcePaths: sourcePaths,
 			Generator:   "git-directories",
 		})
 	}
-	return out, nil
+	return out, diags, nil
 }
 
-func splitDirectoryPatterns(dirs []argoappv1.GitDirectoryGeneratorItem) ([]string, []string) {
-	var includes []string
-	var excludes []string
-	for _, dir := range dirs {
-		cleaned := cleanPathPattern(dir.Path)
-		if dir.Exclude {
-			excludes = append(excludes, cleaned)
+// gitDirectoryBelowDotGitDiagnostics warns about an include pattern that
+// can match a directory below .git. With reposerver.include.hidden.directories
+// on, the repo-server walk also lists the directories of the checkout's
+// .git directory, such as .git/refs. drydock lists .git itself, but never
+// what is in it: its own .git, if there is one, is not the repo-server's.
+func gitDirectoryBelowDotGitDiagnostics(manifestPath string, patterns []repoPathPattern) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+	for _, pattern := range patterns {
+		if pattern.Exclude {
 			continue
 		}
-		includes = append(includes, cleaned)
+		first, rest, found := strings.Cut(pattern.Path, "/")
+		if !found || rest == "" {
+			continue
+		}
+		if ok, err := path.Match(first, ".git"); err != nil || !ok {
+			continue
+		}
+		diags = append(diags, appsetDiagnostic(manifestPath, fmt.Sprintf("git directories pattern %q can match directories below .git: with reposerver.include.hidden.directories on, Argo CD lists the directories of its checkout's .git directory too, which drydock does not read", pattern.Path)))
 	}
-	return includes, excludes
+	return diags
 }
 
-func matchDirectories(repoRoot string, includes, excludes []string) ([]string, error) {
-	candidates, err := walkDirectoryTree(repoRoot)
-	if err != nil {
-		return nil, err
-	}
-
-	var matches []string
-	for _, rel := range candidates {
-		included, err := matchesAny(includes, rel)
-		if err != nil {
-			return nil, err
-		}
-		excluded, err := matchesAny(excludes, rel)
-		if err != nil {
-			return nil, err
-		}
-		if included && !excluded {
-			matches = append(matches, rel)
-		}
-	}
-	sort.Strings(matches)
-	return matches, nil
+// repoPathPattern is an include or exclude path pattern of a Git or OCI
+// generator (repo_path_utils.go pathPattern).
+type repoPathPattern struct {
+	Path    string
+	Exclude bool
 }
 
-// walkDirectoryTree lists every directory under root as a slash-separated
-// relative path in filepath.WalkDir order, skipping hidden directories and
-// their subtrees and never following symlinks. It mirrors Argo CD's
-// repo-server walkDirectoryTree (reposerver/repository/utils.go) with
-// includeHidden false: reposerver.include.hidden.directories is a runtime
-// repo-server setting drydock does not apply. The root itself is exempt from
-// the hidden check (Argo CD's roots are checkout and extraction temp dirs).
-func walkDirectoryTree(root string) ([]string, error) {
-	var paths []string
-	err := filepath.WalkDir(root, func(abs string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
+// filterRepoPaths is Argo CD's filterPaths (repo_path_utils.go:70-101):
+// patterns match with path.Match exactly as written, without any
+// normalization, a pattern that path.Match refuses is skipped (Argo CD logs
+// it), an exclude match always wins, and the input order is kept.
+func filterRepoPaths(patterns []repoPathPattern, allPaths []string) []string {
+	var out []string
+	for _, appPath := range allPaths {
+		include := false
+		exclude := false
+		for _, pattern := range patterns {
+			match, err := path.Match(pattern.Path, appPath)
+			if err != nil || !match {
+				continue
+			}
+			if pattern.Exclude {
+				exclude = true
+			} else {
+				include = true
+			}
 		}
-		if !entry.IsDir() {
-			return nil
+		if include && !exclude {
+			out = append(out, appPath)
 		}
-		if strings.HasPrefix(entry.Name(), ".") && abs != root {
-			return filepath.SkipDir
-		}
-		rel, err := filepath.Rel(root, abs)
-		if err != nil || rel == "." {
-			return err
-		}
-		paths = append(paths, filepath.ToSlash(rel))
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
-	return paths, nil
+	return out
 }
 
-func gitFileParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
-	includes, excludes, diags := splitGitFilePatterns(manifestPath, git.Files)
-	matches, matchDiags, err := matchGitFiles(repoRoot, includes, excludes, manifestPath)
-	diags = append(diags, matchDiags...)
-	if err != nil {
-		return nil, diags, err
+// gitFileParamSets mirrors generateRepoSourceFileParams: the files of every
+// include pattern are unioned, the files of every exclude pattern removed,
+// and the rest are parsed in sorted path order. A file that does not parse
+// fails the whole ApplicationSet.
+func gitFileParamSets(ctx generatorContext, tree *gitRepositoryTree, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	var includes, excludes []string
+	for _, file := range git.Files {
+		if file.Exclude {
+			excludes = append(excludes, file.Path)
+		} else {
+			includes = append(includes, file.Path)
+		}
 	}
-
-	out := make([]generatorParamSet, 0, len(matches))
-	for _, match := range matches {
-		paramObjects, decodeDiags, err := gitFileParams(repoRoot, match, git.PathParamPrefix, git.Values, useGoTemplate, goTemplateOptions, manifestPath)
-		diags = append(diags, decodeDiags...)
+	contents := map[string][]byte{}
+	inputs := map[string][]string{}
+	var diags []diagnostic.Diagnostic
+	for _, pattern := range includes {
+		files, fileInputs, fileDiags, err := tree.getFilesWithInputs(ctx.ManifestPath, pattern, ctx.Options.NewGitFileGlobbing)
+		diags = append(diags, fileDiags...)
 		if err != nil {
 			return nil, diags, err
 		}
-		if len(paramObjects) == 0 {
-			continue
+		maps.Copy(contents, files)
+		maps.Copy(inputs, fileInputs)
+	}
+	for _, pattern := range excludes {
+		files, fileDiags, err := tree.getFiles(ctx.ManifestPath, pattern, ctx.Options.NewGitFileGlobbing)
+		diags = append(diags, fileDiags...)
+		if err != nil {
+			return nil, diags, err
+		}
+		for rel := range files {
+			delete(contents, rel)
+		}
+	}
+	rels := make([]string, 0, len(contents))
+	for rel := range contents {
+		rels = append(rels, rel)
+	}
+	sort.Strings(rels)
+
+	out := make([]generatorParamSet, 0, len(rels))
+	for _, rel := range rels {
+		fileObjects, err := decodeFileParamsContent(contents[rel])
+		if err != nil {
+			return nil, diags, &generatorParamsError{err: fmt.Errorf("error generating params from git: unable to process file '%s' from repository '%s': %w", rel, git.RepoURL, err)}
+		}
+		paramObjects, err := fileParamObjects(fileObjects, rel, git.PathParamPrefix, git.Values, useGoTemplate, goTemplateOptions)
+		if err != nil {
+			return nil, diags, err
 		}
 		for _, params := range paramObjects {
 			out = append(out, generatorParamSet{
 				Params:      params,
-				SourcePath:  match,
-				SourcePaths: []string{match},
+				SourcePath:  rel,
+				SourcePaths: inputs[rel],
 				Generator:   "git-files",
 			})
 		}
 	}
 	return out, diags, nil
-}
-
-func splitGitFilePatterns(manifestPath string, files []argoappv1.GitFileGeneratorItem) ([]string, []string, []diagnostic.Diagnostic) {
-	var includes []string
-	var excludes []string
-	var diags []diagnostic.Diagnostic
-	for _, file := range files {
-		cleaned, err := cleanGitFilePattern(file.Path)
-		if err != nil {
-			diags = append(diags, appsetDiagnostic(manifestPath, err.Error()))
-			continue
-		}
-		if file.Exclude {
-			excludes = append(excludes, cleaned)
-			continue
-		}
-		includes = append(includes, cleaned)
-	}
-	return includes, excludes, diags
-}
-
-func cleanGitFilePattern(pattern string) (string, error) {
-	if filepath.IsAbs(pattern) {
-		return "", fmt.Errorf("git files pattern %q must be relative", pattern)
-	}
-	cleaned := path.Clean(filepath.ToSlash(strings.TrimSpace(pattern)))
-	if cleaned == "." || cleaned == "" {
-		return "", fmt.Errorf("git files pattern %q must name files", pattern)
-	}
-	if pathsafety.SlashRelEscapes(cleaned) {
-		return "", fmt.Errorf("git files pattern %q escapes repository root", pattern)
-	}
-	return cleaned, nil
-}
-
-func matchGitFiles(repoRoot string, includes, excludes []string, manifestPath string) ([]string, []diagnostic.Diagnostic, error) {
-	var candidates []string
-	var diags []diagnostic.Diagnostic
-	err := filepath.WalkDir(repoRoot, func(abs string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if abs == repoRoot {
-			return nil
-		}
-		rel, relErr := filepath.Rel(repoRoot, abs)
-		if relErr != nil {
-			return relErr
-		}
-		rel = filepath.ToSlash(rel)
-		if entry.Type()&os.ModeSymlink != 0 {
-			diags = append(diags, appsetDiagnostic(manifestPath, fmt.Sprintf("git files path %q is a symlink and was skipped", rel)))
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			if entry.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		candidates = append(candidates, rel)
-		return nil
-	})
-	if err != nil {
-		return nil, diags, err
-	}
-	sort.Strings(candidates)
-
-	var matches []string
-	for _, rel := range candidates {
-		included, err := matchesAnyGlob(includes, rel)
-		if err != nil {
-			return nil, diags, fmt.Errorf("match git files include pattern: %w", err)
-		}
-		excluded, err := matchesAnyGlob(excludes, rel)
-		if err != nil {
-			return nil, diags, fmt.Errorf("match git files exclude pattern: %w", err)
-		}
-		if included && !excluded {
-			matches = append(matches, rel)
-		}
-	}
-	return matches, diags, nil
-}
-
-func matchesAnyGlob(patterns []string, rel string) (bool, error) {
-	for _, pattern := range patterns {
-		ok, err := doublestar.Match(pattern, rel)
-		if err != nil {
-			return false, fmt.Errorf("pattern %q: %w", pattern, err)
-		}
-		if ok {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func matchesAny(patterns []string, rel string) (bool, error) {
-	for _, pattern := range patterns {
-		ok, err := path.Match(pattern, rel)
-		if err != nil {
-			return false, fmt.Errorf("match directory pattern %q: %w", pattern, err)
-		}
-		if ok {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func gitFileParams(repoRoot, rel, prefix string, values map[string]string, useGoTemplate bool, goTemplateOptions []string, manifestPath string) ([]map[string]any, []diagnostic.Diagnostic, error) {
-	fileObjects, diag, err := decodeGitFileParams(filepath.Join(repoRoot, filepath.FromSlash(rel)), rel, manifestPath)
-	if err != nil || diag != nil {
-		if diag == nil {
-			return nil, nil, err
-		}
-		return nil, []diagnostic.Diagnostic{*diag}, nil
-	}
-	paramObjects, err := fileParamObjects(fileObjects, rel, prefix, values, useGoTemplate, goTemplateOptions)
-	return paramObjects, nil, err
 }
 
 // fileParamObjects shapes decoded param-file objects into generator params:
@@ -324,18 +290,11 @@ func fileParamObjects(fileObjects []map[string]any, rel, prefix string, values m
 	return paramObjects, nil
 }
 
-func decodeGitFileParams(absPath, rel, manifestPath string) ([]map[string]any, *diagnostic.Diagnostic, error) {
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	objects, diag := decodeFileParamsContent(data, "git files", rel, manifestPath)
-	return objects, diag, nil
-}
-
-// decodeFileParamsContent decodes one generator param file. kind names the
-// generator in the invalid-content diagnostic ("git files" or "oci files").
-func decodeFileParamsContent(data []byte, kind, rel, manifestPath string) ([]map[string]any, *diagnostic.Diagnostic) {
+// decodeFileParamsContent decodes one generator param file as Argo CD's
+// parseFileParams does (repo_path_utils.go:155-187): first as one object,
+// which also succeeds for an empty file, and else as a list of objects. A
+// file that is neither fails with the same "unable to parse file" error.
+func decodeFileParamsContent(data []byte) ([]map[string]any, error) {
 	if isEmptyGitFileParamsContent(data) {
 		return []map[string]any{{}}, nil
 	}
@@ -350,8 +309,7 @@ func decodeFileParamsContent(data []byte, kind, rel, manifestPath string) ([]map
 
 	var objects []map[string]any
 	if err := sigsyaml.Unmarshal(data, &objects); err != nil {
-		diag := appsetDiagnostic(manifestPath, fmt.Sprintf("%s match %q is not valid YAML: %v", kind, rel, err))
-		return nil, &diag
+		return nil, fmt.Errorf("unable to parse file: %w", err)
 	}
 	for i := range objects {
 		if objects[i] == nil {
@@ -471,8 +429,4 @@ func flattenValue(key string, value any, out map[string]any) {
 	default:
 		out[key] = fmt.Sprint(value)
 	}
-}
-
-func cleanPathPattern(pattern string) string {
-	return path.Clean(filepath.ToSlash(pattern))
 }

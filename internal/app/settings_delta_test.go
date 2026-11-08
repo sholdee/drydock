@@ -54,6 +54,10 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	// Which Applications an ApplicationSet with a RollingSync strategy
 	// generates, and the RollingSync warnings.
 	"EnableProgressiveSyncs": settingsRenderAll,
+	// Which files a Git files generator matches, and which directories
+	// the Git and OCI directory generators list.
+	"EnableNewGitFileGlobbing": settingsRenderAll,
+	"IncludeHiddenDirectories": settingsRenderAll,
 	// Diff: which rendered resources survive, and normalization.
 	"ResourceExclusions": settingsRenderAll,
 	"ResourceInclusions": settingsRenderAll,
@@ -274,6 +278,8 @@ func assertSettingsChangeClass(t *testing.T, name string, left, right config.Arg
 var nonZeroOverrides = map[string]any{
 	"ArgoSettings.AllowOutOfBoundsSymlinks.Value":  "true",
 	"ArgoSettings.EnableProgressiveSyncs.Value":    "true",
+	"ArgoSettings.EnableNewGitFileGlobbing.Value":  "true",
+	"ArgoSettings.IncludeHiddenDirectories.Value":  "true",
 	"ArgoSettings.IgnoreNormalizerJQTimeout.Value": "5s",
 	// Only a known key with a value other than "true" turns a tool off.
 	"ArgoSettings.SourceTypeEnable{}":      config.HelmEnableKey,

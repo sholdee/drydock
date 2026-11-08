@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-git-alpha
+  namespace: parity-git-alpha
+data:
+  generator: git-directories
+  basename: alpha

@@ -1,0 +1,32 @@
+# git refuses a pathspec outside the repository, so `git ls-files` fails and
+# so does the whole ApplicationSet.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-git-outside-pattern
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - path: {basename: from-list}
+    - git:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        revision: HEAD
+        files:
+          - path: workloads/appset/git-parity/pathspec/a/config.yaml
+          - path: ../outside.yaml
+  template:
+    metadata:
+      name: 'parity-git-outside-pattern-{{ .path.basename }}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/git/alpha
+      destination:
+        name: in-cluster
+        namespace: parity-git-outside-pattern

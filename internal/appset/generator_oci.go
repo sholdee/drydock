@@ -6,8 +6,9 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"path"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/bmatcuk/doublestar/v4"
@@ -66,7 +67,7 @@ func ociGeneratorParamSets(ctx generatorContext, oci *argoappv1.OciGenerator) ([
 	useGoTemplate := ctx.AppSet.Spec.GoTemplate
 	goTemplateOptions := ctx.AppSet.Spec.GoTemplateOptions
 	if len(oci.Directories) > 0 {
-		paramSets, err := ociDirectoryParamSets(root, ctx.ManifestPath, oci, useGoTemplate, goTemplateOptions)
+		paramSets, err := ociDirectoryParamSets(root, ctx.ManifestPath, oci, ctx.Options.IncludeHiddenDirectories, useGoTemplate, goTemplateOptions)
 		if err != nil {
 			return nil, nil, true, err
 		}
@@ -79,8 +80,8 @@ func ociGeneratorParamSets(ctx generatorContext, oci *argoappv1.OciGenerator) ([
 	return paramSets, diags, true, nil
 }
 
-func ociDirectoryParamSets(root, manifestPath string, oci *argoappv1.OciGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, error) {
-	allPaths, err := walkDirectoryTree(root)
+func ociDirectoryParamSets(root, manifestPath string, oci *argoappv1.OciGenerator, includeHidden, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, error) {
+	allPaths, err := walkDirectoryTree(root, includeHidden)
 	if err != nil {
 		return nil, fmt.Errorf("%s oci generator: list directories of %s: %w", manifestPath, oci.RepoURL, err)
 	}
@@ -96,30 +97,14 @@ func ociDirectoryParamSets(root, manifestPath string, oci *argoappv1.OciGenerato
 	return out, nil
 }
 
-// filterOCIDirectoryPaths is Argo CD's filterPaths: patterns match with
-// path.Match exactly as written (no normalization), a malformed pattern is
-// skipped, an exclude match always wins, and the input order is kept.
+// filterOCIDirectoryPaths is Argo CD's filterPaths (filterRepoPaths) for
+// the directory items of an oci generator.
 func filterOCIDirectoryPaths(dirs []argoappv1.OciDirectoryGeneratorItem, allPaths []string) []string {
-	var out []string
-	for _, appPath := range allPaths {
-		include := false
-		exclude := false
-		for _, dir := range dirs {
-			match, err := path.Match(dir.Path, appPath)
-			if err != nil || !match {
-				continue
-			}
-			if dir.Exclude {
-				exclude = true
-			} else {
-				include = true
-			}
-		}
-		if include && !exclude {
-			out = append(out, appPath)
-		}
+	patterns := make([]repoPathPattern, 0, len(dirs))
+	for _, dir := range dirs {
+		patterns = append(patterns, repoPathPattern{Path: dir.Path, Exclude: dir.Exclude})
 	}
-	return out
+	return filterRepoPaths(patterns, allPaths)
 }
 
 // ociFileParamSets mirrors generateRepoSourceFileParams: every include
@@ -136,14 +121,14 @@ func ociFileParamSets(root, manifestPath string, oci *argoappv1.OciGenerator, us
 		}
 		matched, err := ociGlobFiles(root, file.Path)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s oci generator: %w", manifestPath, err)
+			return nil, nil, ociGeneratorError(manifestPath, err)
 		}
 		maps.Copy(contents, matched)
 	}
 	for _, pattern := range excludes {
 		matched, err := ociGlobFiles(root, pattern)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s oci generator: %w", manifestPath, err)
+			return nil, nil, ociGeneratorError(manifestPath, err)
 		}
 		for rel := range matched {
 			delete(contents, rel)
@@ -158,10 +143,11 @@ func ociFileParamSets(root, manifestPath string, oci *argoappv1.OciGenerator, us
 	var out []generatorParamSet
 	var diags []diagnostic.Diagnostic
 	for _, rel := range rels {
-		objects, diag := decodeFileParamsContent(contents[rel], "oci files", rel, manifestPath)
-		if diag != nil {
-			diags = append(diags, *diag)
-			continue
+		// A file that does not parse fails the whole ApplicationSet
+		// (repo_path_utils.go:364-367).
+		objects, err := decodeFileParamsContent(contents[rel])
+		if err != nil {
+			return nil, diags, &generatorParamsError{err: fmt.Errorf("error generating params from oci: unable to process file '%s' from repository '%s': %w", rel, oci.RepoURL, err)}
 		}
 		paramObjects, err := fileParamObjects(objects, rel, oci.PathParamPrefix, oci.Values, useGoTemplate, goTemplateOptions)
 		if err != nil {
@@ -172,6 +158,47 @@ func ociFileParamSets(root, manifestPath string, oci *argoappv1.OciGenerator, us
 		}
 	}
 	return out, diags, nil
+}
+
+// ociGeneratorError names the ApplicationSet in a drydock-side error and
+// keeps a generatorParamsError as it is.
+func ociGeneratorError(manifestPath string, err error) error {
+	if _, ok := errors.AsType[*generatorParamsError](err); ok {
+		return err
+	}
+	return fmt.Errorf("%s oci generator: %w", manifestPath, err)
+}
+
+// walkDirectoryTree is the repo-server's walkDirectoryTree
+// (reposerver/repository/utils.go:90-121 at v3.6.1) over an extracted OCI
+// artifact: every directory below root in filepath.WalkDir order, never
+// through a symlink, and without hidden directories and their subtrees
+// unless includeHidden (reposerver.include.hidden.directories). The root
+// itself is exempt from the hidden check: Argo CD's root is a temporary
+// directory.
+func walkDirectoryTree(root string, includeHidden bool) ([]string, error) {
+	var paths []string
+	err := filepath.WalkDir(root, func(abs string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		if !includeHidden && strings.HasPrefix(entry.Name(), ".") && abs != root {
+			return filepath.SkipDir
+		}
+		rel, err := filepath.Rel(root, abs)
+		if err != nil || rel == "." {
+			return err
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 // ociGlobFiles mirrors the Argo CD v3.6.1 repo-server GetOciFiles: an empty
@@ -190,7 +217,9 @@ func ociGlobFiles(root, pattern string) (map[string][]byte, error) {
 
 	matched, err := doublestar.Glob(artifactRoot.FS(), pattern)
 	if err != nil {
-		return nil, fmt.Errorf("match OCI files with pattern %q: %w", pattern, err)
+		// The repo-server fails GetOciFiles on a bad pattern, so the
+		// generator fails (reposerver/repository/repository.go:3768-3771).
+		return nil, &generatorParamsError{err: fmt.Errorf("unable to match files. pattern %s: %w", pattern, err)}
 	}
 	out := make(map[string][]byte, len(matched))
 	for _, rel := range matched {

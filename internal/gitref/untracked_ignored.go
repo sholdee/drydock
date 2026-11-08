@@ -338,6 +338,56 @@ func readGitignoreTree(top string, dir []string, inherited []gitignore.Pattern) 
 	return patterns
 }
 
+// IndexGitlinks returns the gitlinks (submodules) of the index of the Git
+// worktree that holds root and that are at or below root, relative to root
+// with forward slashes. It asks the git CLI when it can and reads the index
+// with go-git otherwise. It returns nothing when root is not in a Git
+// worktree.
+func IndexGitlinks(ctx context.Context, root string) []string {
+	if out, ok := runGitCLI(ctx, root, "ls-files", "-s", "-z"); ok {
+		var links []string
+		for entry := range strings.SplitSeq(string(out), "\x00") {
+			meta, name, found := strings.Cut(entry, "\t")
+			if found && strings.HasPrefix(meta, "160000 ") {
+				links = append(links, name)
+			}
+		}
+		return links
+	}
+	repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true, EnableDotGitCommonDir: true})
+	if err != nil {
+		return nil
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return nil
+	}
+	prefix, ok := worktreePrefix(worktree.Filesystem.Root(), root)
+	if !ok {
+		return nil
+	}
+	index, err := repo.Storer.Index()
+	if err != nil {
+		return nil
+	}
+	var links []string
+	for _, entry := range index.Entries {
+		if entry.Mode != filemode.Submodule {
+			continue
+		}
+		name := entry.Name
+		if prefix != "" {
+			rest, found := strings.CutPrefix(name, prefix+"/")
+			if !found {
+				continue
+			}
+			name = rest
+		}
+		links = append(links, name)
+	}
+	return links
+}
+
 // Skip reports whether rel, relative to the filter root with forward
 // slashes, is ignored and not tracked.
 func (f *UntrackedIgnoredFilter) Skip(rel string, isDir bool) bool {

@@ -17,8 +17,8 @@ the OCI generator, which pulls its artifact from the registry exactly as an
 
 | Generator | Support |
 | --- | --- |
-| Git directories | Native. Matches are sorted by normalized relative path. |
-| Git files | Native. YAML and JSON mapping documents are decoded into params. |
+| Git directories | Native. Matches keep the Argo CD v3.6.1 repo-server walk order. |
+| Git files | Native. Patterns match as `git ls-files` pathspecs, and matches are sorted by path. |
 | List | Native, including `elementsYaml`. |
 | Matrix | Native for two child generators, including interpolated child params. |
 | Merge | Native for two or more child generators over `mergeKeys`. |
@@ -74,21 +74,147 @@ The test, diff, and image diff steps all receive them.
 
 ## Git Generators
 
-Git directory and file matches are sorted by normalized relative path. Include
-and exclude patterns are deterministic, and `exclude: true` removes a path even
-when another pattern includes it.
+drydock lists the repository as the Argo CD v3.6.1 repo-server sees its
+checkout of a commit. A checkout holds no `.git` entry below the top level.
+It holds an empty directory only for a gitlink (a submodule). When drydock
+reads a working tree, it also skips every path that Git ignores and does not
+track. It keeps an untracked path that Git does not ignore, because a commit
+can hold it. A `--ref` snapshot holds committed files only, and an empty
+directory for each gitlink.
+
+drydock finds the gitlinks in the index of a working tree, in the commit of
+a `--ref` snapshot, and as directories that hold their own `.git`. A gitlink
+is a directory of the checkout, also when it is not on disk. When the
+repository has no `.gitmodules` file, Argo CD fetches no submodule content,
+so each gitlink is an empty directory, and drydock does not look into it,
+also when a working tree holds content there. When the repository has a
+`.gitmodules` file, Argo CD fetches submodule content by default
+(`ARGOCD_GIT_MODULES_ENABLED`), and drydock does not. drydock then warns and
+sees each submodule as the local tree holds it.
 
 When a Git generator defines both `directories` and `files`, Argo CD's
-directory-first dispatch is used and `files` are ignored.
+directory-first dispatch is used and `files` are ignored. `exclude: true`
+removes a path even when another pattern includes it.
 
-Git files must stay under the repository root and must not traverse symlinks.
-YAML and JSON files may decode to a mapping document, an array of mapping
-documents, an empty mapping, or an empty file. Scalars, invalid YAML/JSON, and
-arrays with non-mapping entries produce diagnostics.
+Before a Git generator lists anything, Argo CD gets the AppProject that the
+`spec.template.spec.project` of the ApplicationSet names. It uses the template
+of the ApplicationSet, not the template of the generator. When that AppProject
+does not exist, the whole ApplicationSet fails. An empty name never exists. A
+name that holds `{{` skips the lookup. Argo CD looks only in the namespace of
+its controller.
+
+drydock fails the ApplicationSet for an empty name. For any other name it
+keeps the Applications, because it cannot know the AppProjects of the
+cluster offline. They can come from another repository, a chart, a remote
+Kustomize base, or the cluster itself. When the repository declares
+AppProjects but not that one, and it is not `default`, drydock warns
+`project.missing` once for each Application that names it. The warning says
+that the Git generator looks that AppProject up first, so Argo CD fails the
+whole ApplicationSet when it does not exist in the cluster. When no
+Application of the ApplicationSet names it, for example because a generator
+template sets another project, drydock warns once for the ApplicationSet.
+`--project-diagnostics` filters these warnings like the other project
+diagnostics. When the repository declares no AppProject at all, drydock does
+not warn.
+
+A Git generator failure that fails the ApplicationSet in Argo CD gives the
+warning `appset.generator-failed`. The ApplicationSet then contributes no
+Applications, also none from its other generators. Argo CD shows the same
+failure as an `ErrorOccurred` condition. drydock evaluates no generator after
+the one that failed.
+
+### Directories
+
+The directory list follows the repo-server walk: walk order, never through a
+symlink, and without hidden directories and the directories below them.
+`reposerver.include.hidden.directories` in `argocd-cmd-params-cm` adds the
+hidden directories. With it, Argo CD also lists the `.git` directory of its
+checkout and the directories in it. drydock lists `.git` but nothing in it,
+and it warns about an include pattern that can match a directory below `.git`.
+An Application whose source path is `.git` has no manifests in Argo CD.
+drydock renders it empty and warns `render.git-directory-source`.
+
+Each pattern matches with `path.Match` exactly as written. So `./apps/*` and
+`apps/*/` match nothing. Argo CD skips a pattern that `path.Match` refuses,
+such as `apps/[`, and the other patterns still apply.
+
+### Files
+
+By default, Argo CD lists the files of each pattern with
+`git ls-files -- <pattern>`. So a pattern is a git pathspec, not a shell glob:
+
+- `*` and `?` also match `/`. `apps/*/config.yaml` matches
+  `apps/a/config.yaml` and `apps/a/b/config.yaml`.
+- A pattern that names a directory matches every file below it. `apps`
+  matches every file in `apps`, at any depth.
+- `./` and repeated slashes are removed, and `..` goes up one directory.
+- Pathspec magic works, for example `:(glob)apps/*/config.yaml`, where `*`
+  does not match `/`, or `:!apps/legacy` to match everything except a
+  directory. drydock does not evaluate the `attr` magic. A pattern with it
+  makes the ApplicationSet unsupported (`appset.unsupported-generator`):
+  drydock cannot tell what Argo CD generates, so the ApplicationSet
+  contributes no Applications.
+- An empty pattern matches every file. Hidden files match.
+- A gitlink is one entry. A pattern can match it, also with a trailing
+  slash such as `params/sub/`, but never a file in it. The repo-server then
+  fails, because it cannot read a directory as a param file.
+
+A pattern that git refuses, such as `../outside.yaml` or an absolute path,
+fails the ApplicationSet.
+
+`applicationsetcontroller.enable.new.git.file.globbing: "true"` in
+`argocd-cmd-params-cm` changes the matching to doublestar globs over the
+checkout: `*` does not match `/`, and `**` matches any number of directories.
+A doublestar glob also matches directories. Argo CD then fails the
+ApplicationSet, because it cannot read a directory as a param file. The glob
+follows symlinks to directories, up to the 40 symlinks that Linux follows in
+one path. drydock looks paths up as the glob asks for them. When a pattern
+needs more than 131072 lookups, for example through two symlinks to `.`,
+the ApplicationSet is unsupported. A symlink that does not resolve, such as
+a dangling one, does not exist for a literal pattern part. So
+`dangling.yaml` and `{x,dangling}.yaml` do not match it. A wildcard part
+lists it, and reading it then fails the ApplicationSet. The glob also sees
+the `.git` directory of the checkout. A pattern that matches `.git` or a
+directory in it fails the ApplicationSet, as in Argo CD. A pattern that
+matches a file in it makes the ApplicationSet unsupported: Argo CD reads
+the file, and drydock never reads `.git`. drydock knows the names that a
+checkout's `.git` directory holds, such as `.git/config` and
+`.git/refs/heads`, but not branch names. drydock matches a pattern that
+leaves the repository with nothing and warns. In Argo CD, `../*` can match
+the checkout itself and then fails. drydock uses the doublestar release that
+Argo CD v3.6.1 uses (v4.10.0), because releases parse some patterns
+differently. For example, v4.10.0 refuses `{c,[a,b]}.yaml`.
+
+The repo-server reads each listed file. It follows a symlink to its target,
+as the kernel does. A symlink to a directory, to a target that does not exist,
+or to a path through a file, such as `t.yaml/`, fails the ApplicationSet. In
+a working tree, a target that Git ignores and does not track does not exist
+either, and neither does a FIFO, a `.git` entry below the top level, or a
+name in another letter case. drydock never reads a target outside the
+repository or in the top-level `.git` directory, also when a `..` leaves
+`.git` again. With default globbing, Argo CD reads such a target in its own
+file system, or fails when it does not exist there, so drydock reports the
+ApplicationSet unsupported. With new globbing, Argo CD drops a match whose
+real path is outside the checkout, and fails only when it cannot resolve a
+match. So drydock matches nothing when only literal pattern parts remain
+below a symlink out of the checkout, such as `h/hosts` for `h -> /etc`. When
+a wildcard still has to match below it, such as `h/*` or `**/*.yaml`, Argo
+CD walks a tree that drydock does not read, which can even hold the
+checkout itself, so drydock reports the ApplicationSet unsupported. A
+symlink through `.git`, such as `.git/../values.yaml`, makes it unsupported
+in both modes. A generated
+Application owns the paths that its param file came from: the listed path,
+each symlink followed, and the file read. So a changed-only diff renders it
+when only the target of a symlink changes.
+
+YAML and JSON files can decode to a mapping document, an array of mapping
+documents, an empty mapping, or an empty file. A scalar, invalid YAML or JSON,
+or an array with an entry that is not a mapping fails the ApplicationSet, as in
+Argo CD.
 
 Empty, comment-only, and bare `---` or `...` files decode to one empty param
-set, matching Argo CD. An empty list (`[]`) decodes to zero param sets; use it
-when a param file exists but should generate nothing yet. Multi-document files
+set, matching Argo CD. An empty list (`[]`) decodes to zero param sets. Use it
+when a param file exists but must generate nothing yet. Multi-document files
 decode only the first document, also matching Argo CD.
 
 Git files `values` use the same `values.*` and `.values.*` behavior as Git
@@ -99,6 +225,19 @@ directories. `pathParamPrefix` applies to all path-related params. For example,
 In PR diff mode, mapped repository URLs use the local `--path` or
 `--path-orig` trees for directory discovery and rendering, even when the
 ApplicationSet declares `revision: master`.
+
+### Settings
+
+drydock reads `applicationsetcontroller.enable.new.git.file.globbing` and
+`reposerver.include.hidden.directories` from a discovered or rendered
+`argocd-cmd-params-cm`, the same way as
+`applicationsetcontroller.enable.progressive.syncs`. Argo CD reads `true` and
+`false` in any case, and any other value as `false`. When fleet discovery
+finds a value late, after it expanded the ApplicationSets, drydock runs
+discovery a second time with the final value. It does this only when an
+ApplicationSet uses a generator that the value changes. When the second run
+ends with yet another value, drydock warns `settings.appset-generation-cycle`.
+drydock does not read a value that is set only on the Deployment.
 
 ## OCI Generator
 
@@ -131,15 +270,16 @@ generators:
   params. When both `directories` and `files` are set, `directories` wins.
 - Directory patterns match with `path.Match` exactly as written: no
   normalization, so `apps/*/` and `./apps/*` match nothing. Hidden
-  directories and everything under them are never listed. A symlink to a
-  directory is never listed either.
+  directories and everything under them are not listed, unless
+  `reposerver.include.hidden.directories` is `true`. A symlink to a
+  directory is never listed.
 - File patterns are always doublestar globs, and `.` or an empty pattern
   means `**`. Hidden files match. File patterns follow symlinks that stay
   inside the artifact. A symlink that resolves outside the artifact is
   skipped.
 - Param files decode like Git files, including the empty-content rules. As
-  with Git files, a file that is not valid YAML or JSON produces a
-  diagnostic and is skipped; Argo CD instead fails the whole ApplicationSet.
+  with Git files, a file that does not decode fails the whole
+  ApplicationSet, and so does a file pattern that doublestar refuses.
 - Generated Applications own no repository paths from the artifact:
   changed-only selection matches them through the ApplicationSet file and
   their own local sources, and persistent render cache keys follow the

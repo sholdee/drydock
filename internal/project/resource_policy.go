@@ -88,7 +88,7 @@ func ValidateRenderedResourcePolicyResources(app argoappv1.Application, resource
 // generatedBy is the lookup of ValidateGeneratedApplications, so a missing
 // AppProject gives the same project.missing text on both paths and the
 // two warnings merge into one; nil means no Application is generated.
-func ValidateRenderedResourcePolicyResourcesWithRegistry(app argoappv1.Application, resources []RenderedResource, projects []argoappv1.AppProject, settings config.ArgoSettings, registry manifest.CRDScopeRegistry, generatedBy func(argoappv1.Application) string) []diagnostic.Diagnostic {
+func ValidateRenderedResourcePolicyResourcesWithRegistry(app argoappv1.Application, resources []RenderedResource, projects []argoappv1.AppProject, settings config.ArgoSettings, registry manifest.CRDScopeRegistry, generatedBy GeneratedByLookup) []diagnostic.Diagnostic {
 	if len(resources) == 0 {
 		return nil
 	}
@@ -106,7 +106,7 @@ func ValidateRenderedResourcePolicyResourcesWithRegistry(app argoappv1.Applicati
 	return validator.validate(resources)
 }
 
-func newRenderedResourcePolicyValidator(app argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings, generatedBy func(argoappv1.Application) string) (*renderedResourcePolicyValidator, []diagnostic.Diagnostic) {
+func newRenderedResourcePolicyValidator(app argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings, generatedBy GeneratedByLookup) (*renderedResourcePolicyValidator, []diagnostic.Diagnostic) {
 	proj, ok := renderedResourcePolicyProject(app, projects, settings)
 	if !ok {
 		return nil, []diagnostic.Diagnostic{projectWarning(app, missingProjectMessage(app, applicationProject(app), generatedBy))}

@@ -23,29 +23,30 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 }
 
 // discoverRepositoryWithOCI discovers the repository once, and once more
-// when the settings at the end set
-// applicationsetcontroller.enable.progressive.syncs to a value other than
-// the one the ApplicationSet expansions used. Fleet discovery can find the
-// setting late, in a rendered Argo CD install, after the ApplicationSets
+// when the settings at the end set an argocd-cmd-params-cm key that changes
+// ApplicationSet generation (appsetGenerationSettings) to a value other than
+// the one the ApplicationSet expansions used. Fleet discovery can find such
+// a setting late, in a rendered Argo CD install, after the ApplicationSets
 // were expanded and their Applications rendered without it. The second run
-// uses the final value from the start, so the result is the one a committed
-// setting gives. It reuses the renders of the first run. The flag changes
-// only ApplicationSets with a RollingSync strategy, so without one there is
-// no second run. There is never a third run: when the second run ends with
-// yet another value, it keeps its result and warns about the cycle.
+// uses the final values from the start, so the result is the one committed
+// settings give. It reuses the renders of the first run. Each key changes
+// only some ApplicationSets (appsetGenerationSettings.affects), so without
+// one of them there is no second run. There is never a third run: when the
+// second run ends with yet other values, it keeps its result and warns
+// about the cycle.
 //
 // A first run that fails once its first ApplicationSet expansion has chosen
-// the value may fail because of that value, for example on an
-// ApplicationSet that only an Application Argo CD would never create
-// declares. So its partial result decides the same way, and the second
-// run's result or error is returned. A first run that fails earlier returns
-// its error. So does a first run whose partial result does not hold the
-// settings yet, for example when an app-of-apps renders the Argo CD install
-// one level deeper than the failure.
+// the values may fail because of them, for example on an ApplicationSet
+// that only an Application Argo CD would never create declares. So its
+// partial result decides the same way, and the second run's result or
+// error is returned. A first run that fails earlier returns its error. So
+// does a first run whose partial result does not hold the settings yet, for
+// example when an app-of-apps renders the Argo CD install one level deeper
+// than the failure.
 func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
-	var used *bool
+	var used *appsetGenerationSettings
 	discovered, diags, events, renderCache, renderSig, runErr := o.observedDiscoveryRun(ctx, root, request, ociFetcher, &used)
-	if used == nil || !hasRollingSyncApplicationSet(discovered) {
+	if used == nil || !hasGenerationSensitiveApplicationSet(discovered) {
 		return discovered, diags, events, renderCache, renderSig, runErr
 	}
 	settings, _, err := loadSettingsFromDiscovery(root, discovered)
@@ -55,11 +56,11 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 		}
 		return discovered, diags, events, renderCache, renderSig, err
 	}
-	final := config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
-	if final == *used {
+	final := appsetGenerationSettingsFrom(settings)
+	if !final.affects(*used, discovered) {
 		return discovered, diags, events, renderCache, renderSig, runErr
 	}
-	request.progressiveSyncs = &final
+	request.appsetGeneration = &final
 	request.renderCache = renderCache
 	restarted, diags, restartEvents, renderCache, renderSig, err := o.observedDiscoveryRun(ctx, root, request, ociFetcher, &used)
 	events = append(events, restartEvents...)
@@ -70,21 +71,93 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 	if err != nil {
 		return restarted, diags, events, renderCache, renderSig, err
 	}
-	if config.ParseEnableProgressiveSyncs(restartedSettings.EnableProgressiveSyncs.Value) != final {
-		diags = append(diags, progressiveSyncsCycleDiagnostic(final, settings.EnableProgressiveSyncs.Provenance))
-	}
+	diags = append(diags, appsetGenerationCycleDiagnostics(final, appsetGenerationSettingsFrom(restartedSettings), settings, restarted)...)
 	return restarted, diags, events, renderCache, renderSig, nil
 }
 
-// hasRollingSyncApplicationSet reports a discovered ApplicationSet with a
-// RollingSync strategy, the only kind the progressive syncs flag changes.
-func hasRollingSyncApplicationSet(discovered discovery.Result) bool {
+// hasGenerationSensitiveApplicationSet reports a discovered ApplicationSet
+// that some value of appsetGenerationSettings changes.
+func hasGenerationSensitiveApplicationSet(discovered discovery.Result) bool {
+	all := appsetGenerationSettings{ProgressiveSyncs: true, NewGitFileGlobbing: true, IncludeHiddenDirectories: true}
 	for _, appSetFile := range discovered.ApplicationSets {
-		if appset.IsRollingSyncStrategy(appSetFile.ApplicationSet) {
+		if all.affectsApplicationSet(appsetGenerationSettings{}, appSetFile) {
 			return true
 		}
 	}
 	return false
+}
+
+// appsetGenerationSettings are the argocd-cmd-params-cm values that change
+// what an ApplicationSet generates, as the Argo CD v3.6.1 components parse
+// them. Each discovery run uses one set of values for every expansion.
+type appsetGenerationSettings struct {
+	// ProgressiveSyncs is applicationsetcontroller.enable.progressive.syncs.
+	ProgressiveSyncs bool
+	// NewGitFileGlobbing is
+	// applicationsetcontroller.enable.new.git.file.globbing.
+	NewGitFileGlobbing bool
+	// IncludeHiddenDirectories is reposerver.include.hidden.directories.
+	IncludeHiddenDirectories bool
+}
+
+func appsetGenerationSettingsFrom(settings config.ArgoSettings) appsetGenerationSettings {
+	return appsetGenerationSettings{
+		ProgressiveSyncs:         config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value),
+		NewGitFileGlobbing:       config.ParseEnableNewGitFileGlobbing(settings.EnableNewGitFileGlobbing.Value),
+		IncludeHiddenDirectories: config.ParseIncludeHiddenDirectories(settings.IncludeHiddenDirectories.Value),
+	}
+}
+
+func (s appsetGenerationSettings) apply(options *appset.Options) {
+	options.ProgressiveSyncs = s.ProgressiveSyncs
+	options.NewGitFileGlobbing = s.NewGitFileGlobbing
+	options.IncludeHiddenDirectories = s.IncludeHiddenDirectories
+}
+
+// affects reports whether s differs from used in a value that changes a
+// discovered ApplicationSet: progressive syncs change only an
+// ApplicationSet with a RollingSync strategy, Git file globbing only one
+// with a Git files generator, and hidden directories only one with a Git or
+// OCI directory generator.
+func (s appsetGenerationSettings) affects(used appsetGenerationSettings, discovered discovery.Result) bool {
+	if s == used {
+		return false
+	}
+	for _, appSetFile := range discovered.ApplicationSets {
+		if s.affectsApplicationSet(used, appSetFile) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s appsetGenerationSettings) affectsApplicationSet(used appsetGenerationSettings, appSetFile discovery.ApplicationSetFile) bool {
+	if s.ProgressiveSyncs != used.ProgressiveSyncs && appset.IsRollingSyncStrategy(appSetFile.ApplicationSet) {
+		return true
+	}
+	if s.NewGitFileGlobbing == used.NewGitFileGlobbing && s.IncludeHiddenDirectories == used.IncludeHiddenDirectories {
+		return false
+	}
+	uses := appset.RepositoryGeneratorsOf(appSetFile.ApplicationSet)
+	return (s.NewGitFileGlobbing != used.NewGitFileGlobbing && uses.GitFiles) ||
+		(s.IncludeHiddenDirectories != used.IncludeHiddenDirectories && uses.Directories)
+}
+
+// appsetGenerationCycleDiagnostics warns for each value that a second
+// discovery run used and that its own result sets to another value.
+// settings are the first run's, which set the value the second run used.
+func appsetGenerationCycleDiagnostics(used, final appsetGenerationSettings, settings config.ArgoSettings, discovered discovery.Result) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+	if used.ProgressiveSyncs != final.ProgressiveSyncs {
+		diags = append(diags, progressiveSyncsCycleDiagnostic(used.ProgressiveSyncs, settings.EnableProgressiveSyncs.Provenance))
+	}
+	if used.NewGitFileGlobbing != final.NewGitFileGlobbing && (appsetGenerationSettings{NewGitFileGlobbing: final.NewGitFileGlobbing}).affects(appsetGenerationSettings{NewGitFileGlobbing: used.NewGitFileGlobbing}, discovered) {
+		diags = append(diags, appsetGenerationCycleDiagnostic("applicationsetcontroller.enable.new.git.file.globbing", "a Git files generator", used.NewGitFileGlobbing, settings.EnableNewGitFileGlobbing.Provenance))
+	}
+	if used.IncludeHiddenDirectories != final.IncludeHiddenDirectories && (appsetGenerationSettings{IncludeHiddenDirectories: final.IncludeHiddenDirectories}).affects(appsetGenerationSettings{IncludeHiddenDirectories: used.IncludeHiddenDirectories}, discovered) {
+		diags = append(diags, appsetGenerationCycleDiagnostic("reposerver.include.hidden.directories", "a Git or OCI directory generator", used.IncludeHiddenDirectories, settings.IncludeHiddenDirectories.Provenance))
+	}
+	return diags
 }
 
 // progressiveSyncsCycleDiagnostic reports a progressive syncs value that
@@ -104,9 +177,24 @@ func progressiveSyncsCycleDiagnostic(used bool, provenance config.Provenance) di
 	return diag
 }
 
+// appsetGenerationCycleDiagnostic is progressiveSyncsCycleDiagnostic for
+// the other keys of appsetGenerationSettings. The "does not settle"
+// substring is the stable-code dispatch key
+// (settings.appset-generation-cycle). It is not strict-exempt either.
+func appsetGenerationCycleDiagnostic(key, generator string, used bool, provenance config.Provenance) diagnostic.Diagnostic {
+	diag := diagnostic.Diagnostic{
+		Severity:   diagnostic.SeverityWarning,
+		Category:   "settings",
+		Message:    fmt.Sprintf("%s does not settle: discovery with it %t ends with it %t, because an ApplicationSet with %s decides whether the Application that sets it exists; drydock keeps the result with it %t", key, used, !used, generator, used),
+		Provenance: provenance,
+	}
+	diag.Code = diagnostic.StableCode(diag)
+	return diag
+}
+
 // observedDiscoveryRun calls the discoveryRunObserver test seam and runs
 // discoverRepositoryRun.
-func (o Orchestrator) observedDiscoveryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **bool) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
+func (o Orchestrator) observedDiscoveryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **appsetGenerationSettings) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
 	if o.discoveryRunObserver != nil {
 		o.discoveryRunObserver()
 	}
@@ -114,10 +202,10 @@ func (o Orchestrator) observedDiscoveryRun(ctx context.Context, root string, req
 }
 
 // discoverRepositoryRun is one discovery run. used receives the
-// applicationsetcontroller.enable.progressive.syncs value that its
-// ApplicationSet expansions use, as soon as expandFirstApplicationSets has
-// chosen it. It stays nil when the run fails before that choice.
-func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **bool) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
+// appsetGenerationSettings that its ApplicationSet expansions use, as soon
+// as expandFirstApplicationSets has chosen them. It stays nil when the run
+// fails before that choice.
+func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **appsetGenerationSettings) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
 	mode, err := normalizeDiscoveryMode(request.DiscoveryMode)
 	if err != nil {
 		return discovery.Result{}, nil, nil, nil, "", err
@@ -139,11 +227,10 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 		return discovered, externalDiags, nil, renderCache, "", err
 	}
 
-	appsetOptions, providerDiags, err := applicationSetOptionsForRequest(request)
+	appsetOptions, providerDiags, err := applicationSetOptionsForRun(ctx, root, request, ociFetcher)
 	if err != nil {
 		return discovered, providerDiags, nil, renderCache, "", diagnosticsError(providerDiags, err)
 	}
-	appsetOptions.OCI = ociFetcher
 	var allDiags []diagnostic.Diagnostic
 	allDiags = append(allDiags, externalDiags...)
 	allDiags = append(allDiags, providerDiags...)
@@ -193,42 +280,64 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 		renderSig = nextRenderSig
 	}
 
-	discovered, gateDiags, err := applyFinalNamespaceGate(root, discovered)
+	discovered, gateDiags, err := applyFinalGates(root, request, discovered)
 	return discovered, dedupeDiagnostics(append(allDiags, gateDiags...)), allEvents, renderCache, renderSig, err
 }
 
-// applyFinalNamespaceGate prunes what Argo CD never reconciles, with the
-// settings at the end of discovery. Fleet discovery can find
-// argocd-cmd-params-cm late, after it expanded an ApplicationSet or rendered
-// an Application that Argo CD never reconciles, so the gate runs once more
-// on the whole result.
-func applyFinalNamespaceGate(root string, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, error) {
+// applicationSetOptionsForRun returns the ApplicationSet options of one
+// discovery run: the provider data of the request, the OCI fetcher, and,
+// for a working tree rather than a snapshot of a Git ref, the filter that
+// hides from the Git generator what Git ignores and does not track.
+func applicationSetOptionsForRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher) (appset.Options, []diagnostic.Diagnostic, error) {
+	appsetOptions, diags, err := applicationSetOptionsForRequest(request)
+	if err != nil {
+		return appsetOptions, diags, err
+	}
+	appsetOptions.OCI = ociFetcher
+	if request.rootRevision == "" {
+		appsetOptions.Worktree = newLazyWorktreeFilter(ctx, root)
+	} else {
+		appsetOptions.Worktree = &snapshotGitlinks{root: root}
+	}
+	return appsetOptions, diags, nil
+}
+
+// applyFinalGates runs the checks that need the whole discovery result,
+// with the settings at the end of discovery. The namespace gate prunes what
+// Argo CD never reconciles. Fleet discovery can find argocd-cmd-params-cm
+// late, after it expanded an ApplicationSet or rendered an Application that
+// Argo CD never reconciles, so the gate runs once more on the whole result.
+// Then the AppProject lookup of the Git generator
+// (warnGitGeneratorProjects) warns about an AppProject that the repository
+// does not declare.
+func applyFinalGates(root string, request BuildRequest, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, error) {
 	settings, _, err := loadSettingsFromDiscovery(root, discovered)
 	if err != nil {
 		return discovered, nil, err
 	}
-	pruned, diags := pruneNotEnabledNamespaces(discovered, namespaceGateFromSettings(settings))
-	return pruned, diags, nil
+	discovered, diags := pruneNotEnabledNamespaces(discovered, namespaceGateFromSettings(settings))
+	projectDiags := warnGitGeneratorProjects(discovered)
+	return discovered, append(diags, request.normalizeDiagnostics(projectDiags, false)...), nil
 }
 
-// expandFirstApplicationSets sets the
-// applicationsetcontroller.enable.progressive.syncs value that every
+// expandFirstApplicationSets sets the appsetGenerationSettings that every
 // ApplicationSet expansion of one discovery run uses, and runs the first
-// expansion. The value is the one a second run carries, or else the one in
-// the settings found before the first expansion. used receives the value
-// once it is chosen.
-func expandFirstApplicationSets(root string, request BuildRequest, discovered discovery.Result, appsetOptions *appset.Options, used **bool) (discovery.Result, []diagnostic.Diagnostic, error) {
-	if request.progressiveSyncs != nil {
-		appsetOptions.ProgressiveSyncs = *request.progressiveSyncs
+// expansion. The values are the ones a second run carries, or else the ones
+// in the settings found before the first expansion. used receives them once
+// they are chosen.
+func expandFirstApplicationSets(root string, request BuildRequest, discovered discovery.Result, appsetOptions *appset.Options, used **appsetGenerationSettings) (discovery.Result, []diagnostic.Diagnostic, error) {
+	generation := appsetGenerationSettings{}
+	if request.appsetGeneration != nil {
+		generation = *request.appsetGeneration
 	} else {
 		settings, _, err := loadSettingsFromDiscovery(root, discovered)
 		if err != nil {
 			return discovered, nil, err
 		}
-		appsetOptions.ProgressiveSyncs = config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
+		generation = appsetGenerationSettingsFrom(settings)
 	}
-	progressiveSyncs := appsetOptions.ProgressiveSyncs
-	*used = &progressiveSyncs
+	generation.apply(appsetOptions)
+	*used = &generation
 	return expandApplicationSetDiscovery(root, request, discovered, *appsetOptions)
 }
 

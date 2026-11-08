@@ -204,26 +204,28 @@ func TestOciGeneratorParamsMatchArgoCD(t *testing.T) {
 
 const ociDotPatternWant = `[{"name":"dotdir","path":{"basename":".dotdir","basenameNormalized":"dotdir","filename":"x.yaml","filenameNormalized":"x.yaml","path":".dotdir","segments":[".dotdir"]}},{"name":"dash","path":{"basename":"a-c","basenameNormalized":"a-c","filename":"d.yaml","filenameNormalized":"d.yaml","path":"a-c","segments":["a-c"]}},{"name":"deep","path":{"basename":"b","basenameNormalized":"b","filename":"c.yaml","filenameNormalized":"c.yaml","path":"a/b","segments":["a","b"]}},{"name":"hidden","path":{"basename":".hidden","basenameNormalized":"hidden","filename":"config.yaml","filenameNormalized":"config.yaml","path":"apps/.hidden","segments":["apps",".hidden"]}},{"enabled":true,"name":"beta","path":{"basename":"Beta_One","basenameNormalized":"beta-one","filename":"config.json","filenameNormalized":"config.json","path":"apps/Beta_One","segments":["apps","Beta_One"]}},{"list":["x",true],"name":"alpha","nested":{"key":"v"},"path":{"basename":"alpha","basenameNormalized":"alpha","filename":"config.yaml","filenameNormalized":"config.yaml","path":"apps/alpha","segments":["apps","alpha"]},"replicas":2},{"list":["x",true],"name":"alpha","nested":{"key":"v"},"path":{"basename":"alpha","basenameNormalized":"alpha","filename":"link.yaml","filenameNormalized":"link.yaml","path":"apps/alpha","segments":["apps","alpha"]},"replicas":2},{"path":{"basename":"gamma","basenameNormalized":"gamma","filename":"comment.yaml","filenameNormalized":"comment.yaml","path":"apps/gamma","segments":["apps","gamma"]}},{"path":{"basename":"gamma","basenameNormalized":"gamma","filename":"empty.yaml","filenameNormalized":"empty.yaml","path":"apps/gamma","segments":["apps","gamma"]}},{"name":"g1","path":{"basename":"gamma","basenameNormalized":"gamma","filename":"list.yaml","filenameNormalized":"list.yaml","path":"apps/gamma","segments":["apps","gamma"]}},{"name":"g2","path":{"basename":"gamma","basenameNormalized":"gamma","filename":"list.yaml","filenameNormalized":"list.yaml","path":"apps/gamma","segments":["apps","gamma"]}},{"name":"root","path":{"basename":".","basenameNormalized":"","filename":"root.yaml","filenameNormalized":"root.yaml","path":".","segments":["."]}},{"name":"skipped","path":{"basename":"skip","basenameNormalized":"skip","filename":"config.yaml","filenameNormalized":"config.yaml","path":"skip","segments":["skip"]}}]`
 
-func TestOciGeneratorMalformedFilePatternIsFatal(t *testing.T) {
-	// Argo CD fails GetOciFiles on a doublestar syntax error.
+func TestOciGeneratorMalformedFilePatternFailsTheGenerator(t *testing.T) {
+	// Argo CD fails GetOciFiles on a doublestar syntax error, which fails
+	// the whole ApplicationSet, not the run.
 	_, _, err := ociParamSetsJSON(t, writeOCIParityFixture(t), `{"files":[{"path":"[["}]}`, true)
-	if err == nil || !strings.Contains(err.Error(), "syntax error in pattern") {
-		t.Fatalf("error = %v, want doublestar pattern syntax error", err)
+	if _, ok := errors.AsType[*generatorParamsError](err); !ok || !strings.Contains(err.Error(), "syntax error in pattern") {
+		t.Fatalf("error = %v, want a generatorParamsError with the doublestar pattern syntax error", err)
 	}
 }
 
-func TestOciGeneratorInvalidParamFileSharesGitFilesDiagnostic(t *testing.T) {
+// TestOciGeneratorInvalidParamFileFailsTheGenerator pins Argo CD v3.6.1:
+// the OCI generator shares parseFileParams with the Git generator, so a
+// param file that does not parse fails it
+// (applicationset/generators/repo_path_utils.go:363-367), and the whole
+// ApplicationSet with it.
+func TestOciGeneratorInvalidParamFileFailsTheGenerator(t *testing.T) {
 	root := t.TempDir()
 	writeAppsetTestFile(t, filepath.Join(root, "envs", "bad.yaml"), "name: [unclosed\n")
 	writeAppsetTestFile(t, filepath.Join(root, "envs", "good.yaml"), "name: good\n")
-	got, diags, err := ociParamSetsJSON(t, root, `{"files":[{"path":"envs/*.yaml"}]}`, false)
-	if err != nil {
-		t.Fatalf("ociGeneratorParamSets() error = %v", err)
+	_, _, err := ociParamSetsJSON(t, root, `{"files":[{"path":"envs/*.yaml"}]}`, false)
+	if _, ok := errors.AsType[*generatorParamsError](err); !ok || !strings.Contains(err.Error(), "unable to process file 'envs/bad.yaml'") {
+		t.Fatalf("error = %v, want a generatorParamsError for envs/bad.yaml", err)
 	}
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, `oci files match "envs/bad.yaml" is not valid YAML`) {
-		t.Fatalf("diagnostics = %#v, want one invalid oci files diagnostic", diags)
-	}
-	assertSameJSON(t, got, `[{"name":"good","path":"envs","path.basename":"envs","path.basenameNormalized":"envs","path.filename":"good.yaml","path.filenameNormalized":"good.yaml","path[0]":"envs"}]`)
 }
 
 const ociDirectoriesAppSet = `
@@ -626,7 +628,7 @@ func TestWalkDirectoryTreeMatchesRepoServerWalk(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	got, err := walkDirectoryTree(root)
+	got, err := walkDirectoryTree(root, false)
 	if err != nil {
 		t.Fatalf("walkDirectoryTree() error = %v", err)
 	}

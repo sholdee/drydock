@@ -20,9 +20,8 @@ import (
 
 func TestGenerateApplicationSetCachedReturnsIndependentApplications(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "apps", "api"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// A Git checkout holds a directory only with a file in it.
+	writeTestFile(t, filepath.Join(root, "apps", "api", "kustomization.yaml"), "resources: []\n")
 	appSetFile := discovery.ApplicationSetFile{
 		Path:           "appset.yaml",
 		DocumentIndex:  1,

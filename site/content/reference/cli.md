@@ -525,7 +525,7 @@ drydock diag --path . --render -o json
 `argocd-cmd-params-cm` settings are parsed as runtime-boundary metadata when
 they imply live repo-server, controller, or ApplicationSet controller behavior.
 They may produce diagnostics and settings summaries, but they do not mutate
-drydock render behavior. There are three exceptions:
+drydock render behavior. There are five exceptions:
 
 - `reposerver.max.combined.directory.manifests.size`: drydock applies it as
   the limit on the combined file size of one directory source, with the
@@ -540,6 +540,12 @@ drydock render behavior. There are three exceptions:
   Applications, and drydock checks the other steps. The ApplicationSet
   controller reads the value as the repo-server reads the key above. See
   [RollingSync Strategy](/docs/applicationsets/#rollingsync-strategy).
+- `applicationsetcontroller.enable.new.git.file.globbing`: unless it is
+  `true`, the Git files generator matches its patterns as `git ls-files`
+  pathspecs. When it is `true`, it matches them as doublestar globs.
+- `reposerver.include.hidden.directories`: when it is `true`, the Git and
+  OCI directory generators also list hidden directories. See
+  [Git Generators](/docs/applicationsets/#git-generators).
 
 drydock also applies one key to diffs:
 

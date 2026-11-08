@@ -188,16 +188,54 @@ The Argo CD v3.6 OCI generator is the one generator that acquires a source:
 `internal/app` hands `appset.Options.OCI` a fetcher that reuses the `oci://`
 Application source path (repo map, `--offline`, OCI cache, credentials,
 snapshot session). Its matching mirrors the v3.6.1 repo-server
-(`walkDirectoryTree` without hidden directories, always-doublestar file
+(`walkDirectoryTree` without hidden directories unless
+`appset.Options.IncludeHiddenDirectories`, always-doublestar file
 globs over `os.Root`), and its param sets carry no `SourcePath`, so
 artifact paths never claim changed paths or local render-cache inputs.
 
-Git files generator behavior is intentionally local and fail-closed. Keep path
-matching sorted, reject absolute paths and `..` escapes, do not follow
-symlinks, and decode only YAML/JSON mapping documents. Empty-content decoding
-is an Argo CD parity pin: empty, comment-only, and bare `---`/`...` files
-decode to one empty param set, `[]` decodes to zero, and multi-document files
-decode only the first document. Do not change it.
+The Git generator mirrors the v3.6.1 repo-server checkout
+(`internal/appset/git_tree.go`). Git files patterns are `git ls-files`
+pathspecs, ported in `internal/appset/git_pathspec.go` and proved against the
+git CLI by `TestGitPathspecMatchesGitLsFiles`.
+`appset.Options.NewGitFileGlobbing` switches to doublestar over an in-memory
+view of the tree. Directory patterns go through `filterRepoPaths`, which the
+OCI generator shares. `appset.Options.IncludeHiddenDirectories` adds hidden
+directories. `appset.Options.Worktree` hides the paths that Git ignores and
+does not track. A Git generator never reads outside the repository or in
+`.git`. Empty-content decoding is an Argo CD parity pin: empty,
+comment-only, and bare `---`/`...` files decode to one empty param set, `[]`
+decodes to zero, and multi-document files decode only the first document.
+Do not change it.
+
+Git and OCI generator failures that Argo CD scopes to the ApplicationSet use
+`generatorParamsError` and the warning `appset.generator-failed`: a param
+file that does not decode, a pattern that git or doublestar refuses, a
+listed path that the repo-server cannot read, and an empty project in the
+ApplicationSet template. A named project is recorded on each generated
+Application (`GitGeneratorProject`). drydock cannot know the AppProjects of
+the cluster offline, so it never drops Applications for it: at the end of
+discovery, `warnGitGeneratorProjects` warns `project.missing` when the
+repository declares AppProjects but not that one. IO failures stay fatal. After the
+first `generatorParamsError`, `GenerateWithOptions` evaluates no more
+generators.
+
+Inputs that drydock does not evaluate, where Argo CD generates normally
+(the attr pathspec magic, a new-globbing match of a file in `.git`, a glob
+past `maxGlobVisits` lookups), use `generatorUnsupportedError`: the whole
+ApplicationSet is unsupported (`appset.unsupported-generator`). Gitlinks
+come from `GitlinkLister` (the index of a working tree, or the empty
+directories of a snapshot, which `materializeGitlinks` creates) and from
+directories with their own `.git`. New globbing looks paths up lazily
+(`gitGlobFS`). A param file's `SourcePaths` hold every symlink followed and
+the file read.
+
+Git generator reads resolve symlinks one component at a time
+(`resolveRepoPath`): never outside the root, never through a `.git`
+component, ENOTDIR through a file, ENOENT for a path that
+`Options.Worktree` skips, and at most `maxRepoSymlinkHops` symlinks. The read
+goes through `os.OpenRoot`. doublestar stays at the version the selected
+Argo CD requires; the post-upgrade sync helper sets it, and Renovate ignores
+it.
 
 Template, `templatePatch`, generator `values`, and matrix/merge child
 interpolation execution errors are appset-scoped warning diagnostics
@@ -222,8 +260,10 @@ divergence): `project.ValidateGeneratedApplications` reports it as
 `ApplicationSelectionInput.ApplicationSet`. Then
 `spec.strategy` RollingSync handling follows
 `applicationsetcontroller.enable.progressive.syncs` (`appset.Options.ProgressiveSyncs`).
-Each discovery run uses one value, read before the first ApplicationSet
-expansion. A second run needs two things: the run found an ApplicationSet
+Each discovery run uses one value for it and for the two Git generator keys
+(`appsetGenerationSettings`), read before the first ApplicationSet
+expansion. The rules below apply to all three keys, each with the
+generators that it changes. A second run needs two things: the run found an ApplicationSet
 with a RollingSync strategy, and its final settings give another value. Then
 `discoverRepositoryWithOCI` runs discovery again with that value. A run that
 failed after its first expansion counts too, with its partial result. A run

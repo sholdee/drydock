@@ -2,7 +2,6 @@ package appset
 
 import (
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -60,7 +59,7 @@ func TestGenerateMatrixGeneratorInterpolatesSecondChildGenerator(t *testing.T) {
 		filepath.Join(root, "apps", "dev", "alpha"),
 		filepath.Join(root, "apps", "prod", "beta"),
 	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := mkdirAllWithFile(dir); err != nil {
 			t.Fatalf("MkdirAll() error = %v", err)
 		}
 	}
@@ -422,7 +421,7 @@ func TestGenerateMatrixGeneratorPreservesAllChildSourcePaths(t *testing.T) {
 		filepath.Join(root, "apps", "alpha"),
 		filepath.Join(root, "clusters", "dev"),
 	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := mkdirAllWithFile(dir); err != nil {
 			t.Fatalf("MkdirAll() error = %v", err)
 		}
 	}

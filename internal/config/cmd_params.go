@@ -35,6 +35,22 @@ const allowOutOfBoundsSymlinksKey = "reposerver.allow.oob.symlinks"
 // and manifests/install.yaml:35041-35044).
 const enableProgressiveSyncsKey = "applicationsetcontroller.enable.progressive.syncs"
 
+// enableNewGitFileGlobbingKey sets the ApplicationSet controller flag
+// --enable-new-git-file-globbing through the environment variable
+// ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_NEW_GIT_FILE_GLOBBING (Argo CD
+// v3.6.1 cmd/argocd-applicationset-controller/commands/applicationset_controller.go:329).
+// It chooses how the Git files generator matches its patterns
+// (util/git/client.go:725-771).
+const enableNewGitFileGlobbingKey = "applicationsetcontroller.enable.new.git.file.globbing"
+
+// includeHiddenDirectoriesKey sets the repo-server flag
+// --include-hidden-directories through the environment variable
+// ARGOCD_REPO_SERVER_INCLUDE_HIDDEN_DIRECTORIES (Argo CD v3.6.1
+// cmd/argocd-repo-server/commands/argocd_repo_server.go:274). It decides
+// whether the directory walk of the Git and OCI directory generators lists
+// hidden directories (reposerver/repository/utils.go:90-121).
+const includeHiddenDirectoriesKey = "reposerver.include.hidden.directories"
+
 // ignoreNormalizerJQTimeoutKey sets the application controller flag
 // --ignore-normalizer-jq-execution-timeout-seconds through the environment
 // variable ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT (Argo CD v3.6.1
@@ -215,9 +231,11 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 // component parses the raw environment variable:
 //   - reposerver.max.combined.directory.manifests.size with
 //     resource.ParseQuantity, which rejects spaces around it;
-//   - reposerver.allow.oob.symlinks and
-//     applicationsetcontroller.enable.progressive.syncs with
-//     env.ParseBoolFromEnv, which compares the raw value;
+//   - reposerver.allow.oob.symlinks,
+//     applicationsetcontroller.enable.progressive.syncs,
+//     applicationsetcontroller.enable.new.git.file.globbing, and
+//     reposerver.include.hidden.directories with env.ParseBoolFromEnv,
+//     which compares the raw value;
 //   - controller.ignore.normalizer.jq.timeout with env.ParseDurationFromEnv;
 //   - application.namespaces and applicationsetcontroller.namespaces with
 //     env.StringsFromEnv (ParseNamespaceList).
@@ -229,6 +247,10 @@ func applyCommandParameterValue(settings *ArgoSettings, key string, value Value[
 		settings.AllowOutOfBoundsSymlinks = value
 	case enableProgressiveSyncsKey:
 		settings.EnableProgressiveSyncs = value
+	case enableNewGitFileGlobbingKey:
+		settings.EnableNewGitFileGlobbing = value
+	case includeHiddenDirectoriesKey:
+		settings.IncludeHiddenDirectories = value
 	case ignoreNormalizerJQTimeoutKey:
 		settings.IgnoreNormalizerJQTimeout = value
 	case applicationNamespacesKey:
@@ -257,8 +279,6 @@ func commandParametersMetadataOnlyDiagnostic(path, pointer string, keys []string
 func classifyCommandParameterKey(key string) commandParameterClassification {
 	switch key {
 	case "reposerver.plugin.use.manifest.generate.paths",
-		"reposerver.include.hidden.directories",
-		"applicationsetcontroller.enable.new.git.file.globbing",
 		"applicationsetcontroller.policy",
 		"applicationsetcontroller.enable.policy.override":
 		return commandParameterClassification{
@@ -266,7 +286,7 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			valueMode:      commandParameterSanitizedValue,
 			warnRuntime:    true,
 		}
-	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey, enableProgressiveSyncsKey, applicationNamespacesKey, applicationSetNamespacesKey:
+	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey, enableProgressiveSyncsKey, enableNewGitFileGlobbingKey, includeHiddenDirectoriesKey, applicationNamespacesKey, applicationSetNamespacesKey:
 		return commandParameterClassification{
 			classification: CommandParameterRendered,
 			valueMode:      commandParameterSanitizedValue,
