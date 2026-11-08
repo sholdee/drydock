@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/acquisition"
@@ -70,10 +69,6 @@ type BuildRequest struct {
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map
 	settingsInstallMemo  *sync.Map
-	// projectsIncomplete records that fleet discovery left out output that
-	// could hold AppProjects (markProjectsIncomplete), so the final
-	// AppProject set is not known to be complete.
-	projectsIncomplete *atomic.Bool
 	// progressiveSyncs, when set, is the
 	// applicationsetcontroller.enable.progressive.syncs value of a restarted
 	// discovery run (discoverRepositoryWithOCI).
@@ -99,6 +94,10 @@ type ApplicationSelectionInput struct {
 	// never key a cache.
 	ParentKey   string
 	RenderedDir string
+	// ApplicationSet is the namespace/name of the ApplicationSet that
+	// generated the Application, or "". Project validation names it
+	// (generatedApplicationSets).
+	ApplicationSet string
 }
 
 type ApplicationSelector func([]argoappv1.Application) []argoappv1.Application
@@ -294,7 +293,7 @@ func (o Orchestrator) DiagStatic(ctx context.Context, request DiagRequest, selec
 	if selectApps != nil {
 		diagResult.Applications = selectApps(result.Applications)
 	}
-	projectDiags := project.ValidateApplications(diagResult.Applications, result.Projects, result.Settings)
+	projectDiags := project.ValidateGeneratedApplications(diagResult.Applications, result.Projects, result.Settings, generatedApplicationSets(result.ApplicationInputs))
 	projectDiags = request.normalizeDiagnostics(projectDiags, false)
 	diagResult.Diagnostics = dedupeDiagnostics(append(diagResult.Diagnostics, projectDiags...))
 	if err := diagnosticFailure(projectDiags, request.Strict); err != nil {
@@ -380,10 +379,38 @@ func discoveredApplicationSelectionInputs(discovered discovery.Result) []Applica
 
 func discoveredApplicationSelectionInput(appFile discovery.ApplicationFile) ApplicationSelectionInput {
 	return ApplicationSelectionInput{
-		Application: appFile.Application,
-		Paths:       discoveredApplicationInputPaths(appFile),
-		ParentKey:   appFile.ParentKey,
-		RenderedDir: appFile.RenderedDir,
+		Application:    appFile.Application,
+		Paths:          discoveredApplicationInputPaths(appFile),
+		ParentKey:      appFile.ParentKey,
+		RenderedDir:    appFile.RenderedDir,
+		ApplicationSet: applicationSetDisplayKey(appFile.ApplicationSetKey),
+	}
+}
+
+// applicationSetDisplayKey turns an ApplicationFile.ApplicationSetKey into
+// namespace/name.
+func applicationSetDisplayKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	namespace, name, _ := strings.Cut(key, "\x00")
+	if namespace == "" {
+		return name
+	}
+	return namespace + "/" + name
+}
+
+// generatedApplicationSets returns the ApplicationSet that generated an
+// Application, from the selection inputs, for project validation.
+func generatedApplicationSets(inputs []ApplicationSelectionInput) func(argoappv1.Application) string {
+	byApplication := make(map[string]string, len(inputs))
+	for _, input := range inputs {
+		if input.ApplicationSet != "" {
+			byApplication[applicationKey(input.Application)] = input.ApplicationSet
+		}
+	}
+	return func(application argoappv1.Application) string {
+		return byApplication[applicationKey(application)]
 	}
 }
 

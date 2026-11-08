@@ -61,7 +61,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		result.CacheEvents = session.cacheRecorder.Events()
 		return result, err
 	}
-	projectDiags := project.ValidateApplications(result.Applications, result.Projects, result.Settings)
+	projectDiags := project.ValidateGeneratedApplications(result.Applications, result.Projects, result.Settings, generatedApplicationSets(result.ApplicationInputs))
 	projectDiags = session.request.normalizeDiagnostics(projectDiags, false)
 	result.Diagnostics = append(result.Diagnostics, projectDiags...)
 	if err := diagnosticFailure(projectDiags, session.request.Strict); err != nil {

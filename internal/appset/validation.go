@@ -132,10 +132,10 @@ func appsetGeneratorFailedDiagnostic(manifestPath string, err error) diagnostic.
 // keeps only Applications whose key has no error, so every Application
 // sharing a duplicated name is dropped, not just the later ones. The
 // remaining Applications still generate. An empty spec.project fails the
-// AppProject lookup that follows. A named AppProject that the repository
-// does not declare is checked after discovery, when every AppProject is
-// known (pruneMissingProjectApplications in internal/app). The destination
-// check needs live clusters and stays with the project diagnostics.
+// AppProject lookup that follows. A named AppProject and the destination
+// check need the AppProjects and clusters of the cluster, which drydock
+// does not know offline, so they stay with the project diagnostics
+// (project.missing).
 func validateGeneratedApplications(manifestPath string, appset argoappv1.ApplicationSet, apps []GeneratedApplication) ([]GeneratedApplication, []diagnostic.Diagnostic) {
 	errorsByApp := map[string]generatedApplicationError{}
 	namesSet := map[string]bool{}
@@ -176,17 +176,6 @@ func validateGeneratedApplications(manifestPath string, appset argoappv1.Applica
 		diags = append(diags, generatedApplicationValidationDiagnostic(manifestPath, errorsByApp[key]))
 	}
 	return valid, diags
-}
-
-// MissingProjectDiagnostic reports a generated Application whose AppProject
-// does not exist. The Argo CD v3.6.1 ApplicationSet controller looks the
-// AppProject up for each generated Application, and when it is not found it
-// does not create or update that Application and sets an
-// ApplicationValidationError condition with this message
-// (applicationset/controllers/applicationset_controller.go:627-633). The
-// other Applications of the ApplicationSet still generate.
-func MissingProjectDiagnostic(manifestPath, projectName string) diagnostic.Diagnostic {
-	return generatedApplicationValidationDiagnostic(manifestPath, generatedApplicationError{fmt.Sprintf("application references project %s which does not exist", projectName), "spec.template.spec.project"})
 }
 
 // generatedApplicationValidationDiagnostic carries the upstream validation
