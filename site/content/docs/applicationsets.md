@@ -192,10 +192,17 @@ a working tree, a target that Git ignores and does not track does not exist
 either, and neither does a FIFO, a `.git` entry below the top level, or a
 name in another letter case. drydock never reads a target outside the
 repository or in the top-level `.git` directory, also when a `..` leaves
-`.git` again. Argo CD reads such a target in its own file system, or fails
-when it does not exist there, so drydock reports the ApplicationSet
-unsupported. With new globbing, the same holds for a pattern that lists or
-goes through a symlink to a target outside the repository. A generated
+`.git` again. With default globbing, Argo CD reads such a target in its own
+file system, or fails when it does not exist there, so drydock reports the
+ApplicationSet unsupported. With new globbing, Argo CD drops a match whose
+real path is outside the checkout, and fails only when it cannot resolve a
+match. So drydock matches nothing when only literal pattern parts remain
+below a symlink out of the checkout, such as `h/hosts` for `h -> /etc`. When
+a wildcard still has to match below it, such as `h/*` or `**/*.yaml`, Argo
+CD walks a tree that drydock does not read, which can even hold the
+checkout itself, so drydock reports the ApplicationSet unsupported. A
+symlink through `.git`, such as `.git/../values.yaml`, makes it unsupported
+in both modes. A generated
 Application owns the paths that its param file came from: the listed path,
 each symlink followed, and the file read. So a changed-only diff renders it
 when only the target of a symlink changes.

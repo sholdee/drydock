@@ -258,10 +258,16 @@ Supported:
   fetches no submodule content then. It keeps untracked paths that Git
   does not ignore. An Argo CD checkout does not hold them, so this is a
   recorded difference. drydock never reads a symlink target outside the
-  repository or in the top-level `.git` directory. Argo CD reads such a
-  target in its own file system, or fails when it does not exist there, so
-  drydock reports the ApplicationSet unsupported. A name must match the
-  checkout exactly, also on a file system that ignores case. The render
+  repository or in the top-level `.git` directory. With default globbing,
+  Argo CD reads such a target of a listed param file in its own file
+  system, or fails when it does not exist there, so drydock reports the
+  ApplicationSet unsupported. With new globbing, Argo CD drops a match
+  whose real path is outside the checkout, and fails only when it cannot
+  resolve a match. drydock drops such a match too, and reports the
+  ApplicationSet unsupported when a wildcard still has to match below a
+  symlink out of the checkout. A name must match the checkout exactly, also
+  on a file system that ignores case. On macOS, drydock compares names
+  composed (NFC), as Git commits them. The render
   parity smoke covers these cases. See
   [ApplicationSets](/docs/applicationsets/#git-generators).
 - The Argo CD v3.6.1 OCI ApplicationSet generator (`generators[].oci`),
