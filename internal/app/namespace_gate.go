@@ -98,6 +98,13 @@ func pruneNotEnabledNamespaces(discovered discovery.Result, gate namespaceGate) 
 	if len(removedApps) == 0 && len(removedAppSets) == 0 {
 		return discovered, nil
 	}
+	return withoutRemoved(discovered, removedApps, removedAppSets), diags
+}
+
+// withoutRemoved returns discovered without the removed Applications and
+// ApplicationSets and without everything they would create
+// (addRemovedDescendants). It adds those descendants to the removed sets.
+func withoutRemoved(discovered discovery.Result, removedApps, removedAppSets map[string]struct{}) discovery.Result {
 	addRemovedDescendants(discovered, removedApps, removedAppSets)
 
 	out := discovered
@@ -113,7 +120,7 @@ func pruneNotEnabledNamespaces(discovered discovery.Result, gate namespaceGate) 
 			out.ApplicationSets = append(out.ApplicationSets, appSetFile)
 		}
 	}
-	return out, diags
+	return out
 }
 
 // notEnabledApplicationSets returns the keys of the ApplicationSets outside

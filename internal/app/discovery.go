@@ -193,8 +193,20 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 		renderSig = nextRenderSig
 	}
 
-	discovered, gateDiags, err := applyFinalNamespaceGate(root, discovered)
+	discovered, gateDiags, err := applyFinalGates(root, request, discovered)
 	return discovered, dedupeDiagnostics(append(allDiags, gateDiags...)), allEvents, renderCache, renderSig, err
+}
+
+// applyFinalGates runs the checks that need the whole discovery result:
+// the namespace gate, then the AppProject lookup of the ApplicationSet
+// controller for generated Applications (pruneMissingProjectApplications).
+func applyFinalGates(root string, request BuildRequest, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, error) {
+	discovered, diags, err := applyFinalNamespaceGate(root, discovered)
+	if err != nil {
+		return discovered, diags, err
+	}
+	discovered, projectDiags := pruneMissingProjectApplications(discovered)
+	return discovered, append(diags, request.normalizeDiagnostics(projectDiags, false)...), nil
 }
 
 // applyFinalNamespaceGate prunes what Argo CD never reconciles, with the
