@@ -2,6 +2,7 @@ package gitref
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -137,7 +138,69 @@ func materializeTree(ctx context.Context, tree *object.Tree, root string, keepOu
 	if err := rejectOverlappingTreePaths(files); err != nil {
 		return err
 	}
-	return materializeTreeFiles(ctx, files, root, keepOutOfBoundsSymlinks)
+	if err := materializeTreeFiles(ctx, files, root, keepOutOfBoundsSymlinks); err != nil {
+		return err
+	}
+	return materializeGitlinks(tree, root)
+}
+
+// materializeGitlinks creates an empty directory for each gitlink
+// (submodule) of tree, as a checkout holds one before any submodule
+// content is fetched. tree.Files skips gitlinks, so they are read with a
+// tree walker. A snapshot then holds an empty directory only for a gitlink
+// (SnapshotGitlinks).
+func materializeGitlinks(tree *object.Tree, root string) error {
+	walker := object.NewTreeWalker(tree, true, nil)
+	defer walker.Close()
+	for {
+		name, entry, err := walker.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if entry.Mode != filemode.Submodule {
+			continue
+		}
+		clean := filepath.Clean(filepath.FromSlash(name))
+		if clean == "." || filepath.IsAbs(clean) || pathsafety.RelEscapes(clean) {
+			return fmt.Errorf("unsafe Git tree path %q", name)
+		}
+		target := filepath.Join(root, clean)
+		if err := validateSnapshotWriteParent(root, filepath.Dir(target)); err != nil {
+			return err
+		}
+		if err := mkdirSnapshotParents(root, target); err != nil {
+			return err
+		}
+	}
+}
+
+// SnapshotGitlinks returns the gitlinks of a snapshot at root, relative to
+// root with forward slashes: its empty directories. A Git tree cannot hold
+// another empty directory.
+func SnapshotGitlinks(root string) []string {
+	var out []string
+	collectEmptyDirectories(root, "", &out)
+	return out
+}
+
+func collectEmptyDirectories(dir, rel string, out *[]string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	if len(entries) == 0 && rel != "" {
+		*out = append(*out, rel)
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		collectEmptyDirectories(filepath.Join(dir, entry.Name()), path.Join(rel, entry.Name()), out)
+	}
 }
 
 func materializeTreeFiles(ctx context.Context, files []object.File, root string, keepOutOfBoundsSymlinks bool) error {
