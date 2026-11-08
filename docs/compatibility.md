@@ -845,23 +845,36 @@ tree. drydock matches the update:
 - drydock checks each submodule URL with its user and password, as git
   reads it, and only then removes them. A user and password are allowed
   in an `http` or `https` URL only. An `ssh` URL may name a user but no
-  password, and a `git` URL has no user. drydock never shows the user or
-  password in an error.
+  password, and a `git` URL has no user. A percent sign is refused only in
+  the host part, so an encoded password works, and drydock uses its
+  decoded form. drydock never shows the user, the password, or a path in
+  an error.
 - drydock removes the user and password before it clones or fetches, so no
   cache entry stores a token. This matters for a relative URL of a
   repository cloned with a token, such as
   `https://gitlab-ci-token:TOKEN@host/...` in GitLab CI. drydock uses the
   removed user and password as credentials only within the credential
-  scope of the repository. A fetched Git source and a remote Kustomize Git
-  base lose their own user and password from the stored URL the same way.
+  scope of the repository. A nested relative URL resolves against its
+  parent's URL with the user and password, as git resolves it, and gets
+  the same treatment. A fetched Git source loses its own user and password
+  from the stored URL the same way. drydock refuses a remote Kustomize Git
+  ref with a user and password in an `http` URL, or a password in an
+  `ssh` URL, before it fetches anything. The same removal runs for remote
+  Kustomize bases as defense in depth.
+- A cache entry that an older drydock wrote can hold a token in its
+  `.git/config`. drydock removes it the next time it uses the entry. To
+  remove it at once, run `drydock cache delete --source git --all --yes`,
+  and the same for `--source remote`.
 - drydock refuses an `http` or `https` submodule URL with a query (`?`) or
   a fragment (`#`). A query can carry a token, such as
   `?private_token=...`, which the cache entry would store, and URLs that
   differ only in the query would share one entry. git fetches such a URL,
   so this is a recorded difference.
 - A percent-encoded `http` or `https` path, such as
-  `https://dev.azure.com/org/My%20Project/_git/repo`, works: drydock
-  compares the path as its Git client sends it.
+  `https://dev.azure.com/org/My%20Project/_git/repo`, works. drydock's Git
+  client decodes the path and escapes it again before it sends it, so
+  drydock refuses a path whose decoded form holds `?`, `#`, or `%`: the
+  client would send another path than git.
 - A pinned commit that no branch or tag holds is fetched by its SHA, as
   `git submodule update` does. This needs the network and a server that
   serves such a commit.
@@ -876,7 +889,9 @@ drydock reads submodule content from these places:
   into one repository share one clone. drydock locks the entry while it
   uses it, also for the two sides of a `--ref` diff, and clones into a
   temporary directory that moves into place only when the clone is
-  complete. With `--offline`, a submodule
+  complete. A store that has lost an object is cloned again. Before a
+  clone, drydock removes the temporary directories of that entry that
+  nothing changed for one hour, which a killed process left behind. With `--offline`, a submodule
   commit that is not in the cache fails as an offline cache miss.
 - A `--ref` or `--ref-orig` snapshot gets submodule content after drydock
   reads `argocd-cmd-params-cm` from it, and only when
