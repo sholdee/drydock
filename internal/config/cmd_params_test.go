@@ -135,7 +135,7 @@ kind: ConfigMap
 metadata:
   name: argocd-cmd-params-cm
 data:
-  reposerver.include.hidden.directories: "true"
+  reposerver.plugin.use.manifest.generate.paths: "true"
 `), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -147,7 +147,7 @@ data:
 	if len(diags) != 1 || !hasDiagnosticCode(diags, "settings.metadata-only") {
 		t.Fatalf("diagnostics = %#v, want one metadata-only warning", diags)
 	}
-	setting := requireCommandParameter(t, settings, "reposerver.include.hidden.directories")
+	setting := requireCommandParameter(t, settings, "reposerver.plugin.use.manifest.generate.paths")
 	if setting.Value != "true" {
 		t.Fatalf("setting = %#v, want sanitized value", setting)
 	}
@@ -266,6 +266,48 @@ func TestParseCommandParameterBoolsMatchArgoCD(t *testing.T) {
 		}
 		if got := ParseAllowOutOfBoundsSymlinks(value); got != want {
 			t.Errorf("ParseAllowOutOfBoundsSymlinks(%q) = %t, want %t", value, got, want)
+		}
+		if got := ParseEnableNewGitFileGlobbing(value); got != want {
+			t.Errorf("ParseEnableNewGitFileGlobbing(%q) = %t, want %t", value, got, want)
+		}
+		if got := ParseIncludeHiddenDirectories(value); got != want {
+			t.Errorf("ParseIncludeHiddenDirectories(%q) = %t, want %t", value, got, want)
+		}
+	}
+}
+
+// TestLoadCmdParamsAppliesGitGeneratorKeys pins that drydock reads
+// applicationsetcontroller.enable.new.git.file.globbing and
+// reposerver.include.hidden.directories as rendering keys: no
+// metadata-only warning, the value kept as written, and a conflict only
+// when Argo CD would read two values differently. They used to be
+// metadata only.
+func TestLoadCmdParamsAppliesGitGeneratorKeys(t *testing.T) {
+	values := map[string]string{
+		enableNewGitFileGlobbingKey: "true",
+		includeHiddenDirectoriesKey: "TRUE",
+	}
+	settings, diags := commandParametersSettings("params.yaml", "data", values)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+	assertCommandParameter(t, settings, enableNewGitFileGlobbingKey, "true", false, CommandParameterRendered)
+	assertCommandParameter(t, settings, includeHiddenDirectoriesKey, "TRUE", false, CommandParameterRendered)
+	if settings.EnableNewGitFileGlobbing.Value != "true" || settings.EnableNewGitFileGlobbing.Provenance.Pointer != "data."+enableNewGitFileGlobbingKey {
+		t.Fatalf("EnableNewGitFileGlobbing = %#v", settings.EnableNewGitFileGlobbing)
+	}
+	if settings.IncludeHiddenDirectories.Value != "TRUE" || settings.IncludeHiddenDirectories.Provenance.Pointer != "data."+includeHiddenDirectoriesKey {
+		t.Fatalf("IncludeHiddenDirectories = %#v", settings.IncludeHiddenDirectories)
+	}
+	for _, key := range []string{enableNewGitFileGlobbingKey, includeHiddenDirectoriesKey} {
+		on, _ := commandParametersSettings("on.yaml", "data", map[string]string{key: "true"})
+		off, _ := commandParametersSettings("off.yaml", "data", map[string]string{key: "no"})
+		if _, conflict := MergeDiscovered([]ArgoSettings{on, off}); len(conflict) != 1 {
+			t.Fatalf("%s: conflict diagnostics = %#v, want one", key, conflict)
+		}
+		same, _ := commandParametersSettings("same.yaml", "data", map[string]string{key: "True"})
+		if _, diags := MergeDiscovered([]ArgoSettings{on, same}); len(diags) != 0 {
+			t.Fatalf("%s: diagnostics = %#v, want none for spellings Argo CD reads the same", key, diags)
 		}
 	}
 }

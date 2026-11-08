@@ -171,6 +171,9 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		nearMissDiags = append(nearMissDiags, diag)
 	}
 	source = normalizeOCISource(source)
+	if diag, ok := dotGitSourceDiagnostic(source); ok {
+		return nil, append(nearMissDiags, diag), nil
+	}
 	sourceRoot := source.RepoRoot
 	var err error
 	if sourceRoot == "" {

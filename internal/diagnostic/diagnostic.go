@@ -27,6 +27,12 @@ const CodeAppSetInvalidRolloutConfig = "appset.invalid-rollout-config"
 // whether the Application that sets it exists.
 const CodeSettingsProgressiveSyncsCycle = "settings.progressive-syncs-cycle"
 
+// CodeSettingsAppSetGenerationCycle reports an
+// applicationsetcontroller.enable.new.git.file.globbing or
+// reposerver.include.hidden.directories value that decides its own source:
+// a second discovery run with it ends with the other value.
+const CodeSettingsAppSetGenerationCycle = "settings.appset-generation-cycle"
+
 // CodeAppSetGeneratorFailed reports a generator error that Argo CD
 // reports as an ErrorOccurred condition on the ApplicationSet. The
 // ApplicationSet then contributes no Applications.
@@ -219,6 +225,8 @@ func settingsCode(message string) string {
 		return CodeSettingsResourceSelectorMismatch
 	case strings.Contains(message, "has no stable value"):
 		return CodeSettingsProgressiveSyncsCycle
+	case strings.Contains(message, "does not settle"):
+		return CodeSettingsAppSetGenerationCycle
 	case strings.Contains(message, "conflicting"):
 		return "settings.conflict"
 	case strings.Contains(message, "failed to parse"):

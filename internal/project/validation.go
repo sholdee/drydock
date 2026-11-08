@@ -30,7 +30,7 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 // in the cluster (applicationset/controllers/applicationset_controller.go:626-633).
 // drydock does not know the AppProjects of the cluster offline, so it keeps
 // the Application.
-func ValidateGeneratedApplications(apps []argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings, generatedBy func(argoappv1.Application) string) []diagnostic.Diagnostic {
+func ValidateGeneratedApplications(apps []argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings, generatedBy GeneratedByLookup) []diagnostic.Diagnostic {
 	if len(apps) == 0 {
 		return nil
 	}
@@ -76,18 +76,43 @@ func ValidateGeneratedApplications(apps []argoappv1.Application, projects []argo
 	return dedupeDiagnostics(diags)
 }
 
+// GeneratedBy names the ApplicationSet that generated an Application.
+type GeneratedBy struct {
+	// ApplicationSet is its namespace/name, or "" for an Application that
+	// no ApplicationSet generated.
+	ApplicationSet string
+	// GitGeneratorProject is the AppProject that a Git generator of the
+	// ApplicationSet looked up before it listed the repository, or "".
+	GitGeneratorProject string
+}
+
+// GeneratedByLookup returns the GeneratedBy of an Application.
+type GeneratedByLookup func(argoappv1.Application) GeneratedBy
+
 // missingProjectMessage is the project.missing message. Its "references
 // missing AppProject" substring is the stable-code dispatch key.
-func missingProjectMessage(app argoappv1.Application, projectName string, generatedBy func(argoappv1.Application) string) string {
+func missingProjectMessage(app argoappv1.Application, projectName string, generatedBy GeneratedByLookup) string {
 	message := fmt.Sprintf("Application %s references missing AppProject %q", applicationName(app), projectName)
 	if generatedBy == nil {
 		return message
 	}
-	appSet := generatedBy(app)
-	if appSet == "" {
+	generated := generatedBy(app)
+	if generated.ApplicationSet == "" {
 		return message
 	}
-	return fmt.Sprintf("%s; ApplicationSet %s generates it, and the Argo CD ApplicationSet controller does not create or update it unless that AppProject exists in the cluster", message, appSet)
+	if generated.GitGeneratorProject == projectName {
+		// The Git generator gets the AppProject before it lists the
+		// repository (applicationset/generators/git.go:93-111 at v3.6.1).
+		return fmt.Sprintf("%s; ApplicationSet %s generates it, and its Git generator looks that AppProject up first, so the Argo CD ApplicationSet controller fails the whole ApplicationSet and creates none of its Applications unless that AppProject exists in the cluster", message, generated.ApplicationSet)
+	}
+	return fmt.Sprintf("%s; ApplicationSet %s generates it, and the Argo CD ApplicationSet controller does not create or update it unless that AppProject exists in the cluster", message, generated.ApplicationSet)
+}
+
+// GitGeneratorMissingProjectMessage is the project.missing message for a Git
+// generator whose AppProject none of the ApplicationSet's Applications
+// names, so no Application warning carries it.
+func GitGeneratorMissingProjectMessage(appSet, projectName string) string {
+	return fmt.Sprintf("the Git generator of ApplicationSet %s references missing AppProject %q, which the repository does not declare; it looks that AppProject up first, so the Argo CD ApplicationSet controller fails the whole ApplicationSet and creates none of its Applications unless that AppProject exists in the cluster; drydock cannot know the AppProjects of the cluster offline, so it keeps the Applications", appSet, projectName)
 }
 
 // ByName indexes projects the way validation looks an Application's

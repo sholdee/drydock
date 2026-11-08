@@ -215,7 +215,7 @@ spec:
 }
 func TestGenerateGitDirectoriesExcludeDoesNotPruneGrandchildren(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "p1", "p2", "app3"), 0o755); err != nil {
+	if err := mkdirAllWithFile(filepath.Join(root, "p1", "p2", "app3")); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 	data := []byte(`
@@ -330,7 +330,7 @@ func TestGenerateBasenameNormalizedMatchesArgoCD(t *testing.T) {
 		filepath.Join(root, "apps", "Team__App..Name"),
 		filepath.Join(root, "apps", longBase),
 	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := mkdirAllWithFile(dir); err != nil {
 			t.Fatalf("MkdirAll() error = %v", err)
 		}
 	}
@@ -692,7 +692,7 @@ spec:
 }
 func TestGenerateGitDirectoriesGeneratorTemplateOverridesBaseTemplate(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "apps", "alpha"), 0o755); err != nil {
+	if err := mkdirAllWithFile(filepath.Join(root, "apps", "alpha")); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 	data := []byte(`

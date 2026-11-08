@@ -50,14 +50,15 @@ func expandApplicationSetDiscovery(root string, request BuildRequest, discovered
 		}
 		for _, app := range apps {
 			generated.Applications = append(generated.Applications, discovery.ApplicationFile{
-				Path:              appSetFile.Path,
-				DocumentIndex:     appSetFile.DocumentIndex,
-				Application:       app.Application,
-				Tier:              appSetFile.Tier,
-				InputPaths:        generatedApplicationInputPaths(appSetFile, app),
-				ParentKey:         appSetFile.ParentKey,
-				RenderedDir:       appSetFile.RenderedDir,
-				ApplicationSetKey: applicationSetKey(appSetFile.ApplicationSet),
+				Path:                appSetFile.Path,
+				DocumentIndex:       appSetFile.DocumentIndex,
+				Application:         app.Application,
+				Tier:                appSetFile.Tier,
+				InputPaths:          generatedApplicationInputPaths(appSetFile, app),
+				ParentKey:           appSetFile.ParentKey,
+				RenderedDir:         appSetFile.RenderedDir,
+				ApplicationSetKey:   applicationSetKey(appSetFile.ApplicationSet),
+				GitGeneratorProject: app.GitGeneratorProject,
 			})
 		}
 	}

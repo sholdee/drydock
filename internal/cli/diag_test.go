@@ -519,7 +519,7 @@ kind: ConfigMap
 metadata:
   name: argocd-cmd-params-cm
 data:
-  reposerver.include.hidden.directories: "true"
+  reposerver.plugin.use.manifest.generate.paths: "true"
   reposerver.git.askpass.enabled: SUPER_SECRET_GIT_TOKEN
   unknown.cmd.param: SUPER_SECRET_UNKNOWN_VALUE
   repo.server: argocd-repo-server:8081
@@ -549,7 +549,7 @@ data:
 		t.Fatalf("diagnostics = %#v, want one cmd-params metadata-only warning", report.Diagnostics)
 	}
 	assertDiagMessageOmits(t, report.Diagnostics[0].Message, []string{"unknown.cmd.param", "repo.server"})
-	assertDiagCommandParameter(t, report.Settings.CommandParameters, "reposerver.include.hidden.directories", "true", false, "runtime-only")
+	assertDiagCommandParameter(t, report.Settings.CommandParameters, "reposerver.plugin.use.manifest.generate.paths", "true", false, "runtime-only")
 	assertDiagCommandParameter(t, report.Settings.CommandParameters, "reposerver.git.askpass.enabled", "", true, "runtime-only")
 	assertDiagCommandParameter(t, report.Settings.CommandParameters, "unknown.cmd.param", "", false, "unknown")
 }

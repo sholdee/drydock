@@ -1,0 +1,33 @@
+# The default Git files generator lists files with `git ls-files -- <pattern>`
+# (util/git/client.go:763-770 at Argo CD v3.6.1). In a git pathspec "*"
+# matches "/" too, and a pattern that names a directory matches every file
+# below it. The repo-server reads a listed symlink through to its target.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-git-files-pathspec
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        revision: HEAD
+        files:
+          # a, a/b (through "*"), c, and link, a symlink to targets/linked.yaml.
+          - path: workloads/appset/git-parity/pathspec/*/config.yaml
+          # A directory: every file below it, at any depth.
+          - path: workloads/appset/git-parity/prefix
+  template:
+    metadata:
+      name: 'parity-git-ps-{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/git/alpha
+      destination:
+        name: in-cluster
+        namespace: 'parity-git-ps-{{.name}}'

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -223,9 +222,8 @@ func TestOrchestratorListApplicationsPreservesMatrixGeneratorInputPaths(t *testi
 		filepath.Join(root, "apps", "alpha"),
 		filepath.Join(root, "clusters", "dev"),
 	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("MkdirAll() error = %v", err)
-		}
+		// A Git checkout holds a directory only with a file in it.
+		writeTestFile(t, filepath.Join(dir, "kustomization.yaml"), "resources: []\n")
 	}
 	writeTestFile(t, filepath.Join(root, "appsets", "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet

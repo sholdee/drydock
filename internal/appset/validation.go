@@ -98,13 +98,17 @@ func paramsError(err error) error {
 
 // wrapGeneratorError wraps err with format, as Argo CD wraps a generator
 // error on its way up, and keeps the scope of err: a generatorTemplateError
-// or generatorParamsError stays one, and any other error stays fatal.
+// generatorParamsError, or generatorUnsupportedError stays one, and any
+// other error stays fatal.
 func wrapGeneratorError(err error, format string) error {
 	if templateErr, ok := errors.AsType[*generatorTemplateError](err); ok {
 		return &generatorTemplateError{err: fmt.Errorf(format, err), upstreamPanic: templateErr.upstreamPanic}
 	}
 	if _, ok := errors.AsType[*generatorParamsError](err); ok {
 		return &generatorParamsError{err: fmt.Errorf(format, err)}
+	}
+	if _, ok := errors.AsType[*generatorUnsupportedError](err); ok {
+		return &generatorUnsupportedError{err: fmt.Errorf(format, err)}
 	}
 	return fmt.Errorf(format, err)
 }

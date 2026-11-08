@@ -1,0 +1,32 @@
+# `git ls-files` lists linkdir/dir-link, a symlink to a directory, and the
+# repo-server fails to read it (reposerver/repository/repository.go:3363-3369 at
+# Argo CD v3.6.1), so the whole ApplicationSet fails.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-git-symlinked-directory
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - path: {basename: from-list}
+    - git:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        revision: HEAD
+        files:
+          - path: workloads/appset/git-parity/linkdir/*
+  template:
+    metadata:
+      name: 'parity-git-symlinked-directory-{{ .path.basename }}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/git/alpha
+      destination:
+        name: in-cluster
+        namespace: parity-git-symlinked-directory

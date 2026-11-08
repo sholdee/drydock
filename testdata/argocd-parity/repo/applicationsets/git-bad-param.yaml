@@ -1,0 +1,32 @@
+# A param file that does not parse fails the whole ApplicationSet, also the
+# Applications of its list generator (applicationset/generators/repo_path_utils.go:363-367
+# at Argo CD v3.6.1).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-git-bad-param
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - path: {basename: from-list}
+    - git:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        revision: HEAD
+        files:
+          - path: workloads/appset/git-parity/bad-param/*.yaml
+  template:
+    metadata:
+      name: 'parity-git-bad-param-{{ .path.basename }}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/git/alpha
+      destination:
+        name: in-cluster
+        namespace: parity-git-bad-param

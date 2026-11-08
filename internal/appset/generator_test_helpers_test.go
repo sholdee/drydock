@@ -45,3 +45,13 @@ func writeAppsetTestFile(t *testing.T, filePath, content string) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 }
+
+// mkdirAllWithFile creates dir with one file in it. A Git checkout holds a
+// directory only when a file is below it, so the Git directory generator
+// skips an empty directory.
+func mkdirAllWithFile(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "kustomization.yaml"), []byte("resources: []\n"), 0o644)
+}

@@ -226,6 +226,18 @@ type ArgoSettings struct {
 	// other value means false. It decides whether a RollingSync strategy
 	// applies, so it changes which Applications an ApplicationSet generates.
 	EnableProgressiveSyncs Value[string] `json:"enableProgressiveSyncs,omitempty" yaml:"enableProgressiveSyncs,omitempty"`
+	// EnableNewGitFileGlobbing is the argocd-cmd-params-cm key
+	// applicationsetcontroller.enable.new.git.file.globbing, as written. The
+	// ApplicationSet controller reads "true" or "false" in any case; any
+	// other value means false. It chooses how the Git files generator
+	// matches its patterns: git pathspecs (false) or doublestar globs (true).
+	EnableNewGitFileGlobbing Value[string] `json:"enableNewGitFileGlobbing,omitempty" yaml:"enableNewGitFileGlobbing,omitempty"`
+	// IncludeHiddenDirectories is the argocd-cmd-params-cm key
+	// reposerver.include.hidden.directories, as written. The repo-server
+	// reads "true" or "false" in any case; any other value means false. It
+	// decides whether the Git and OCI directory generators see hidden
+	// directories.
+	IncludeHiddenDirectories Value[string] `json:"includeHiddenDirectories,omitempty" yaml:"includeHiddenDirectories,omitempty"`
 	// IgnoreNormalizerJQTimeout is the argocd-cmd-params-cm key
 	// controller.ignore.normalizer.jq.timeout, as written. It limits how long
 	// one jq ignore-rule deletion may run. See ParseIgnoreNormalizerJQTimeout.
