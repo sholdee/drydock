@@ -1,0 +1,36 @@
+# One spec.generators entry that sets both list and matrix. Argo CD v3.6.1
+# runs every generator field the entry sets, in field order
+# (GetRelevantGenerators, applicationset/generators/generator_spec_processor.go:104-124),
+# so both Applications exist.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-generator-two-fields
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - suffix: list
+      matrix:
+        generators:
+          - list:
+              elements:
+                - suffix: matrix
+          - list:
+              elements:
+                - env: dev
+  template:
+    metadata:
+      name: "parity-two-fields-{{.suffix}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/validation/empty-name-alpha
+      destination:
+        name: in-cluster
+        namespace: "parity-two-fields-{{.suffix}}"

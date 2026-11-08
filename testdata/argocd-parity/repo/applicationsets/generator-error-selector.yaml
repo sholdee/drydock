@@ -1,0 +1,40 @@
+# A generator selector with an operator that does not exist. Argo CD v3.6.1
+# parses the selector before it runs the generator and returns the error
+# (applicationset/generators/generator_spec_processor.go:34-37).
+# Argo CD v3.6.1 then fails the whole ApplicationSet with an ErrorOccurred
+# condition, so the sibling list generator generates nothing either, and
+# no parity-gen-error-selector-* name exists. drydock must warn
+# appset.generator-failed and generate none. APPLICATIONSET_ERRORS in the
+# smoke waits for the condition.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-gen-error-selector
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - suffix: sibling
+    - list:
+        elements:
+          - suffix: selected
+      selector:
+        matchExpressions:
+          - key: suffix
+            operator: Sometimes
+            values: [selected]
+  template:
+    metadata:
+      name: "parity-gen-error-selector-{{.suffix}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/validation/empty-name-alpha
+      destination:
+        name: in-cluster
+        namespace: "parity-gen-error-selector-{{.suffix}}"

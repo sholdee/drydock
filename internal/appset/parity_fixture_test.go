@@ -328,3 +328,59 @@ func readParityClusterSecrets(t *testing.T) []corev1.Secret {
 	}
 	return secrets
 }
+
+// TestArgoCDParityFixtureGeneratorSemantics pins the smoke fixtures for
+// matrix child selectors and for an entry that sets two generators.
+func TestArgoCDParityFixtureGeneratorSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		want []string
+	}{
+		{file: "matrix-child-selector.yaml", want: []string{"parity-matrix-selector-inner-dev"}},
+		{file: "generator-two-fields.yaml", want: []string{"parity-two-fields-list", "parity-two-fields-matrix"}},
+		{file: "validation-missing-project.yaml", want: []string{"parity-missing-project-dropped", "parity-missing-project-kept"}},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			apps, codes := generateParityAppSet(t, tc.file, Options{})
+			got := generatedNames(apps)
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("generated names = %#v, want %#v", got, tc.want)
+			}
+			if len(codes) != 0 {
+				t.Fatalf("diagnostic codes = %#v, want none", codes)
+			}
+		})
+	}
+}
+
+// TestArgoCDParityFixtureGeneratorErrorsFailApplicationSet pins the smoke
+// fixtures whose generator fails the whole ApplicationSet in Argo CD. The
+// texts match the APPLICATIONSET_ERRORS entries of the smoke. The missing
+// project of validation-missing-project.yaml is dropped later, in
+// internal/app, so the generation above keeps it.
+func TestArgoCDParityFixtureGeneratorErrorsFailApplicationSet(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		want string
+	}{
+		{file: "generator-error-elements-yaml.yaml", want: "error unmarshling decoded ElementsYaml"},
+		{file: "generator-error-empty-child.yaml", want: "child generator generated no parameters"},
+		{file: "generator-error-nested-too-deep.yaml", want: "child generator generated no parameters"},
+		{file: "generator-error-selector.yaml", want: `error parsing label selector: "Sometimes" is not a valid pod selector operator`},
+		{file: "generator-error-merge-keys.yaml", want: "the parameters from a generator were not unique by the given mergeKeys"},
+		{file: "generator-error-matrix-count.yaml", want: "found less than two generators, Matrix support only two"},
+		{file: "generator-error-cluster-selector.yaml", want: "error converting label selector"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			repoRoot := filepath.Join(parityFixtureRoot, "repo")
+			manifestPath := filepath.Join("applicationsets", tc.file)
+			data, err := os.ReadFile(filepath.Join(repoRoot, manifestPath))
+			if err != nil {
+				t.Fatalf("read %s: %v", manifestPath, err)
+			}
+			apps, diags, err := GenerateFromYAMLWithOptions(repoRoot, manifestPath, data, parityProviderOptions(t))
+			requireGeneratorFailed(t, apps, diags, err, tc.want)
+		})
+	}
+}

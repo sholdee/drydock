@@ -416,6 +416,17 @@ APPLICATIONS=(
   # parity-empty-project-dropped renders an empty spec.project, which the
   # ApplicationSet controller cannot find, so only this one exists.
   parity-empty-project-kept
+  # parity-missing-project-dropped names an AppProject that does not exist,
+  # so only this one exists.
+  parity-missing-project-kept
+  # A matrix child's own selector is not interpolated, so no
+  # parity-matrix-selector-templated-* name exists. A selector inside a
+  # merge child is, so it keeps only inner-dev.
+  parity-matrix-selector-inner-dev
+  # One spec.generators entry that sets both list and matrix generates
+  # from both.
+  parity-two-fields-list
+  parity-two-fields-matrix
   # Cluster generator over cluster Secrets with reserved annotations.
   parity-cluster-alpha
   parity-cluster-beta
@@ -523,11 +534,20 @@ APP_REVISION_TAG_OBJECT_ABSENT=(
   parity-app-revision-annotated-tag-single
 )
 
-# ApplicationSets that Argo CD must reject, as "name|text" pairs. Before the
-# inventory checks, the smoke waits for each one to have an ErrorOccurred
-# condition with status True and a message that contains the text. Without
-# this wait, a missing Application could also mean that the ApplicationSet
-# has not reconciled yet.
+# ApplicationSets that Argo CD must reject, as "name|text|code|path"
+# entries. Before the inventory checks, the smoke waits for each one to have
+# an ErrorOccurred condition with status True and a message that contains
+# the text. Without this wait, a missing Application could also mean that
+# the ApplicationSet has not reconciled yet. When an entry has a code,
+# drydock must warn with that code for the ApplicationSet file at path, and
+# the warning must contain the same text (compare_applicationset_errors).
+# The template render failure has no code here because its drydock warning
+# spans several lines.
+#
+# The parity-gen-error-* ApplicationSets each fail in one generator. Argo CD
+# then generates nothing for the whole ApplicationSet, so none of their
+# Applications are in APPLICATIONS. parity-validation-missing-project fails
+# only for its Application with the missing AppProject.
 #
 # A matrix or merge param type clash cannot be listed here. Argo CD v3.6.1
 # panics in that merge, and Reconcile recovers the panic and returns before
@@ -535,7 +555,15 @@ APP_REVISION_TAG_OBJECT_ABSENT=(
 # (applicationset/controllers/applicationset_controller.go:123-133), so there
 # is no condition to wait for.
 APPLICATIONSET_ERRORS=(
-  "parity-cluster-sprig-map-function|got map[string]string"
+  "parity-cluster-sprig-map-function|got map[string]string||"
+  "parity-gen-error-elements-yaml|error unmarshling decoded ElementsYaml|appset.generator-failed|applicationsets/generator-error-elements-yaml.yaml"
+  "parity-gen-error-empty-child|child generator generated no parameters|appset.generator-failed|applicationsets/generator-error-empty-child.yaml"
+  "parity-gen-error-nested-too-deep|child generator generated no parameters|appset.generator-failed|applicationsets/generator-error-nested-too-deep.yaml"
+  "parity-gen-error-selector|error parsing label selector: \"Sometimes\" is not a valid pod selector operator|appset.generator-failed|applicationsets/generator-error-selector.yaml"
+  "parity-gen-error-merge-keys|the parameters from a generator were not unique by the given mergeKeys|appset.generator-failed|applicationsets/generator-error-merge-keys.yaml"
+  "parity-gen-error-matrix-count|found less than two generators, Matrix support only two|appset.generator-failed|applicationsets/generator-error-matrix-count.yaml"
+  "parity-gen-error-cluster-selector|error converting label selector|appset.generator-failed|applicationsets/generator-error-cluster-selector.yaml"
+  "parity-validation-missing-project|application references project parity-missing-project which does not exist|appset.application-validation-failed|applicationsets/validation-missing-project.yaml"
 )
 
 # RollingSync ApplicationSets, as "name|type|status|reason|message|code"
@@ -1731,11 +1759,31 @@ wait_for_applicationset_error() {
 }
 
 wait_for_applicationset_errors() {
-  local entry appset expected
+  local entry appset expected _code _path
   for entry in "${APPLICATIONSET_ERRORS[@]}"; do
-    IFS='|' read -r appset expected <<< "${entry}"
+    IFS='|' read -r appset expected _code _path <<< "${entry}"
     wait_for_applicationset_error "${appset}" "${expected}"
   done
+}
+
+# compare_applicationset_errors checks the drydock side of
+# APPLICATIONSET_ERRORS: for each entry with a code, the get apps stderr
+# that capture_drydock_applications keeps must hold a warning with that
+# code for the ApplicationSet file, with the Argo CD text in it.
+compare_applicationset_errors() {
+  local stderr_file="${OUT_DIR}/applications/drydock.stderr"
+  local entry appset expected code path checked=0
+  log_step "Comparing Argo CD ApplicationSet errors with drydock warnings"
+  for entry in "${APPLICATIONSET_ERRORS[@]}"; do
+    IFS='|' read -r appset expected code path <<< "${entry}"
+    [[ -n "${code}" ]] || continue
+    if ! grep -F "warning ${code}: " "${stderr_file}" | grep -F "(path: ${path}," | grep -qF "${expected}"; then
+      grep -E '^warning appset\.' "${stderr_file}" >&2 || echo "(no appset warnings)" >&2
+      fail "drydock did not warn ${code} for ApplicationSet argocd/${appset} (${path}) with the Argo CD text \"${expected}\"; see ${stderr_file}"
+    fi
+    checked=$((checked + 1))
+  done
+  echo "ApplicationSet errors: ${checked} drydock warnings match" >&2
 }
 
 # applicationset_condition prints "<status>|<reason>|<message>" for the
@@ -3200,6 +3248,7 @@ main() {
   assert_namespace_gate
   assert_crd_rejected_application
   compare_rolling_sync_conditions
+  compare_applicationset_errors
   compare_avp_oracle_manifests
   compare_tracking_manifests
   run_live_diff_smoke

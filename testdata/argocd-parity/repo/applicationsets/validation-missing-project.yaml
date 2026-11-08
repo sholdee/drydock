@@ -1,0 +1,34 @@
+# The second element renders an Application whose AppProject does not
+# exist. The Argo CD v3.6.1 ApplicationSet controller does not create it,
+# sets an ErrorOccurred condition with reason ApplicationValidationError,
+# and still creates the first one
+# (applicationset/controllers/applicationset_controller.go:627-633). This
+# repository declares AppProjects, so drydock treats a project it does not
+# declare as missing, and omits that Application too.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-validation-missing-project
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - suffix: kept
+            project: default
+          - suffix: dropped
+            project: parity-missing-project
+  template:
+    metadata:
+      name: "parity-missing-project-{{.suffix}}"
+    spec:
+      project: "{{.project}}"
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/validation/empty-name-alpha
+      destination:
+        name: in-cluster
+        namespace: "parity-missing-project-{{.suffix}}"
