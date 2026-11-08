@@ -1,18 +1,22 @@
 package gittree
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	git "github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	formatconfig "github.com/go-git/go-git/v5/plumbing/format/config"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 )
 
 // ErrOfflineCacheMiss reports that a submodule store does not hold a
@@ -45,8 +49,13 @@ type StoreRequest struct {
 // one clone.
 func OpenSubmoduleStore(ctx context.Context, request StoreRequest) (*git.Repository, bool, error) {
 	repo, err := git.PlainOpen(request.Path)
-	if err == nil && hasCommit(repo, request.Commit) {
-		return repo, false, nil
+	if err == nil {
+		if scrubErr := ScrubRemoteUserinfo(repo); scrubErr != nil {
+			return nil, false, scrubErr
+		}
+		if hasCommit(repo, request.Commit) {
+			return repo, false, nil
+		}
 	}
 	if !request.AllowNetwork {
 		return nil, false, fmt.Errorf("%w: commit %s", ErrOfflineCacheMiss, request.Commit)
@@ -54,21 +63,29 @@ func OpenSubmoduleStore(ctx context.Context, request StoreRequest) (*git.Reposit
 	if err != nil {
 		return cloneAndCheck(ctx, request)
 	}
-	if err := ScrubRemoteUserinfo(repo); err != nil {
-		return nil, false, err
-	}
+	return fetchIntoStore(ctx, repo, request)
+}
+
+// fetchIntoStore fetches a commit that the store at request.Path lacks.
+// Only a store that holds the commit but lost an object of its tree, which
+// every fetch answers with "already up to date", is cloned again. A commit
+// that the remote does not have, such as an unpushed commit that a pull
+// request pins, fails without touching the store.
+func fetchIntoStore(ctx context.Context, repo *git.Repository, request StoreRequest) (*git.Repository, bool, error) {
 	if err := fetchStore(ctx, repo, request); err != nil {
 		return nil, true, err
 	}
 	if hasCommit(repo, request.Commit) {
 		return repo, true, nil
 	}
-	if fetchStoreCommit(ctx, repo, request) == nil && hasCommit(repo, request.Commit) {
+	fetchErr := fetchStoreCommit(ctx, repo, request)
+	if hasCommit(repo, request.Commit) {
 		return repo, true, nil
 	}
-	// A store that holds the commit but lost an object of its tree
-	// answers every fetch with "already up to date": clone it again.
-	return cloneAndCheck(ctx, request)
+	if _, err := repo.CommitObject(request.Commit); err == nil {
+		return cloneAndCheck(ctx, request)
+	}
+	return nil, true, fmt.Errorf("commit %s not found: %w", request.Commit, errors.Join(fetchErr, plumbing.ErrObjectNotFound))
 }
 
 // cloneAndCheck clones the store again and fetches the commit when no
@@ -179,11 +196,18 @@ const StaleCloneAge = time.Hour
 // lock, so a clone of this process is not among them, and a clone of
 // another live process changed within the hour.
 func removeStaleClones(entry string, now time.Time) {
-	matches, err := filepath.Glob(entry + ".clone-*")
+	// Read the directory rather than glob the path: a "[" or "*" in the
+	// cache directory would otherwise change what matches.
+	children, err := os.ReadDir(filepath.Dir(entry))
 	if err != nil {
 		return
 	}
-	for _, match := range matches {
+	prefix := filepath.Base(entry) + ".clone-"
+	for _, child := range children {
+		if !strings.HasPrefix(child.Name(), prefix) {
+			continue
+		}
+		match := filepath.Join(filepath.Dir(entry), child.Name())
 		info, err := os.Lstat(match)
 		if err != nil || !info.IsDir() {
 			continue
@@ -214,28 +238,97 @@ func NewestChange(path string) (time.Time, error) {
 	return newest, err
 }
 
-// ScrubRemoteUserinfo removes the userinfo from every remote URL of repo,
-// so a cache entry that an older drydock wrote with a token in its
-// .git/config loses it on its next use. It never shows the old URL.
+// ScrubRemoteUserinfo removes the userinfo from the URLs of the
+// configuration of repo, so a cache entry that an older drydock wrote with
+// a token in its config loses it on its next use. It rewrites the raw
+// values (scrubConfig), not go-git's view, which applies url.insteadOf
+// rules. The new file replaces the old one through a rename in the same
+// directory. It never follows a symlink and never shows the old URL.
 func ScrubRemoteUserinfo(repo *git.Repository) error {
-	cfg, err := repo.Config()
+	storage, ok := repo.Storer.(*filesystem.Storage)
+	if !ok {
+		return nil
+	}
+	path := filepath.Join(storage.Filesystem().Root(), "config")
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	changed := false
-	for _, remote := range cfg.Remotes {
-		for i, url := range remote.URLs {
-			if clean, _, found := SplitURLUserinfo(url); found {
-				remote.URLs[i] = clean
-				changed = true
-			}
-		}
+	if !info.Mode().IsRegular() {
+		// drydock never writes through a symlink.
+		return fmt.Errorf("the Git config of the cache entry is not a regular file")
 	}
-	if !changed {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	cfg := formatconfig.New()
+	if err := formatconfig.NewDecoder(bytes.NewReader(data)).Decode(cfg); err != nil {
+		return fmt.Errorf("read the Git config of the cache entry: %w", err)
+	}
+	if !scrubConfig(cfg) {
 		return nil
 	}
-	if err := repo.SetConfig(cfg); err != nil {
-		return fmt.Errorf("remove userinfo from the cached remote URL: %w", err)
+	return writeConfigAtomic(path, cfg, info.Mode().Perm())
+}
+
+// scrubConfig removes the userinfo from every URL of cfg and reports
+// whether it changed any: the remote url and pushurl values, the submodule
+// url values, and the url.<base>.insteadOf rules, whose base and values
+// can hold the same token.
+func scrubConfig(cfg *formatconfig.Config) bool {
+	changed := false
+	for _, section := range cfg.Sections {
+		changed = scrubOptions(section.Options) || changed
+		for _, sub := range section.Subsections {
+			if clean, _, found := SplitURLUserinfo(sub.Name); found && section.IsName("url") {
+				sub.Name = clean
+				changed = true
+			}
+			changed = scrubOptions(sub.Options) || changed
+		}
 	}
-	return nil
+	return changed
+}
+
+// scrubOptions removes the userinfo from every option value that is a URL
+// with userinfo.
+func scrubOptions(options formatconfig.Options) bool {
+	changed := false
+	for _, option := range options {
+		if clean, _, found := SplitURLUserinfo(option.Value); found {
+			option.Value = clean
+			changed = true
+		}
+	}
+	return changed
+}
+
+// writeConfigAtomic writes cfg to a temporary file next to path and
+// renames it over path.
+func writeConfigAtomic(path string, cfg *formatconfig.Config, mode os.FileMode) error {
+	var buf bytes.Buffer
+	if err := formatconfig.NewEncoder(&buf).Encode(cfg); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), "config.drydock-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(temp.Name()) }()
+	if _, err := temp.Write(buf.Bytes()); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Chmod(mode); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), path)
 }

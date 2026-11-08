@@ -357,3 +357,20 @@ func cleanModulePath(names []string) (string, bool) {
 func ModuleStorePath(ref SubmoduleRef) (string, bool) {
 	return cleanModulePath(ref.ModuleDirs)
 }
+
+// String shows ref without its userinfo, so a %v or %+v never prints a
+// token.
+func (ref SubmoduleRef) String() string {
+	return fmt.Sprintf("SubmoduleRef{Path: %q, URL: %q, Commit: %s, Transport: %q, Userinfo: %s}", ref.Path, hostOnlyURL(ref.URL), ref.Commit, ref.Transport, ref.Userinfo)
+}
+
+// GoString is String, for %#v.
+func (ref SubmoduleRef) GoString() string {
+	return ref.String()
+}
+
+// hostOnlyURL removes userinfo from a URL with "://" for display.
+func hostOnlyURL(value string) string {
+	clean, _, _ := SplitURLUserinfo(value)
+	return clean
+}

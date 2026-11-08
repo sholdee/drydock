@@ -38,6 +38,8 @@ var secretRefusals = []string{
 	"git@host::" + secretMarker,
 	"host:-" + secretMarker,
 	"host:x~" + secretMarker,
+	// go-git reads the part before "@" as userinfo, git as the host.
+	secretMarker + ":x-oauth-basic@github.com:org/repo",
 }
 
 // TestRefusalsNeverShowUserinfo pins that no refusal message shows the

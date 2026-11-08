@@ -18,13 +18,6 @@ type urlParts struct {
 	path string
 }
 
-// String names the host and port only. A user, a password, or a path can
-// hold a token (in a misread URL, the path can hold the password), so a
-// refusal never shows them.
-func (p urlParts) String() string {
-	return fmt.Sprintf("host %q, port %d", hostOnly(p.host), p.port)
-}
-
 // sameURLParts fails unless git and go-git read the same user, host, port,
 // and path from value, whose go-git endpoint is endpoint.
 func sameURLParts(value string, endpoint *transport.Endpoint) error {
@@ -35,7 +28,9 @@ func sameURLParts(value string, endpoint *transport.Endpoint) error {
 	goGitParts := urlParts{user: endpoint.User, host: endpoint.Host, port: normalPort(endpoint.Protocol, endpoint.Port), path: requestPath(endpoint)}
 	gitParts.port = normalPort(endpoint.Protocol, gitParts.port)
 	if gitParts != goGitParts {
-		return fmt.Errorf("git reads the submodule URL as %s, but drydock's Git client reads it as %s, or another user or path", gitParts, goGitParts)
+		// No part is named: git can read a token as the host, as in
+		// "TOKEN:x-oauth-basic@github.com:org/repo".
+		return fmt.Errorf("git and drydock's Git client read the submodule URL differently")
 	}
 	return nil
 }
@@ -192,6 +187,19 @@ func splitPort(parts urlParts, protocol string) (urlParts, error) {
 type URLUserinfo struct {
 	Username string
 	Password string
+}
+
+// String says whether a user and a password are set, never their values.
+func (info URLUserinfo) String() string {
+	if info == (URLUserinfo{}) {
+		return "none"
+	}
+	return "[redacted]"
+}
+
+// GoString is String, for %#v.
+func (info URLUserinfo) GoString() string {
+	return info.String()
 }
 
 // SplitURLUserinfo removes the userinfo from a URL with "://", so the URL

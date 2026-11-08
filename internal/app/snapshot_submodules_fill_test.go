@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/gitref"
+	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/render"
 )
 
@@ -71,5 +73,20 @@ func TestSnapshotFillStateGuardFailsSourcesOnChange(t *testing.T) {
 	_, err := provider.submoduleRenderDiagnostics(context.Background(), source)
 	if err == nil || !strings.Contains(err.Error(), "changed while drydock rendered") {
 		t.Fatalf("submoduleRenderDiagnostics() after another provider emptied the root = %v, want a clear failure", err)
+	}
+}
+
+// TestRenderErrorNamesMissingSubmodulesOnlyWhenFilled pins that a render
+// error names the missing submodules only while the snapshot holds
+// submodule content: an emptied root has no missing submodule to blame.
+func TestRenderErrorNamesMissingSubmodulesOnlyWhenFilled(t *testing.T) {
+	fill := &snapshotFill{result: gittree.SubmoduleResult{Missing: []gittree.MissingSubmodule{{Path: "mods/child", Err: errors.New("offline cache miss")}}}}
+	base := errors.New("render failed")
+	if got := fill.renderError(base); got.Error() != base.Error() {
+		t.Fatalf("renderError() of an empty root = %v, want the error unchanged", got)
+	}
+	fill.filled = true
+	if got := fill.renderError(base); !strings.Contains(got.Error(), `submodule "mods/child" could not be checked out`) {
+		t.Fatalf("renderError() of a filled root = %v, want the missing submodule named", got)
 	}
 }

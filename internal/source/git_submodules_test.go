@@ -347,3 +347,22 @@ func TestDefaultGitAcquirerScrubsUserinfoFromOldEntries(t *testing.T) {
 		t.Fatalf(".git/config still holds the userinfo: %s", data)
 	}
 }
+
+// TestDefaultGitAcquirerScrubsUserinfoOnOnlineOpen pins the scrub on the
+// online open of an existing entry, not only the offline one.
+func TestDefaultGitAcquirerScrubsUserinfoOnOnlineOpen(t *testing.T) {
+	fixture := submoduletest.New(t)
+	const token = "SECRET-TOKEN-ONLINE"
+	withUserinfo := strings.Replace(fixture.ParentURL, "file://", "file://ci-token:"+token+"@", 1)
+	cacheDir := t.TempDir()
+	path := cachepkg.GitEntryPath(cacheDir, GitCacheKey(withUserinfo, "main"))
+	if _, err := git.PlainClone(path, false, &git.CloneOptions{URL: withUserinfo}); err != nil {
+		t.Fatalf("clone the old entry: %v", err)
+	}
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), GitRequest{URL: withUserinfo, Revision: "main"}, GitOptions{AllowNetwork: true, CacheDir: cacheDir}); err != nil {
+		t.Fatalf("online Acquire() error = %v", err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(path, ".git", "config")); strings.Contains(string(data), token) {
+		t.Fatalf(".git/config still holds the userinfo: %s", data)
+	}
+}

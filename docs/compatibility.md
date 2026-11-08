@@ -862,7 +862,10 @@ tree. drydock matches the update:
   `ssh` URL, before it fetches anything. The same removal runs for remote
   Kustomize bases as defense in depth.
 - A cache entry that an older drydock wrote can hold a token in its
-  `.git/config`. drydock removes it the next time it uses the entry. To
+  `.git/config`. drydock removes it the next time it uses the entry. It
+  rewrites the raw values of the file, every URL with a user or password
+  in it, also `pushurl`, submodule URLs, and `url.<base>.insteadOf` rules,
+  and replaces the file through a rename. To
   remove it at once, run `drydock cache delete --source git --all --yes`,
   and the same for `--source remote`.
 - drydock refuses an `http` or `https` submodule URL with a query (`?`) or
@@ -889,9 +892,12 @@ drydock reads submodule content from these places:
   into one repository share one clone. drydock locks the entry while it
   uses it, also for the two sides of a `--ref` diff, and clones into a
   temporary directory that moves into place only when the clone is
-  complete. A store that has lost an object is cloned again. Before a
-  clone, drydock removes the temporary directories of that entry that
-  nothing changed for one hour, which a killed process left behind. With `--offline`, a submodule
+  complete. A store that holds a commit but lost an object of its tree is
+  cloned again. A commit that the remote does not have, such as an
+  unpushed commit that a pull request pins, fails without touching the
+  store. Before a clone, drydock removes the temporary directories of that
+  entry that nothing changed for one hour, which a killed process left
+  behind. With `--offline`, a submodule
   commit that is not in the cache fails as an offline cache miss.
 - A `--ref` or `--ref-orig` snapshot gets submodule content after drydock
   reads `argocd-cmd-params-cm` from it, and only when
