@@ -338,7 +338,6 @@ func TestArgoCDParityFixtureGeneratorSemantics(t *testing.T) {
 	}{
 		{file: "matrix-child-selector.yaml", want: []string{"parity-matrix-selector-inner-dev"}},
 		{file: "generator-two-fields.yaml", want: []string{"parity-two-fields-list", "parity-two-fields-matrix"}},
-		{file: "validation-missing-project.yaml", want: []string{"parity-missing-project-dropped", "parity-missing-project-kept"}},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			apps, codes := generateParityAppSet(t, tc.file, Options{})
@@ -356,21 +355,19 @@ func TestArgoCDParityFixtureGeneratorSemantics(t *testing.T) {
 
 // TestArgoCDParityFixtureGeneratorErrorsFailApplicationSet pins the smoke
 // fixtures whose generator fails the whole ApplicationSet in Argo CD. The
-// texts match the APPLICATIONSET_ERRORS entries of the smoke. The missing
-// project of validation-missing-project.yaml is dropped later, in
-// internal/app, so the generation above keeps it.
+// texts match the APPLICATIONSET_ERRORS entries of the smoke.
 func TestArgoCDParityFixtureGeneratorErrorsFailApplicationSet(t *testing.T) {
 	for _, tc := range []struct {
 		file string
 		want string
 	}{
 		{file: "generator-error-elements-yaml.yaml", want: "error unmarshling decoded ElementsYaml"},
-		{file: "generator-error-empty-child.yaml", want: "child generator generated no parameters"},
-		{file: "generator-error-nested-too-deep.yaml", want: "child generator generated no parameters"},
+		{file: "generator-error-empty-child.yaml", want: "failed to get params for second generator in the matrix generator: child generator generated no parameters"},
+		{file: "generator-error-nested-too-deep.yaml", want: "failed to get params for second generator in the matrix generator: child generator returned an error on parameter generation: failed to get params for second generator in the matrix generator: child generator generated no parameters"},
 		{file: "generator-error-selector.yaml", want: `error parsing label selector: "Sometimes" is not a valid pod selector operator`},
-		{file: "generator-error-merge-keys.yaml", want: "the parameters from a generator were not unique by the given mergeKeys"},
+		{file: "generator-error-merge-keys.yaml", want: `error getting param sets by merge key: the parameters from a generator were not unique by the given mergeKeys, Merge requires all param sets to be unique. Duplicate key was {"suffix":"merged"}`},
 		{file: "generator-error-matrix-count.yaml", want: "found less than two generators, Matrix support only two"},
-		{file: "generator-error-cluster-selector.yaml", want: "error converting label selector"},
+		{file: "generator-error-cluster-selector.yaml", want: `error getting cluster secrets: error converting label selector: values[0][parity.drydock.dev/role]: Invalid value: "https://alpha.parity-clusters.invalid"`},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			repoRoot := filepath.Join(parityFixtureRoot, "repo")

@@ -2,9 +2,14 @@
 # exist. The Argo CD v3.6.1 ApplicationSet controller does not create it,
 # sets an ErrorOccurred condition with reason ApplicationValidationError,
 # and still creates the first one
-# (applicationset/controllers/applicationset_controller.go:627-633). This
-# repository declares AppProjects, so drydock treats a project it does not
-# declare as missing, and omits that Application too.
+# (applicationset/controllers/applicationset_controller.go:627-633).
+#
+# drydock drops such an Application only when it knows every AppProject:
+# fleet discovery rendered everything that can hold one. The main fixture
+# repository has chart-only Helm and OCI sources that discovery does not
+# render, so this fixture lives in its own directory with one AppProject,
+# project.yaml. run_missing_project_smoke applies both files after the
+# main comparisons and runs drydock on this directory alone.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

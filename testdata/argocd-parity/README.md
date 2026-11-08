@@ -143,19 +143,25 @@ name, finds nothing, and creates only the first Application. drydock drops
 the second with `appset.application-validation-failed`, and the inventory
 comparison requires the same list on both sides.
 
-`applicationsets/validation-missing-project.yaml`
+`../missing-project/applicationset.yaml`
 (`parity-validation-missing-project`) generates `parity-missing-project-kept`
 with the project `default` and `parity-missing-project-dropped` with the
 project `parity-missing-project`. No AppProject has that name. The
 ApplicationSet controller does not create the second Application, and it
 sets an `ErrorOccurred` condition with the message `application references
 project parity-missing-project which does not exist`
-(`applicationset_controller.go:627-633`). This repository declares
-AppProjects in `projects/`, so drydock treats the name as missing too. It
-drops the second Application and warns `appset.application-validation-failed`
-with the same message. The smoke lists this ApplicationSet in
-`APPLICATIONSET_ERRORS`, so it waits for the condition and requires the
-drydock warning.
+(`applicationset_controller.go:627-633`). drydock drops such an Application
+only when it knows every AppProject. This repository has chart-only Helm and
+OCI sources that fleet discovery does not render, so drydock would keep the
+Application here. The fixture therefore lives in its own directory with one
+AppProject, `../missing-project/project.yaml`.
+`run_missing_project_smoke` applies the directory after the main
+comparisons, so its Applications stay out of the main inventory. It waits
+for the condition, requires `parity-missing-project-kept` and no
+`parity-missing-project-dropped` in Argo CD, and runs `drydock get apps` on
+the directory alone with the fixture URL mapped to this repository. drydock
+must list only `parity-missing-project-kept` and warn
+`appset.application-validation-failed` with the same message.
 
 `../crd-rejected/apps/parity-crd-sync-path-dot.yaml` sets
 `syncSource.path: "."`. The CRD schema rejects it, so Argo CD never holds it.
@@ -1121,6 +1127,10 @@ works and one generator that fails:
 
 Argo CD sets an `ErrorOccurred` condition and creates no Applications for
 each of these ApplicationSets, also none from the list generator that works.
+The condition message is the generator error with the wraps that the matrix
+and merge generators add, for example `failed to get params for second
+generator in the matrix generator: child generator generated no parameters`.
+drydock carries the same text.
 drydock warns `appset.generator-failed` and generates none. The smoke lists
 each one in `APPLICATIONSET_ERRORS` with the text that the condition must
 contain. `compare_applicationset_errors` then requires a drydock warning
