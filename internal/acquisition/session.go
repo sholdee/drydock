@@ -348,10 +348,14 @@ func (acquirer cacheSafeGitAcquirer) lockEntry(request source.GitRequest, opts s
 // gitSnapshotMemoKey is the session memo key of a Git request whose cache
 // entry has the lock key key.
 func gitSnapshotMemoKey(key string, opts source.GitOptions) string {
-	if !opts.Submodules {
-		return key
+	if opts.Submodules {
+		key += "\x00submodules"
 	}
-	return key + "\x00submodules"
+	// The result lists Git LFS pointers only when asked.
+	if opts.LFS {
+		key += "\x00lfs"
+	}
+	return key
 }
 
 type cacheSafeChartAcquirer struct {

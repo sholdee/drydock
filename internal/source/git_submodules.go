@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/sholdee/drydock/internal/gittree"
 )
@@ -80,4 +81,21 @@ func submoduleCredentials(credentials GitCredentials, superURL, submoduleURL str
 	credentials.Password = ""
 	credentials.BearerToken = ""
 	return credentials
+}
+
+// lfsPointersOf lists the Git LFS pointer files of commit in repo when
+// opts.LFS is set (gittree.ScanLFSPointers).
+func lfsPointersOf(ctx context.Context, repo *git.Repository, commit string, opts GitOptions) ([]gittree.LFSPointer, error) {
+	if !opts.LFS {
+		return nil, nil
+	}
+	object, err := repo.CommitObject(plumbing.NewHash(commit))
+	if err != nil {
+		return nil, err
+	}
+	tree, err := object.Tree()
+	if err != nil {
+		return nil, err
+	}
+	return gittree.ScanLFSPointers(ctx, tree)
 }

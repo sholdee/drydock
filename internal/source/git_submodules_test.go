@@ -159,3 +159,31 @@ func TestDefaultGitAcquirerClearsSubmodulesOnCheckout(t *testing.T) {
 		t.Fatalf("stat submodule content after checkout = %v, want it removed", err)
 	}
 }
+
+// TestDefaultGitAcquirerListsLFSPointers pins that a fetched Git source
+// whose repository sets enableLfs reports the Git LFS pointer files of its
+// commit outside submodules, which drydock cannot fill, and reports none
+// unless asked.
+func TestDefaultGitAcquirerListsLFSPointers(t *testing.T) {
+	fixture := submoduletest.New(t)
+	work := filepath.Join(fixture.Dir, "parent-work")
+	pointer := "version https://git-lfs.github.com/spec/v1\noid sha256:" + strings.Repeat("ab", 32) + "\nsize 12\n"
+	submoduletest.WriteFile(t, work, "assets/blob.bin", pointer)
+	submoduletest.Run(t, work, "add", "-A")
+	submoduletest.Run(t, work, "commit", "-q", "-m", "lfs pointer")
+	submoduletest.Run(t, work, "push", "-q", filepath.Join(fixture.Dir, "parent.git"), "HEAD:main")
+
+	opts := submoduleOptions(t.TempDir(), true, true)
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: fixture.ParentURL, Revision: "main"}, opts)
+	if err != nil || len(result.LFSPointers) != 0 {
+		t.Fatalf("Acquire() = %d pointers, error %v; want none without LFS", len(result.LFSPointers), err)
+	}
+	opts.LFS = true
+	result, err = DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: fixture.ParentURL, Revision: "main"}, opts)
+	if err != nil {
+		t.Fatalf("Acquire(LFS) error = %v", err)
+	}
+	if len(result.LFSPointers) != 1 || result.LFSPointers[0].Path != "assets/blob.bin" {
+		t.Fatalf("LFSPointers = %#v, want assets/blob.bin", result.LFSPointers)
+	}
+}

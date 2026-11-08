@@ -120,6 +120,9 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 	provider.mappedAppRevisions = &sync.Map{}
 	provider.hydratorSnapshots = &sync.Map{}
 	provider.submodules = newRootSubmodules(root, request)
+	provider.lfsRepositories = lfsRepositoryKeys(settings)
+	provider.lfsFetched = &sync.Map{}
+	provider.rootLFS = prepareRootLFS(ctx, root, request, &provider)
 	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
 		provider.selfRepoURLKeys = matcher.urlKeys
 		provider.selfRepoRevisions = matcher.revisions

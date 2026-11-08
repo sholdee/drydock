@@ -120,6 +120,15 @@ type localProvider struct {
 	// submodules describes the submodules of the tree at repoRoot, for the
 	// warnings of submoduleRenderDiagnostics.
 	submodules *rootSubmodules
+	// lfsRepositories holds the URL keys of the repository Secrets that set
+	// enableLfs (lfsRepositoryKeys).
+	lfsRepositories map[string]bool
+	// rootLFS is the Git LFS state of the tree at repoRoot when its
+	// repository sets enableLfs (prepareRootLFS), else nil.
+	rootLFS *rootLFSState
+	// lfsFetched holds, per acquired path of a fetched Git source whose
+	// repository sets enableLfs, the pointer files of its commit.
+	lfsFetched *sync.Map
 	// rootDirtyPaths is the sorted complete dirty-path enumeration for the
 	// repo root when rootInputMode is dirty; empty otherwise. Per-path-set
 	// keying uses it to keep committed keys for untouched applications. An
@@ -160,6 +169,20 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	return manifests, diags, err
 }
 
+// resolveRenderRoot returns the tree that source renders from, with the
+// submodule and Git LFS warnings of that tree.
+func (p localProvider) resolveRenderRoot(ctx context.Context, source render.ResolvedSource) (string, []diagnostic.Diagnostic, error) {
+	if source.RepoRoot == "" {
+		root, err := p.resolveSourceRoot(ctx, source)
+		if err != nil {
+			return "", nil, err
+		}
+		source.RepoRoot = root
+	}
+	diags, err := p.gitContentDiagnostics(ctx, source)
+	return source.RepoRoot, diags, err
+}
+
 func (p localProvider) renderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	// Computed before any acquisition so the --repo-map remediation hint still
 	// reaches the user when the fork-shaped URL's own acquisition fails
@@ -180,16 +203,12 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 	if diag, ok := dotGitSourceDiagnostic(source); ok {
 		return nil, append(nearMissDiags, diag), nil
 	}
-	sourceRoot := source.RepoRoot
-	var err error
-	if sourceRoot == "" {
-		sourceRoot, err = p.resolveSourceRoot(ctx, source)
-		if err != nil {
-			return nil, nearMissDiags, err
-		}
+	sourceRoot, contentDiags, err := p.resolveRenderRoot(ctx, source)
+	nearMissDiags = append(nearMissDiags, contentDiags...)
+	if err != nil {
+		return nil, nearMissDiags, err
 	}
 	source.RepoRoot = sourceRoot
-	nearMissDiags = append(nearMissDiags, p.submoduleRenderDiagnostics(ctx, source)...)
 	opts.ChartAcquirer = p.acquisition.ChartAcquirer(p.chartAcquirer)
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline
