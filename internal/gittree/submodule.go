@@ -227,9 +227,14 @@ func (w submoduleWalker) prepareLink(level submoduleLevel, link Gitlink) (Submod
 	if err != nil {
 		return SubmoduleRef{}, false, fmt.Errorf("submodule %q: %w", fullPath, err)
 	}
-	resolved, userinfo, _ := SplitURLUserinfo(withUserinfo)
-	endpoint, err := ClassifySubmoduleURL(resolved, w.request.AllowFileTransport)
+	// The URL is checked as git reads it, userinfo included, and only then
+	// loses the userinfo.
+	endpoint, err := ClassifySubmoduleURL(withUserinfo, w.request.AllowFileTransport)
 	if err != nil {
+		return SubmoduleRef{}, false, fmt.Errorf("submodule %q: %w", fullPath, err)
+	}
+	resolved, userinfo, _ := SplitURLUserinfo(withUserinfo)
+	if err := CheckEndpointTransport(resolved, endpoint.Protocol); err != nil {
 		return SubmoduleRef{}, false, fmt.Errorf("submodule %q: %w", fullPath, err)
 	}
 	if len(w.result.Submodules)+len(w.result.Missing) >= MaxSubmodules {

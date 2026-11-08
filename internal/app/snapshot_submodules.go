@@ -62,6 +62,8 @@ func (request DiffRequest) snapshotSubmoduleOptions(repoPath string) *gitref.Sub
 			CacheDir:                    request.GitCacheDir,
 			Credentials:                 request.GitCredentials,
 			AllowFileSubmoduleTransport: allowFileSubmoduleTransport,
+			// The fetched sources of every run lock the same entries.
+			LockEntry: processCacheTargetLocks.LockGitEntry,
 		}, nil),
 		AllowFileTransport: allowFileSubmoduleTransport,
 	}
@@ -89,8 +91,8 @@ var snapshotFills sync.Map
 // argocd-cmd-params-cm turns the key off, so each call applies the value
 // it gets: it fills an empty root, or empties a filled one. After a
 // change, the out-of-bounds symlink checks of the root run again. It
-// returns the checkout when the root holds submodule content, else nil. A
-// submodule that drydock cannot find (offline, or unreachable) stays empty
+// returns the checkout of the root, or nil when the root is no snapshot
+// with gitlinks. A submodule that drydock cannot find (offline, or unreachable) stays empty
 // and is listed in result.Missing. The snapshot is drydock's own temporary
 // tree, never the repository.
 func fillSnapshotSubmodules(ctx context.Context, root string, request BuildRequest, settings config.ArgoSettings) *snapshotFill {
@@ -104,10 +106,20 @@ func fillSnapshotSubmodules(ctx context.Context, root string, request BuildReque
 	if fill.apply(ctx, root, request, *options, enabled) {
 		request.symlinkBounds.invalidateUnder(root)
 	}
-	if !enabled {
-		return nil
-	}
 	return fill
+}
+
+// checkState fails when the root no longer holds the submodule content
+// that a provider built with enabled expects: another provider of the
+// process changed it. drydock then fails the source loudly instead of
+// reading a tree that changes under it.
+func (f *snapshotFill) checkState(enabled bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.filled != enabled {
+		return fmt.Errorf("the submodule content of the Git ref snapshot changed while drydock rendered from it (reposerver.enable.git.submodule %t, the snapshot follows %t)", enabled, f.filled)
+	}
+	return nil
 }
 
 // apply fills or empties the submodules of root to match enabled, and

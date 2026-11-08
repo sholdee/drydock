@@ -279,11 +279,12 @@ func TestDefaultGitAcquirerKeepsOneStorePerSubmoduleURL(t *testing.T) {
 // no cache entry's .git/config holds the token.
 func TestDefaultGitAcquirerStoresNoUserinfo(t *testing.T) {
 	fixture := submoduletest.New(t)
-	base := submoduletest.ServeGitDaemon(t, fixture.Dir)
 	const token = "SECRET-TOKEN-1234"
-	withUserinfo := strings.Replace(base, "git://", "git://ci-token:"+token+"@", 1) + "/parent.git"
+	// A git:// URL takes no user, so the userinfo rides on file URLs,
+	// which only tests allow for submodules.
+	withUserinfo := strings.Replace(fixture.ParentURL, "file://", "file://ci-token:"+token+"@", 1)
 	cacheDir := t.TempDir()
-	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), GitRequest{URL: withUserinfo, Revision: "main"}, GitOptions{AllowNetwork: true, CacheDir: cacheDir, Submodules: true}); err != nil {
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), GitRequest{URL: withUserinfo, Revision: "main"}, submoduleOptions(cacheDir, true, true)); err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
 	configs := 0

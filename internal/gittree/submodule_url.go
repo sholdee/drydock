@@ -154,7 +154,8 @@ func ClassifySubmoduleURL(resolved string, allowFile bool) (*transport.Endpoint,
 	}
 	endpoint, err := transport.NewEndpoint(resolved)
 	if err != nil {
-		return nil, fmt.Errorf("parse submodule URL: %w", err)
+		// The parse error quotes the URL, which can hold a password.
+		return nil, fmt.Errorf("drydock's Git client cannot parse the submodule URL")
 	}
 	if endpoint.Protocol != gitTransport {
 		return nil, fmt.Errorf("git reads the submodule URL as transport %q, but drydock's Git client reads it as %q", gitTransport, endpoint.Protocol)

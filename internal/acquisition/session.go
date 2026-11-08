@@ -338,11 +338,20 @@ func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source
 // lockEntry locks the cache entry of a Git request with the locks of the
 // session. A request whose key cannot be computed is not locked.
 func (acquirer cacheSafeGitAcquirer) lockEntry(request source.GitRequest, opts source.GitOptions) func() {
+	return acquirer.locks.LockGitEntry(request, opts)
+}
+
+// LockGitEntry locks the Git cache entry of request, keyed as a session's
+// Git acquisitions key it (the cache directory and source.GitCacheKey), and
+// returns the unlock function. Callers outside a session, such as a --ref
+// snapshot that fetches submodules, use it to share the locks of a
+// session. A request whose key cannot be computed is not locked.
+func (locks *TargetLocks) LockGitEntry(request source.GitRequest, opts source.GitOptions) func() {
 	key, err := gitCacheLockKey(request, opts)
 	if err != nil {
 		return func() {}
 	}
-	return acquirer.locks.lock(key)
+	return locks.lock(key)
 }
 
 // gitSnapshotMemoKey is the session memo key of a Git request whose cache

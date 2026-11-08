@@ -106,3 +106,24 @@ func TestDefaultAcquirerNamesTheGitTransportDifference(t *testing.T) {
 		t.Fatalf("Acquire() error = %v, want the git:// difference named", err)
 	}
 }
+
+// TestDefaultAcquirerStoresNoUserinfo pins that a remote Git URL with
+// userinfo is cloned without it, so the remote cache entry's .git/config
+// never holds the token.
+func TestDefaultAcquirerStoresNoUserinfo(t *testing.T) {
+	fixture := submoduletest.New(t)
+	const token = "SECRET-TOKEN-5678"
+	withUserinfo := strings.Replace(fixture.ParentURL, "file://", "file://ci-token:"+token+"@", 1)
+	cacheDir := t.TempDir()
+	result, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: withUserinfo, Revision: "main"}, Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(result.Path, ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), token) || strings.Contains(string(data), "ci-token") {
+		t.Fatalf(".git/config holds the userinfo: %s", data)
+	}
+}

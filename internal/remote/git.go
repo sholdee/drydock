@@ -59,6 +59,8 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	// The cache key already ignores userinfo. The clone must not store it.
+	repoURL, opts.GitCredentials = cloneURLAndCredentials(repoURL, opts.GitCredentials)
 
 	repo, cacheHit, err := openCachedGitRepository(cachePath, repoURL, opts.GitCredentials)
 	if err != nil {

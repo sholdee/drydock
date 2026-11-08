@@ -159,3 +159,20 @@ func checkoutOrFetchCommit(ctx context.Context, repo *git.Repository, worktree *
 }
 
 var fullCommitSHA = regexp.MustCompile("^[0-9a-f]{40}$")
+
+// cloneURLAndCredentials removes the userinfo of repoURL, so the remote
+// cache entry stores a URL without a token (gittree.SplitURLUserinfo). The
+// user and password become the credentials of an http or https URL unless
+// explicit credentials are set.
+func cloneURLAndCredentials(repoURL string, credentials GitCredentials) (string, GitCredentials) {
+	clean, info, found := gittree.SplitURLUserinfo(repoURL)
+	if !found {
+		return repoURL, credentials
+	}
+	isHTTP := strings.HasPrefix(clean, "http://") || strings.HasPrefix(clean, "https://")
+	if isHTTP && credentials.Username == "" && credentials.Password == "" && credentials.BearerToken == "" {
+		credentials.Username = info.Username
+		credentials.Password = info.Password
+	}
+	return clean, credentials
+}

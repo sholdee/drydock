@@ -79,11 +79,20 @@ func (s *rootSubmodules) emptySubmodules(ctx context.Context) []string {
 //     never writes to the working tree, so it renders it as it is and
 //     warns.
 func (p localProvider) submoduleRenderDiagnostics(ctx context.Context, source render.ResolvedSource) ([]diagnostic.Diagnostic, error) {
-	if p.submodules == nil || !p.isRepoRoot(source.RepoRoot) || !p.gitSubmodules {
+	if p.submodules == nil || !p.isRepoRoot(source.RepoRoot) {
 		return nil, nil
 	}
 	if fill := p.submodules.fill; fill != nil {
+		if err := fill.checkState(p.gitSubmodules); err != nil {
+			return nil, err
+		}
+		if !p.gitSubmodules {
+			return nil, nil
+		}
 		return nil, fill.sourceError(source.Path)
+	}
+	if !p.gitSubmodules {
+		return nil, nil
 	}
 	if !p.submodules.worktree {
 		return nil, nil
@@ -137,7 +146,7 @@ func (f *snapshotFill) renderError(err error) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.result.Missing) == 0 {
+	if !f.filled || len(f.result.Missing) == 0 {
 		return err
 	}
 	reasons := make([]error, 0, len(f.result.Missing))

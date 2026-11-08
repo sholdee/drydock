@@ -29,12 +29,22 @@ func sameURLParts(value string, endpoint *transport.Endpoint) error {
 	if err != nil {
 		return err
 	}
-	goGitParts := urlParts{user: endpoint.User, host: endpoint.Host, port: normalPort(endpoint.Protocol, endpoint.Port), path: endpoint.Path}
+	goGitParts := urlParts{user: endpoint.User, host: endpoint.Host, port: normalPort(endpoint.Protocol, endpoint.Port), path: requestPath(endpoint)}
 	gitParts.port = normalPort(endpoint.Protocol, gitParts.port)
 	if gitParts != goGitParts {
 		return fmt.Errorf("git reads the submodule URL as %s, but drydock's Git client reads it as %s", gitParts, goGitParts)
 	}
 	return nil
+}
+
+// requestPath is the path that go-git sends for endpoint. go-git keeps the
+// decoded path, and its http client sends it escaped again, so an http
+// path such as "/My%20Project/_git/repo" reads the same as git's raw path.
+func requestPath(endpoint *transport.Endpoint) string {
+	if endpoint.Protocol == "http" || endpoint.Protocol == "https" {
+		return (&url.URL{Path: endpoint.Path}).EscapedPath()
+	}
+	return endpoint.Path
 }
 
 func normalPort(protocol string, port int) int {
@@ -47,10 +57,9 @@ func normalPort(protocol string, port int) int {
 // gitURLParts reads value as git does. An scp-like URL ("user@host:path")
 // is split at its first ":", so git never reads a port from it. A URL with
 // "://" is split into its authority, up to the first "/", and its path.
-// drydock refuses forms that the two clients may read differently: a
-// bracketed host, more than one "@", a percent sign in the authority, a
-// ":" in an ssh or git user, and a port that is not a number from 1 to
-// 65535.
+// drydock refuses forms that the two clients may read differently
+// (checkURLForm), a ":" in an ssh or git user, and a port that is not a
+// number from 1 to 65535.
 func gitURLParts(value, protocol string) (urlParts, error) {
 	scheme, rest, isURL := strings.Cut(value, "://")
 	if !isURL {
@@ -60,8 +69,8 @@ func gitURLParts(value, protocol string) (urlParts, error) {
 	if i := strings.Index(rest, "/"); i >= 0 {
 		authority, path = rest[:i], rest[i:]
 	}
-	if strings.ContainsAny(authority, "%[]") {
-		return urlParts{}, fmt.Errorf("submodule URL authority %q holds a percent sign or a bracket", authority)
+	if err := checkURLForm(scheme, value, authority); err != nil {
+		return urlParts{}, err
 	}
 	parts, err := splitUserHost(authority, scheme == "http" || scheme == "https")
 	if err != nil {
@@ -71,6 +80,37 @@ func gitURLParts(value, protocol string) (urlParts, error) {
 	return splitPort(parts, protocol)
 }
 
+// checkURLForm refuses the parts of a URL with "://" that git, curl, and
+// go-git read differently:
+//
+//   - a percent sign, a bracket, "#", "?", or "\" in the authority, such
+//     as "https://u#@host/", where curl connects to the host "u";
+//   - "#" or "?" anywhere in an http or https URL: a query can carry a
+//     token, which the cache entry would store, and git and go-git split
+//     it off differently;
+//   - "[" or "]" anywhere in an ssh or git URL: git reads "@[host]" after
+//     the authority as the host (host_end in connect.c);
+//   - a user in a git URL, which git reads as part of the host.
+func checkURLForm(scheme, value, authority string) error {
+	if strings.ContainsAny(authority, "%[]#?\\") {
+		return fmt.Errorf("submodule URL host %q holds a percent sign, a bracket, \"#\", \"?\", or \"\\\" in its authority", hostOnly(authority))
+	}
+	switch scheme {
+	case "http", "https":
+		if strings.ContainsAny(value, "#?") {
+			return fmt.Errorf("submodule URL holds a query or a fragment, which drydock does not fetch")
+		}
+	case "ssh", "git":
+		if strings.ContainsAny(value, "[]") {
+			return fmt.Errorf("submodule URL holds a bracket")
+		}
+	}
+	if scheme == "git" && strings.Contains(authority, "@") {
+		return fmt.Errorf("submodule URL has a user, which the git transport does not take")
+	}
+	return nil
+}
+
 // scpURLParts reads an scp-like URL as git does. git reads a bracketed host
 // anywhere after an "@" (host_end in git's connect.c), and drydock's Git
 // client does not, so a bracket fails. A path that starts with ":", or
@@ -78,7 +118,7 @@ func gitURLParts(value, protocol string) (urlParts, error) {
 // it differently.
 func scpURLParts(value string) (urlParts, error) {
 	if strings.ContainsAny(value, "[]") {
-		return urlParts{}, fmt.Errorf("submodule URL %q holds a bracket", value)
+		return urlParts{}, fmt.Errorf("submodule URL holds a bracket")
 	}
 	hostPart, path, _ := strings.Cut(value, ":")
 	if strings.HasPrefix(path, ":") || strings.Contains(strings.TrimPrefix(path, "~"), "~") {
@@ -95,14 +135,14 @@ func splitUserHost(value string, password bool) (urlParts, error) {
 	// git refuses a user or host that starts with "-" ("strange
 	// hostname"), which ssh would read as an option.
 	if strings.HasPrefix(value, "[") || strings.HasPrefix(value, "-") || strings.Count(value, "@") > 1 {
-		return urlParts{}, fmt.Errorf("submodule URL host %q is not supported", value)
+		return urlParts{}, fmt.Errorf("submodule URL host %q is not supported", hostOnly(value))
 	}
 	user, host, found := strings.Cut(value, "@")
 	if !found {
 		return urlParts{host: value}, nil
 	}
 	if user == "" {
-		return urlParts{}, fmt.Errorf("submodule URL %q has an empty user", value)
+		return urlParts{}, fmt.Errorf("submodule URL host %q has an empty user", hostOnly(value))
 	}
 	if strings.Contains(user, ":") {
 		if !password {
@@ -166,4 +206,13 @@ func unescapeUserinfo(value string) string {
 		return unescaped
 	}
 	return value
+}
+
+// hostOnly is the part of an authority after its last "@", so an error
+// never shows a user or password.
+func hostOnly(authority string) string {
+	if _, host, ok := strings.CutLast(authority, "@"); ok {
+		return host
+	}
+	return authority
 }

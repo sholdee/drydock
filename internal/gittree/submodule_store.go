@@ -65,8 +65,14 @@ func OpenSubmoduleStore(ctx context.Context, request StoreRequest) (*git.Reposit
 	return repo, true, nil
 }
 
+// hasCommit reports whether repo holds commit and its tree. A store that
+// lost an object is fetched again rather than trusted.
 func hasCommit(repo *git.Repository, commit plumbing.Hash) bool {
-	_, err := repo.CommitObject(commit)
+	object, err := repo.CommitObject(commit)
+	if err != nil {
+		return false
+	}
+	_, err = object.Tree()
 	return err == nil
 }
 
@@ -74,18 +80,28 @@ func cloneStore(ctx context.Context, request StoreRequest) (*git.Repository, err
 	if err := CheckEndpointTransport(request.URL, request.Transport); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(request.Path), 0o755); err != nil {
+	parent := filepath.Dir(request.Path)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return nil, err
+	}
+	// The clone goes to a temporary directory next to the entry and moves
+	// into place only when it is complete, so a clone that fails or stops
+	// halfway never leaves a store that a later run trusts.
+	temp, err := os.MkdirTemp(parent, filepath.Base(request.Path)+".clone-*")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(temp) }()
+	if _, err := git.PlainCloneContext(ctx, temp, true, &git.CloneOptions{URL: request.URL, Auth: request.Auth, Tags: git.AllTags}); err != nil {
 		return nil, err
 	}
 	if err := os.RemoveAll(request.Path); err != nil {
 		return nil, err
 	}
-	repo, err := git.PlainCloneContext(ctx, request.Path, true, &git.CloneOptions{URL: request.URL, Auth: request.Auth, Tags: git.AllTags})
-	if err != nil {
-		_ = os.RemoveAll(request.Path)
+	if err := os.Rename(temp, request.Path); err != nil {
 		return nil, err
 	}
-	return repo, nil
+	return git.PlainOpen(request.Path)
 }
 
 func fetchStore(ctx context.Context, repo *git.Repository, request StoreRequest) error {
