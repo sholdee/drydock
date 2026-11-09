@@ -5,4 +5,5 @@ function(namespace, flavor)
     source: std.extVar('source'),
     flavor: flavor,
     library: common.library,
+    extImport: std.extVar('extImport'),
   })
