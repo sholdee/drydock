@@ -267,7 +267,7 @@ func markOtherInstallRender(request BuildRequest, provider localProvider, render
 	if !hasCommandParametersCandidate(*result) {
 		return
 	}
-	walker := newCommittedFileWalker(provider.repoRoot, renderSettings.applications, renderSettings.settings, request.committedRenderMemo)
+	walker := newCommittedFileWalker(settingsInstallProbe(provider.repoRoot, request, ""), renderSettings.applications, renderSettings.settings, request.committedRenderMemo)
 	if !installReconciles(*result, walker.applicationNamespaces(appFile), appFile.Application.Spec.Destination.Namespace) {
 		markOtherInstallSettings(result)
 	}

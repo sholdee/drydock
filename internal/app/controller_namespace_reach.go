@@ -42,9 +42,9 @@ type namedNamespaces struct {
 // that carries a namespace names one. The settings ConfigMaps of another
 // install, rendered or committed, are not settings. The result is a set, so
 // the order of the candidates does not matter.
-func commandParametersNamespaces(root string, candidates []discovery.SettingsCandidate, applications []discovery.ApplicationFile, settings config.ArgoSettings, memo *sync.Map) namedNamespaces {
+func commandParametersNamespaces(walker *committedFileWalker, candidates []discovery.SettingsCandidate) namedNamespaces {
 	out := namedNamespaces{named: map[string][]string{}, others: map[string][]string{}, other: map[string]struct{}{}}
-	reach := settingsReach{walker: newCommittedFileWalker(root, applications, settings, memo), otherOrigins: map[string]bool{}, otherFiles: map[string]bool{}}
+	reach := settingsReach{walker: walker, otherOrigins: map[string]bool{}, otherFiles: map[string]bool{}}
 	for _, candidate := range candidates {
 		if candidate.Tier != discovery.SourceTierStatic && candidate.OtherInstall && candidate.Origin != "" {
 			reach.otherOrigins[candidate.Origin] = true
@@ -78,9 +78,9 @@ func (r settingsReach) addCommitted(out *namedNamespaces, candidate discovery.Se
 	verdict := r.walker.commandParametersReach(candidate)
 	switch {
 	case verdict.counts:
-		addNamespacePath(out.named, candidateNamespace(candidate), candidate)
+		addNamespacePath(out.named, r.walker.committedLanding(candidate.Path, candidateNamespace(candidate)), candidate)
 	case len(verdict.renderers) > 0:
-		addNamespacePath(out.others, firstNonEmpty(candidateNamespace(candidate), verdict.landing), candidate)
+		addNamespacePath(out.others, firstNonEmpty(r.walker.committedLanding(candidate.Path, candidateNamespace(candidate)), verdict.landing), candidate)
 		r.otherFiles[filepath.ToSlash(candidate.Path)] = true
 		for _, key := range verdict.renderers {
 			r.otherOrigins[key] = true
@@ -123,8 +123,8 @@ func settingsOfOtherInstall(candidate discovery.SettingsCandidate, walker *commi
 	if len(renderers) == 0 {
 		return false
 	}
-	for _, appFile := range renderers {
-		if !otherOrigins[applicationKey(appFile.Application)] {
+	for _, renderer := range renderers {
+		if !otherOrigins[applicationKey(renderer.application.Application)] {
 			return false
 		}
 	}
@@ -151,15 +151,20 @@ func addNamespacePath(namespaces map[string][]string, namespace string, candidat
 	}
 }
 
-// committedFileReader is sourceRendersCommittedFile. Tests replace it to
-// count how often drydock asks whether a source renders a committed file.
-var committedFileReader = sourceRendersCommittedFile
+// committedFileReader is sourceRendersCommittedFileWith. Tests replace it
+// to count how often drydock asks whether a source renders a committed
+// file.
+var committedFileReader = sourceRendersCommittedFileWith
 
 // committedFileWalker answers which discovered Applications render a
 // committed file (sourceRendersCommittedFile, as the repo-server rules
 // ask it). memo keeps each answer for one build side.
 type committedFileWalker struct {
-	root         string
+	root string
+	// provider resolves the sources of the Applications with the
+	// --repo-map entries and self-repo facts of the request
+	// (settingsInstallProbe).
+	provider     localProvider
 	local        []discovery.ApplicationFile
 	remote       []discovery.ApplicationFile
 	gates        sourceTypeGates
@@ -167,8 +172,8 @@ type committedFileWalker struct {
 	destinations map[string]string
 }
 
-func newCommittedFileWalker(root string, applications []discovery.ApplicationFile, settings config.ArgoSettings, memo *sync.Map) *committedFileWalker {
-	walker := &committedFileWalker{root: root, gates: sourceTypeGatesFromSettings(settings), memo: memo, destinations: applicationDestinations(applications)}
+func newCommittedFileWalker(provider localProvider, applications []discovery.ApplicationFile, settings config.ArgoSettings, memo *sync.Map) *committedFileWalker {
+	walker := &committedFileWalker{root: provider.repoRoot, provider: provider, gates: sourceTypeGatesFromSettings(settings), memo: memo, destinations: applicationDestinations(applications)}
 	for _, appFile := range applications {
 		if appFile.Tier == discovery.SourceTierExternalManifest {
 			continue
@@ -185,9 +190,10 @@ func newCommittedFileWalker(root string, applications []discovery.ApplicationFil
 // applicationNamespaces returns the namespaces where an Application lives.
 // One without a namespace lands in the destination namespace of the
 // Application that renders it (controller/state.go:588-590): its parent,
-// or the Applications on this cluster that render its committed file. An
-// Application without a namespace that nothing renders gives "", which
-// passes every check.
+// or the Applications on this cluster that render its committed file, where
+// the outermost kustomization namespace on the way wins. An Application
+// without a namespace that nothing renders gives "", which passes every
+// check.
 func (w *committedFileWalker) applicationNamespaces(appFile discovery.ApplicationFile) []string {
 	if namespace := appFile.Application.Namespace; namespace != "" {
 		return []string{namespace}
@@ -198,7 +204,7 @@ func (w *committedFileWalker) applicationNamespaces(appFile discovery.Applicatio
 	var namespaces []string
 	if appFile.Tier == discovery.SourceTierStatic && appFile.Path != "" {
 		for _, renderer := range w.localRenderers(filepath.ToSlash(appFile.Path)) {
-			namespaces = append(namespaces, renderer.Application.Spec.Destination.Namespace)
+			namespaces = append(namespaces, firstNonEmpty(renderer.render.kustomizeNamespace, renderer.application.Application.Spec.Destination.Namespace))
 		}
 	}
 	if len(namespaces) == 0 {
@@ -305,16 +311,43 @@ func sourcePathHoldsFile(application argoappv1.Application, file string) bool {
 	return false
 }
 
+// committedRenderer is an Application on this cluster that renders a
+// committed file, with how it renders it.
+type committedRenderer struct {
+	application discovery.ApplicationFile
+	render      committedFileRender
+}
+
 // localRenderers returns the Applications on this cluster that render
 // file.
-func (w *committedFileWalker) localRenderers(file string) []discovery.ApplicationFile {
-	var renderers []discovery.ApplicationFile
+func (w *committedFileWalker) localRenderers(file string) []committedRenderer {
+	var renderers []committedRenderer
 	for i, render := range w.rendersAll(w.local, file) {
 		if render.reads {
-			renderers = append(renderers, w.local[i])
+			renderers = append(renderers, committedRenderer{application: w.local[i], render: render})
 		}
 	}
 	return renderers
+}
+
+// committedLanding returns the namespace where a committed object with
+// namespace own lands: when Applications on this cluster render its file
+// and all put it in one namespace, the outermost kustomization namespace,
+// else own, that namespace. When nothing renders the file, or the
+// Applications disagree, it is own.
+func (w *committedFileWalker) committedLanding(file, own string) string {
+	landing := ""
+	for _, renderer := range w.localRenderers(filepath.ToSlash(file)) {
+		namespace := firstNonEmpty(renderer.render.kustomizeNamespace, own)
+		if namespace == "" {
+			continue
+		}
+		if landing != "" && landing != namespace {
+			return own
+		}
+		landing = namespace
+	}
+	return firstNonEmpty(landing, own)
 }
 
 // rendersAll asks, in parallel, whether each Application renders file.
@@ -323,7 +356,7 @@ func (w *committedFileWalker) rendersAll(applications []discovery.ApplicationFil
 	workers := min(runtime.GOMAXPROCS(0), len(applications))
 	if workers <= 1 {
 		for i, appFile := range applications {
-			out[i] = applicationRendersCommittedFile(w.root, file, appFile.Application, w.gates, w.memo)
+			out[i] = applicationRendersCommittedFile(w.provider, file, appFile.Application, w.gates, w.memo)
 		}
 		return out
 	}
@@ -340,7 +373,7 @@ func (w *committedFileWalker) rendersAll(applications []discovery.ApplicationFil
 				if i >= len(applications) {
 					return
 				}
-				out[i] = applicationRendersCommittedFile(w.root, file, applications[i].Application, w.gates, w.memo)
+				out[i] = applicationRendersCommittedFile(w.provider, file, applications[i].Application, w.gates, w.memo)
 			}
 		})
 	}
@@ -372,7 +405,8 @@ type committedFileRender struct {
 	kustomizeNamespace string
 }
 
-func applicationRendersCommittedFile(root, file string, application argoappv1.Application, gates sourceTypeGates, memo *sync.Map) committedFileRender {
+func applicationRendersCommittedFile(provider localProvider, file string, application argoappv1.Application, gates sourceTypeGates, memo *sync.Map) committedFileRender {
+	root := provider.repoRoot
 	sources := applicationSources(application)
 	key := ""
 	if memo != nil {
@@ -387,7 +421,7 @@ func applicationRendersCommittedFile(root, file string, application argoappv1.Ap
 	}
 	var render committedFileRender
 	for _, source := range sources {
-		if ok, namespace := committedFileReader(root, source, file, gates); ok {
+		if ok, namespace := committedFileReader(provider, source, file, gates); ok {
 			render = committedFileRender{reads: true, kustomizeNamespace: namespace}
 			break
 		}

@@ -30,28 +30,40 @@ import (
 // with the namespace that it uses.
 func loadSettingsFromDiscovery(root string, scope controllerNamespaceScope, discovered discovery.Result) (config.ArgoSettings, []diagnostic.Diagnostic, error) {
 	active := activeSettingsCandidates(discovered.SettingsCandidates)
-	scoped, diags := settingsCandidatesInNamespace(active, scope.flag)
-	loaded, err := loadSettingsCandidates(root, scoped)
+	loaded, err := loadSettingsCandidates(root, active)
 	if err != nil {
-		return config.DefaultSettings(), diags, err
+		return config.DefaultSettings(), nil, err
 	}
-	merged, mergeDiags := mergeLoadedSettings(loaded, scope, nil)
-	found := commandParametersNamespaces(root, active, discovered.Applications, merged, scope.renders)
+	// The settings of every candidate resolve the destinations of the
+	// Applications that render committed files.
+	all, _ := mergeLoadedSettings(loaded, scope, nil)
+	walker := newCommittedFileWalker(scope.walkerProvider(root), discovered.Applications, all, scope.renders)
+	var landing landingFunc
+	if scope.flag != "" {
+		landing = walker.committedLanding
+	}
+	scoped, diags := settingsCandidatesInNamespace(active, scope.flag, landing)
+	skip := withoutKeys(active, scoped)
+	merged, mergeDiags := mergeLoadedSettings(loaded, scope, skip)
+	found := commandParametersNamespaces(walker, active)
 	other := otherInstallSettings(scoped, settingsWithNamedNamespaces(merged, found).ControllerNamespace(""))
 	for key := range found.other {
 		other[key] = struct{}{}
 	}
 	if len(other) > 0 {
-		merged, mergeDiags = mergeLoadedSettings(loaded, scope, other)
+		for key := range other {
+			skip[key] = struct{}{}
+		}
+		merged, mergeDiags = mergeLoadedSettings(loaded, scope, skip)
 	}
 	diags = append(diags, mergeDiags...)
 	merged = settingsWithNamedNamespaces(merged, found)
 	diags = append(diags, controllerNamespaceDiagnostics(found, merged)...)
-	diags = append(diags, projectNamespaceDiagnostics(discovered.Projects, merged)...)
+	diags = append(diags, projectNamespaceDiagnostics(discovered.Projects, merged, landing)...)
 	// The repo-server rules read the argocd-cm candidates too, so they see
 	// the same ones.
 	inNamespace := discovered
-	inNamespace.SettingsCandidates, _ = settingsCandidatesInNamespace(discovered.SettingsCandidates, scope.flag)
+	inNamespace.SettingsCandidates, _ = settingsCandidatesInNamespace(discovered.SettingsCandidates, scope.flag, landing)
 	inNamespace.SettingsCandidates = withoutSettingsCandidates(inNamespace.SettingsCandidates, other)
 	namespace, namespaceDiags := repoServerHelmNamespace(root, inNamespace, merged)
 	merged.RepoServerHelmNamespace = namespace
@@ -132,6 +144,22 @@ func otherInstallSettings(candidates []discovery.SettingsCandidate, controllerNa
 		}
 	}
 	return other
+}
+
+// withoutKeys returns the load keys of the candidates in all that kept
+// does not hold.
+func withoutKeys(all, kept []discovery.SettingsCandidate) map[string]struct{} {
+	keep := make(map[string]struct{}, len(kept))
+	for _, candidate := range kept {
+		keep[settingsCandidateLoadKey(candidate)] = struct{}{}
+	}
+	skip := map[string]struct{}{}
+	for _, candidate := range all {
+		if _, ok := keep[settingsCandidateLoadKey(candidate)]; !ok {
+			skip[settingsCandidateLoadKey(candidate)] = struct{}{}
+		}
+	}
+	return skip
 }
 
 func withoutSettingsCandidates(candidates []discovery.SettingsCandidate, skip map[string]struct{}) []discovery.SettingsCandidate {

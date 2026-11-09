@@ -369,7 +369,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 		return result, err
 	}
 
-	addDiscoveredProjects(&result, discovered)
+	addDiscoveredProjects(&result, discovered, committedLandings(root, request, discovered, result.Settings))
 	if err := appendDiscoveredApplications(discovered, &result); err != nil {
 		return result, err
 	}
@@ -849,7 +849,7 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 			result.Statuses = skippedApplicationStatuses(result.Applications, err)
 			return result, err
 		}
-		addDiscoveredProjects(&result, discovered)
+		addDiscoveredProjects(&result, discovered, committedLandings(root, request, discovered, result.Settings))
 		if err := diagnosticFailure(request.filterProjectDiagnostics(diags), request.Strict); err != nil {
 			result.Statuses = skippedApplicationStatuses(result.Applications, err)
 			return result, err
@@ -867,7 +867,7 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
 	}
-	addDiscoveredProjects(&result, discovered)
+	addDiscoveredProjects(&result, discovered, committedLandings(root, request, discovered, result.Settings))
 	if err := diagnosticFailure(request.filterProjectDiagnostics(diags), request.Strict); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err

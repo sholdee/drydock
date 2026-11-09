@@ -20,10 +20,20 @@ type controllerNamespaceScope struct {
 	flag    string
 	hint    string
 	renders *sync.Map
+	// probe resolves sources with the --repo-map entries and self-repo
+	// facts of the request (settingsInstallProbe), without a root.
+	probe localProvider
 }
 
 func (request BuildRequest) namespaceScope() controllerNamespaceScope {
-	return controllerNamespaceScope{flag: request.ArgoCDNamespace, hint: request.controllerNamespaceHint, renders: request.committedRenderMemo}
+	return controllerNamespaceScope{flag: request.ArgoCDNamespace, hint: request.controllerNamespaceHint, renders: request.committedRenderMemo, probe: settingsInstallProbe("", request, "")}
+}
+
+// walkerProvider is the provider of a committedFileWalker for root.
+func (scope controllerNamespaceScope) walkerProvider(root string) localProvider {
+	provider := scope.probe
+	provider.repoRoot = root
+	return provider
 }
 
 // apply sets the flag and the hint on settings.

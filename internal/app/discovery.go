@@ -324,7 +324,7 @@ func applyFinalGates(root string, request BuildRequest, discovered discovery.Res
 		return discovered, nil, err
 	}
 	discovered, diags := pruneNotEnabledNamespaces(discovered, namespaceGateFromSettings(settings))
-	projectDiags := warnGitGeneratorProjects(discovered, settings)
+	projectDiags := warnGitGeneratorProjects(discovered, settings, committedLandings(root, request, discovered, settings))
 	return discovered, append(diags, request.normalizeDiagnostics(projectDiags, false)...), nil
 }
 

@@ -84,7 +84,7 @@ func settingsInstallProbe(root string, request BuildRequest, controllerNamespace
 // reads only local files and never acquires a source. Results are kept in
 // request.settingsInstallMemo for one discovery run.
 func applicationSettingsInstall(ctx context.Context, request BuildRequest, provider localProvider, application argoappv1.Application) settingsInstall {
-	key, keyOK := settingsInstallMemoKey(application, settingsInstallInstanceKey(provider, application))
+	key, keyOK := settingsInstallMemoKey(application, settingsInstallInstanceKey(provider, application, request.settingsInstallMemo))
 	if keyOK && request.settingsInstallMemo != nil {
 		if cached, ok := request.settingsInstallMemo.Load(key); ok {
 			if install, ok := cached.(settingsInstall); ok {
@@ -100,11 +100,12 @@ func applicationSettingsInstall(ctx context.Context, request BuildRequest, provi
 }
 
 // settingsInstallInstanceKey is the instance name of application when
-// computeSettingsInstall reads it: the Application names ARGOCD_APP_NAME,
-// a .argocd-source-<app>.yaml file for that name exists in the path of a
-// source, or a source path is not in this tree. Otherwise it is "", so a
-// new controller namespace does not compute the same install again.
-func settingsInstallInstanceKey(provider localProvider, application argoappv1.Application) string {
+// computeSettingsInstall can read it: the Application names
+// ARGOCD_APP_NAME, any .argocd-source*.yaml file exists in the path of a
+// source (a generic .argocd-source.yaml can use $ARGOCD_APP_NAME too), or
+// a source path is not in this tree. Otherwise it is "", so a new
+// controller namespace does not compute the same install again.
+func settingsInstallInstanceKey(provider localProvider, application argoappv1.Application, memo *sync.Map) string {
 	instance := provider.overrideInstanceName(application)
 	if data, err := json.Marshal(application.Spec); err != nil || strings.Contains(string(data), "ARGOCD_APP_NAME") {
 		return instance
@@ -117,11 +118,40 @@ func settingsInstallInstanceKey(provider localProvider, application argoappv1.Ap
 		if err != nil || !provider.sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {
 			return instance
 		}
-		if _, err := os.Lstat(filepath.Join(provider.repoRoot, sourcePath, fmt.Sprintf(appSourceFile, instance))); !os.IsNotExist(err) {
+		if hasArgocdSourceFile(filepath.Join(provider.repoRoot, sourcePath), memo) {
 			return instance
 		}
 	}
 	return ""
+}
+
+// hasArgocdSourceFile reports whether dir holds a .argocd-source*.yaml
+// file, or whether drydock cannot tell. memo keeps the answer for each
+// directory for one discovery run.
+func hasArgocdSourceFile(dir string, memo *sync.Map) bool {
+	key := "argocd-source-files\x00" + dir
+	if memo != nil {
+		if cached, ok := memo.Load(key); ok {
+			if found, ok := cached.(bool); ok {
+				return found
+			}
+		}
+	}
+	found := false
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		found = !os.IsNotExist(err)
+	}
+	for _, entry := range entries {
+		if name := entry.Name(); strings.HasPrefix(name, ".argocd-source") && strings.HasSuffix(name, ".yaml") {
+			found = true
+			break
+		}
+	}
+	if memo != nil {
+		memo.Store(key, found)
+	}
+	return found
 }
 
 // settingsInstallMemoKey covers every input of computeSettingsInstall that

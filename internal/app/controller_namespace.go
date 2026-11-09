@@ -122,22 +122,42 @@ func controllerNamespaceScoped(kind string) bool {
 	return discovery.IsSettingsConfigMapKind(kind) || kind == "repository-secret" || kind == "cluster-secret"
 }
 
+// landingFunc returns the namespace where a committed object at path with
+// namespace own lands (committedFileWalker.committedLanding). A nil one
+// returns own.
+type landingFunc func(path, own string) string
+
+// of returns the namespace of an object: as rendered for a rendered one,
+// and where it lands for a committed one.
+func (landing landingFunc) of(tier discovery.SourceTier, path, own string) string {
+	if landing == nil || tier != discovery.SourceTierStatic {
+		return own
+	}
+	return landing(path, own)
+}
+
 // settingsCandidatesInNamespace drops the settings candidates that Argo CD
-// never reads because they carry another namespace than namespace, the one
-// that --argocd-namespace names. Argo CD reads its settings ConfigMaps and
-// its repository and cluster Secrets only in the namespace that it runs in
-// (util/settings, util/db at v3.6.1). Without the flag, namespace is empty
-// and every candidate stays. A candidate without a namespace always stays:
-// a kustomization or the destination can put it in any namespace.
-func settingsCandidatesInNamespace(candidates []discovery.SettingsCandidate, namespace string) ([]discovery.SettingsCandidate, []diagnostic.Diagnostic) {
+// never reads because they are in another namespace than namespace, the
+// one that --argocd-namespace names. Argo CD reads its settings ConfigMaps
+// and its repository and cluster Secrets only in the namespace that it
+// runs in (util/settings, util/db at v3.6.1). Without the flag, namespace
+// is empty and every candidate stays. A rendered candidate is in its
+// namespace as rendered, and a committed one where it lands (landing). A
+// candidate without a namespace always stays: a kustomization or the
+// destination can put it in any namespace.
+func settingsCandidatesInNamespace(candidates []discovery.SettingsCandidate, namespace string, landing landingFunc) ([]discovery.SettingsCandidate, []diagnostic.Diagnostic) {
 	if namespace == "" {
 		return candidates, nil
 	}
 	kept := candidates[:0:0]
 	var diags []diagnostic.Diagnostic
 	for _, candidate := range candidates {
-		carried := candidateNamespace(candidate)
-		if !controllerNamespaceScoped(candidate.Kind) || carried == "" || carried == namespace {
+		if !controllerNamespaceScoped(candidate.Kind) {
+			kept = append(kept, candidate)
+			continue
+		}
+		carried := landing.of(candidate.Tier, candidate.Path, candidateNamespace(candidate))
+		if carried == "" || carried == namespace {
 			kept = append(kept, candidate)
 			continue
 		}
@@ -181,25 +201,30 @@ func settingsCandidateDisplayKind(kind string) string {
 }
 
 // projectInControllerNamespace reports whether the Argo CD controllers find
-// proj. They look an AppProject up only in their own namespace
+// an AppProject. They look an AppProject up only in their own namespace
 // (util/argo GetAppProject, projLister.AppProjects(ns) at v3.6.1). drydock
-// applies that only when --argocd-namespace names the namespace. An
+// applies that only when --argocd-namespace names the namespace. A
+// committed AppProject is in the namespace where it lands (landing). An
 // AppProject without a namespace stays.
-func projectInControllerNamespace(proj argoappv1.AppProject, settings config.ArgoSettings) bool {
+func projectInControllerNamespace(projectFile discovery.ProjectFile, settings config.ArgoSettings, landing landingFunc) (string, bool) {
 	namespace := strings.TrimSpace(settings.ArgoCDNamespace)
-	return namespace == "" || proj.Namespace == "" || proj.Namespace == namespace
+	if namespace == "" {
+		return projectFile.Project.Namespace, true
+	}
+	carried := landing.of(projectFile.Tier, projectFile.Path, projectFile.Project.Namespace)
+	return carried, carried == "" || carried == namespace
 }
 
 // projectNamespaceDiagnostics warns once for each discovered AppProject
 // that projectInControllerNamespace skips.
-func projectNamespaceDiagnostics(projects []discovery.ProjectFile, settings config.ArgoSettings) []diagnostic.Diagnostic {
+func projectNamespaceDiagnostics(projects []discovery.ProjectFile, settings config.ArgoSettings, landing landingFunc) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 	for _, projectFile := range projects {
-		proj := projectFile.Project
-		if projectInControllerNamespace(proj, settings) {
+		carried, found := projectInControllerNamespace(projectFile, settings, landing)
+		if found {
 			continue
 		}
-		diags = append(diags, outsideControllerNamespaceDiagnostic("AppProject", proj.Namespace, proj.Name, settings.ArgoCDNamespace, "looks AppProjects up", projectFile.Path))
+		diags = append(diags, outsideControllerNamespaceDiagnostic("AppProject", carried, projectFile.Project.Name, settings.ArgoCDNamespace, "looks AppProjects up", projectFile.Path))
 	}
 	return diags
 }
@@ -207,9 +232,9 @@ func projectNamespaceDiagnostics(projects []discovery.ProjectFile, settings conf
 // appendDiscoveredProjects appends the discovered AppProjects that the Argo
 // CD controllers find with settings (projectInControllerNamespace).
 // loadSettingsFromDiscovery warns about the others.
-func appendDiscoveredProjects(projects []argoappv1.AppProject, discovered discovery.Result, settings config.ArgoSettings) []argoappv1.AppProject {
+func appendDiscoveredProjects(projects []argoappv1.AppProject, discovered discovery.Result, settings config.ArgoSettings, landing landingFunc) []argoappv1.AppProject {
 	for _, projectFile := range discovered.Projects {
-		if projectInControllerNamespace(projectFile.Project, settings) {
+		if _, found := projectInControllerNamespace(projectFile, settings, landing); found {
 			projects = append(projects, projectFile.Project)
 		}
 	}
@@ -221,7 +246,17 @@ func appendDiscoveredProjects(projects []argoappv1.AppProject, discovered discov
 // AppProjects before the namespace filter, so an Application that names a
 // skipped one gets project.missing, as Argo CD fails to find it
 // (util/argo/argo.go:819-822), not the permissive implicit default.
-func addDiscoveredProjects(result *BuildResult, discovered discovery.Result) {
+func addDiscoveredProjects(result *BuildResult, discovered discovery.Result, landing landingFunc) {
 	result.projectsDeclared = result.projectsDeclared || len(discovered.Projects) > 0
-	result.Projects = appendDiscoveredProjects(result.Projects, discovered, result.Settings)
+	result.Projects = appendDiscoveredProjects(result.Projects, discovered, result.Settings, landing)
+}
+
+// committedLandings returns where the committed objects of discovered
+// land (committedFileWalker.committedLanding), when --argocd-namespace
+// filters them by namespace, and nil otherwise.
+func committedLandings(root string, request BuildRequest, discovered discovery.Result, settings config.ArgoSettings) landingFunc {
+	if strings.TrimSpace(settings.ArgoCDNamespace) == "" {
+		return nil
+	}
+	return newCommittedFileWalker(settingsInstallProbe(root, request, ""), discovered.Applications, settings, request.committedRenderMemo).committedLanding
 }

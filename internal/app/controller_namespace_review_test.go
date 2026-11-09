@@ -199,15 +199,14 @@ func TestNamespaceLessInstallConfigMapLandsInTheDestination(t *testing.T) {
 }
 
 // drydock asks which Applications render a committed argocd-cmd-params-cm
-// once for each Application and file in a build side. It asks first the
-// Applications that the file's Argo CD reconciles and whose source path
-// holds the file, so a match stops early.
+// once for each Application and file in a build side, however many
+// settings loads, checks, and landing lookups ask it.
 func TestCommittedCommandParametersRenderCheckIsMemoized(t *testing.T) {
 	var calls atomic.Int64
 	original := committedFileReader
-	committedFileReader = func(root string, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) (bool, string) {
+	committedFileReader = func(provider localProvider, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) (bool, string) {
 		calls.Add(1)
-		return original(root, source, file, gates)
+		return original(provider, source, file, gates)
 	}
 	t.Cleanup(func() { committedFileReader = original })
 
@@ -233,7 +232,7 @@ func TestCommittedCommandParametersRenderCheckIsMemoized(t *testing.T) {
 		remote bool
 		calls  int64
 	}{
-		{name: "rendered by an Application in its namespace", calls: 1},
+		{name: "rendered by an Application in its namespace", calls: 4},
 		{name: "Applications on another cluster only", remote: true, calls: 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

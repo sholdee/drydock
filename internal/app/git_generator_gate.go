@@ -35,13 +35,13 @@ import (
 // the rest, once for each ApplicationSet. The default project always
 // exists. When the repository declares no AppProject at all, project
 // validation already reports that it cannot tell, and this warns nothing.
-func warnGitGeneratorProjects(discovered discovery.Result, settings config.ArgoSettings) []diagnostic.Diagnostic {
+func warnGitGeneratorProjects(discovered discovery.Result, settings config.ArgoSettings, landing landingFunc) []diagnostic.Diagnostic {
 	// The repository declares AppProjects also when --argocd-namespace
 	// skips every one of them, because the controllers never find them.
 	if len(discovered.Projects) == 0 {
 		return nil
 	}
-	declared := appendDiscoveredProjects(nil, discovered, settings)
+	declared := appendDiscoveredProjects(nil, discovered, settings, landing)
 	index := project.ByName(declared)
 	type lookup struct {
 		path    string
