@@ -756,6 +756,13 @@ func sanitizedWorkloadContainer(container map[string]any, component config.ArgoC
 	}
 	if envFrom, ok := container["envFrom"].([]any); ok && len(envFrom) > 0 {
 		kept[config.RepoServerEnvFromKey] = true
+		prefixes := make([]any, 0, len(envFrom))
+		for _, item := range envFrom {
+			entry, _ := item.(map[string]any)
+			prefix, _ := entry["prefix"].(string)
+			prefixes = append(prefixes, prefix)
+		}
+		kept[config.ComponentEnvFromPrefixesKey] = prefixes
 	}
 	var mounts []any
 	mountItems, _ := container["volumeMounts"].([]any)

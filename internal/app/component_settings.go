@@ -257,7 +257,7 @@ func componentConflictDiagnostics(component config.ArgoCDComponent, name string,
 // flag, else the variable as the kubelet builds it, else the default.
 func resolveComponentSetting(container map[string]any, setting config.ComponentSetting, params config.ArgoSettings, provenance diagnostic.Provenance) componentValue {
 	out := componentValue{setting: setting}
-	if container[config.RepoServerEnvFromKey] == true {
+	if envFromCanSet(container, setting.Env) {
 		out.unknown = []string{"can come from envFrom"}
 	}
 	items, _ := container["env"].([]any)
@@ -282,6 +282,25 @@ func resolveComponentSetting(container map[string]any, setting config.ComponentS
 		return componentValue{setting: setting, source: "flag", value: config.Value[string]{Value: value, Provenance: diagnostic.Provenance{Path: provenance.Path, Pointer: pointer}}}
 	}
 	return out
+}
+
+// envFromCanSet reports whether an envFrom entry of container can set the
+// variable name. The kubelet puts the prefix of the entry in front of each
+// key of its source, so only an entry whose prefix name starts with can.
+func envFromCanSet(container map[string]any, name string) bool {
+	if container[config.RepoServerEnvFromKey] != true {
+		return false
+	}
+	prefixes, ok := container[config.ComponentEnvFromPrefixesKey].([]any)
+	if !ok {
+		return true
+	}
+	for _, item := range prefixes {
+		if prefix, _ := item.(string); strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // withEnvEntry applies one env entry of the variable, as the kubelet does:

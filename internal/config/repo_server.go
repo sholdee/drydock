@@ -41,6 +41,10 @@ const (
 	// ComponentRunsProgramKey marks, on a sanitized container, that its
 	// command line runs the program of the workload (ComponentRunsProgram).
 	ComponentRunsProgramKey = "drydockRunsProgram"
+	// ComponentEnvFromPrefixesKey holds, on a sanitized container, the
+	// prefix of each envFrom entry, "" for none. A prefix is part of the
+	// variable names, not a value.
+	ComponentEnvFromPrefixesKey = "drydockEnvFromPrefixes"
 	// RepoServerTokenFileKey and RepoServerNamespaceFileKey mark, on a
 	// sanitized volume, whether the volume holds a file named token and a
 	// file named namespace (discovery.sanitizedRepoServerVolumes).

@@ -670,3 +670,31 @@ func TestCommittedWorkloadRenderCheckIsMemoized(t *testing.T) {
 		t.Fatalf("render checks of the committed workloads = %d, want 3 for the whole run", got)
 	}
 }
+
+// An envFrom entry sets the variables of its source with its prefix in
+// front. A prefix that no setting variable starts with cannot set one, so
+// it gives no warning. An entry without a prefix, or with a prefix that a
+// setting variable starts with, can.
+func TestComponentSettingsEnvFromPrefix(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		prefixes []string
+		want     int
+	}{
+		{name: "proxy prefix", prefixes: []string{"PROXY_"}, want: 0},
+		{name: "two prefixes that cannot set a setting", prefixes: []string{"PROXY_", "ARGOCD_ENV_"}, want: 0},
+		{name: "ARGOCD_APPLICATIONSET_ prefix", prefixes: []string{"PROXY_", "ARGOCD_APPLICATIONSET_"}, want: 3},
+		{name: "ARGOCD_ prefix", prefixes: []string{"ARGOCD_"}, want: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var envFrom strings.Builder
+			for _, prefix := range tc.prefixes {
+				envFrom.WriteString("    - prefix: " + prefix + "\n      secretRef:\n        name: proxy\n")
+			}
+			result := componentSettingsResult(t, "applicationSet:\n  envFrom:\n"+envFrom.String(), nil)
+			if got := workloadWarnings(result.Diagnostics, "can come from envFrom"); len(got) != tc.want {
+				t.Fatalf("envFrom warnings = %d (%#v), want %d", len(got), got, tc.want)
+			}
+		})
+	}
+}

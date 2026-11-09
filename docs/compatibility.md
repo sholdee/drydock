@@ -1813,10 +1813,14 @@ Supported:
     render holds it.
   - An empty value is the default of the program, as for
     `argocd-cmd-params-cm`.
+  - An `envFrom` entry sets each key of its ConfigMap or Secret with its
+    `prefix` in front. So an entry can set a setting variable only when
+    the variable name starts with the prefix. An entry without a prefix
+    can set any variable.
 
   drydock warns, and reads the variable as if the entry were not there,
   when it cannot know a value offline: a `secretKeyRef` (drydock never
-  reads a Secret value), `envFrom`, a value with a `$(VAR)` reference, a
+  reads a Secret value), an `envFrom` entry that can set the variable, a value with a `$(VAR)` reference, a
   `configMapKeyRef` to a ConfigMap that drydock does not find, or a
   reference that is not optional to a key that is missing. It also warns
   when the command line does not run the program, when a flag value
