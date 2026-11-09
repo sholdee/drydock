@@ -990,6 +990,15 @@ Important boundaries:
   - A user name and password in a repository URL go only to the host of that
     URL. They take the place of the `--git-*` credentials when that host has
     no `--git-auth-host` entry.
+  - drydock refuses a Git URL with `?`, `#`, or `\` between `://` and the
+    first `/`, such as `https://a.example?@b.example/org/repo.git`. net/url
+    reads the host `a.example` from it, and code that cuts at `/` reads
+    `b.example`. The Git cache key and the clone URL use the net/url host.
+    A cache entry whose origin names another repository than the request
+    is cloned again, or is a cache miss with `--offline`, and every fetch
+    goes to the URL of the request. This applies to Application sources,
+    remote Kustomize Git bases, and submodule stores. Cache keys of other
+    URLs do not change.
 - Ambient Git credential helpers, ambient Helm registry config, and secret
   credential fields from discovered repository Secrets are not read. SSH
   identities are the exception: without `--git-ssh-key-file`, the agent and

@@ -356,6 +356,9 @@ identity resolution:
   rule. Fail before any fetch when an HTTP Git credential is set without
   `--git-auth-host`. Send URL userinfo only to the host of that URL. SSH keys
   need no entry.
+- Refuse a Git URL with `?`, `#`, or `\` before the first `/` after `://`.
+  Do not use a Git cache entry whose origin names another repository than
+  the request, and fetch only the URL of the request.
 - Git SSH auth uses an explicit key file when given; otherwise the agent,
   `~/.ssh/config` `IdentityFile`, and `~/.ssh/id_*` identities in that order.
   known_hosts verification is always on; no prompting.

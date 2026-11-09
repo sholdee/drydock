@@ -799,6 +799,14 @@ that URL. They take the place of the `--git-*` credentials when that host has
 no `--git-auth-host` entry. drydock removes them from the URL before it
 stores the URL in the cache.
 
+drydock refuses a Git URL with `?`, `#`, or `\` between `://` and the first
+`/`, such as `https://git.example.com?@other.example.net/org/repo.git`.
+Parsers read another host from such a URL. drydock also checks each Git cache
+entry before it uses it. If the origin of the entry names another repository
+than the request, drydock clones the request URL into the entry again. With
+`--offline`, the request fails as a cache miss. Every fetch goes to the URL of
+the request, never to a URL that the cache entry stores.
+
 SSH sources do not use `--git-auth-host`. An SSH key never leaves the
 machine: the client proves that it holds the key, and the server learns only
 the public key. Host key verification against known_hosts also makes sure
