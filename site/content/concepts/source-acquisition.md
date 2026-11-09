@@ -722,7 +722,8 @@ provided.
 drydock sends the `--remote-*` credentials only to the hosts that you name
 with `--remote-auth-host`. Give the flag once for each host. Write an entry as
 `host` or `host:port` for HTTPS. To allow plain HTTP for a host, write the
-entry as `http://host` or `http://host:port`. A request receives the
+entry as `http://host` or `http://host:port`. With an `http://` entry, every
+HTTP proxy and every system on the network path can read the credentials. A request receives the
 credentials only when its scheme, host, and port match an entry. The host
 match ignores case, and an entry without a port has the default port of its
 scheme. A subdomain or a parent domain does not match. Other hosts get the
