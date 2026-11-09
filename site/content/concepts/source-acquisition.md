@@ -168,8 +168,9 @@ paths resolve as in the Argo CD repo-server: a path that starts with `/` is
 relative to the repository root, symlinks in the repository are followed, and
 a file that the list names twice is read once, at its first place. drydock
 never reads a value file outside the repository or in `.git`. Remote value
-files and `fileParameters` URLs use the remote-resource cache and `--remote-*`
-credentials, not the chart cache. Explicitly empty `helm.valuesFileSchemes`
+files and `fileParameters` URLs use the remote-resource cache and the
+`--remote-*` credentials for the hosts that `--remote-auth-host` names, not the
+chart cache. Explicitly empty `helm.valuesFileSchemes`
 disables remote value-file URLs.
 
 `source.helm.passCredentials` affects only HTTP chart repositories with
@@ -709,14 +710,43 @@ OpenSSH-style exception — Git SSH identities, described in
 | OCI artifact | Registry config (per registry host) | `--registry-config PATH` |
 | OCI artifact | Basic auth (global override) | `--oci-username USER`, `--oci-password PASS` |
 | OCI artifact | TLS material | `--oci-ca-file PATH`, `--oci-client-cert-file PATH`, `--oci-client-key-file PATH`, `--oci-insecure-skip-verify` |
-| HTTP(S) remote Kustomize | Bearer token | `--remote-bearer-token TOKEN` |
-| HTTP(S) remote Kustomize | Basic auth | `--remote-username USER`, `--remote-password PASS` |
+| HTTP(S) remote files | Bearer token | `--remote-bearer-token TOKEN` |
+| HTTP(S) remote files | Basic auth | `--remote-username USER`, `--remote-password PASS` |
+| HTTP(S) remote files | Hosts that receive the credentials (required) | `--remote-auth-host HOST[:PORT]` (repeatable) |
 
-For Git HTTPS, HTTP(S) Helm, and HTTP(S) remote Kustomize, bearer auth wins
-when both bearer and basic credentials are provided. Kustomize Git remote refs
-reuse the `--git-*` credentials, including the SSH identity resolution below,
-but use the remote Kustomize cache and `--offline` or `--refresh-remotes`
-behavior.
+HTTP(S) remote files are remote Kustomize HTTP(S) resources, Helm value file
+URLs, and Helm `fileParameters` URLs. For Git HTTPS, HTTP(S) Helm, and HTTP(S)
+remote files, bearer auth wins when both bearer and basic credentials are
+provided.
+
+drydock sends the `--remote-*` credentials only to the hosts that you name
+with `--remote-auth-host`. Give the flag once for each host. Write an entry as
+`host` or `host:port` for HTTPS. To allow plain HTTP for a host, write the
+entry as `http://host` or `http://host:port`. A request receives the
+credentials only when its scheme, host, and port match an entry. The host
+match ignores case, and an entry without a port has the default port of its
+scheme. A subdomain or a parent domain does not match. Other hosts get the
+request without credentials.
+
+If you set `--remote-username`, `--remote-password`, or `--remote-bearer-token`
+without `--remote-auth-host`, drydock stops before it fetches anything. The
+error names `--remote-auth-host`. On a redirect, drydock removes the
+credentials when the new location has another scheme, host, or port than the
+first request, and it does not add them again later in that redirect chain.
+
+```bash
+drydock test apps --path . \
+  --remote-bearer-token "$REMOTE_TOKEN" \
+  --remote-auth-host files.example.com
+```
+
+Argo CD v3.6.1 has no flags of this kind. It fetches remote Kustomize HTTP(S)
+resources, Helm value file URLs, and `fileParameters` URLs without
+credentials.
+
+Kustomize Git remote refs reuse the `--git-*` credentials, including the SSH
+identity resolution below, but use the remote Kustomize cache and `--offline`
+or `--refresh-remotes` behavior.
 
 Supported SSH URL forms are:
 

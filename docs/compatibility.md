@@ -670,7 +670,9 @@ Supported:
 - Explicit Git HTTPS bearer/basic auth; Git SSH auth from an explicit key file
   or from the ssh-agent and `~/.ssh` identities.
 - Explicit HTTP(S) Helm bearer/basic auth.
-- Explicit HTTP(S) remote Kustomize bearer/basic auth.
+- Explicit HTTP(S) remote file bearer/basic auth (`--remote-*`) for remote
+  Kustomize resources, Helm value file URLs, and Helm `fileParameters` URLs,
+  sent only to the hosts that `--remote-auth-host` names.
 - Explicit `--registry-config` (a Docker/Helm registry config file in
   `helm registry login` format) with per-registry credentials for OCI
   artifact sources and OCI Helm chart registries; for artifact sources the
@@ -906,6 +908,25 @@ Important boundaries:
   extraction directory, skips other entry types, and extracts absolute names
   relative to that directory. Charts built with `helm package` rarely contain
   such entries.
+- The `--remote-*` credentials are drydock-only behavior. Argo CD v3.6.1 has
+  no such credentials. kustomize fetches a remote HTTP(S) resource with a
+  plain `http.Client` `Get` and no credentials
+  (`api/internal/loader/fileloader.go:320-345`). The repo-server passes Helm
+  value file URLs and file parameters to `helm template` as `--values` and
+  `--set-file` (`util/helm/cmd.go:450-457`), and helm v4.3.1 reads them with
+  its HTTP getter without credentials (`pkg/cli/values/options.go:50,97,119-138`).
+  For a remote Kustomize Git base, the `kustomize build` environment carries
+  the Git credentials of the Application repository to the git program
+  (`util/kustomize/kustomize.go:134-162`). drydock sends the `--remote-*`
+  credentials only to a request whose scheme, host, and port match a
+  `--remote-auth-host` entry. An entry without a scheme is HTTPS only, and
+  `http://host[:port]` allows plain HTTP. A run that sets a `--remote-*`
+  credential without `--remote-auth-host` fails before it fetches anything.
+  On a redirect, drydock removes the credentials when a request of the chain
+  has another scheme, host, or port than the first request. net/http alone
+  keeps them on a redirect to another port, to a subdomain, and from HTTPS to
+  HTTP. Credential values never reach cache keys, cache metadata, cache
+  events, or errors.
 - Recorded divergence from Argo CD v3.6.1: drydock refuses a Kustomize
   remote ref that names the file transport, such as
   `file:///srv/repo.git//base` or `git::file:///srv/repo.git//base`, in any

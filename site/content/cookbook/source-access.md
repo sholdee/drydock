@@ -184,7 +184,13 @@ drydock test apps --path . \
   --helm-username "$HELM_USER" \
   --helm-password "$HELM_PASSWORD"
 drydock test apps --path . --registry-config ./ci/registry-config.json
+drydock test apps --path . \
+  --remote-bearer-token "$REMOTE_TOKEN" \
+  --remote-auth-host files.example.com
 ```
+
+The `--remote-*` credentials need `--remote-auth-host`. drydock sends them only
+to the hosts that you name, over HTTPS unless an entry starts with `http://`.
 
 Explicit credentials win: `--git-ssh-key-file` disables the ambient identity
 lookup entirely, and `--registry-config` covers OCI Helm chart registries and

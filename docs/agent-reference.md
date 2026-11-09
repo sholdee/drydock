@@ -354,6 +354,12 @@ identity resolution:
   known_hosts verification is always on; no prompting.
 - HTTP(S) Helm and remote Kustomize auth support bearer and basic auth; bearer
   wins.
+- Send the `--remote-*` credentials only to a request whose scheme, host, and
+  port match a `--remote-auth-host` entry (`host[:port]` is HTTPS only,
+  `http://host[:port]` allows plain HTTP). Fail before any fetch when a
+  `--remote-*` credential is set without `--remote-auth-host`. Remove the
+  credentials on a redirect that leaves the scheme, host, and port of the
+  first request.
 - OCI Helm (schemeless chart) auth is provided only through the explicit
   `--registry-config` file.
 - OCI artifact auth comes per registry host from the same explicit

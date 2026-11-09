@@ -27,6 +27,12 @@ Package-level `Render`, `ListApplications`, `DiffApplications`, and
 CLI. Declared Git, chart, OCI artifact, and remote Kustomize inputs may be
 fetched unless the request is configured for offline/cache-only behavior.
 
+`Config.RemoteResourceCredentials` mirrors the `--remote-*` flags. Its
+`Hosts` field mirrors `--remote-auth-host`, and a credential without a `Hosts`
+entry fails the call before drydock fetches anything. A custom
+`RemoteResourceAcquirer` receives `Hosts` and must send the credentials only
+to those hosts itself.
+
 `Config.OCICacheDir` overrides the OCI artifact source cache root, mirroring
 the CLI `--oci-cache-dir` flag. Like the other cache roots, it must resolve
 outside current and baseline repository trees. `Config.OCICredentials`
