@@ -23,6 +23,10 @@ import (
 // commit and the network is off.
 var ErrOfflineCacheMiss = errors.New("offline cache miss")
 
+// errStoreOfOtherRepository marks an entry whose origin names another
+// repository than the request.
+var errStoreOfOtherRepository = errors.New("the cache entry is a clone of another repository")
+
 // StoreRequest is one commit of a submodule repository that
 // OpenSubmoduleStore finds in a drydock cache entry.
 type StoreRequest struct {
@@ -37,6 +41,19 @@ type StoreRequest struct {
 	Auth      transport.AuthMethod
 	// AllowNetwork lets OpenSubmoduleStore clone or fetch.
 	AllowNetwork bool
+	// SameRepository reports whether an origin URL of an existing entry
+	// names the repository of URL, with the URL normalization of the
+	// cache key. Nil compares the URLs exactly.
+	SameRepository func(originURL string) bool
+}
+
+// sameRepository applies request.SameRepository, or exact equality with
+// request.URL.
+func (request StoreRequest) sameRepository(originURL string) bool {
+	if request.SameRepository != nil {
+		return request.SameRepository(originURL)
+	}
+	return originURL == request.URL
 }
 
 // OpenSubmoduleStore returns the bare clone at request.Path when it holds
@@ -46,14 +63,19 @@ type StoreRequest struct {
 // fetched reports that it used the network. Without the network, a
 // missing entry or commit fails with ErrOfflineCacheMiss. One entry per
 // URL keeps a .gitmodules file with many gitlinks into one repository at
-// one clone.
+// one clone. An entry whose origin names another repository
+// (OriginMatches) is not used: with the network, drydock clones URL into
+// it again, and without it, the commit is an offline cache miss. Fetches
+// go to URL, never to the origin URL of the entry.
 func OpenSubmoduleStore(ctx context.Context, request StoreRequest) (*git.Repository, bool, error) {
 	repo, err := git.PlainOpen(request.Path)
 	if err == nil {
 		if scrubErr := ScrubRemoteUserinfo(repo); scrubErr != nil {
 			return nil, false, scrubErr
 		}
-		if hasCommit(repo, request.Commit) {
+		if !OriginMatches(repo, request.sameRepository) {
+			repo, err = nil, errStoreOfOtherRepository
+		} else if hasCommit(repo, request.Commit) {
 			return repo, false, nil
 		}
 	}
@@ -148,7 +170,7 @@ func fetchStore(ctx context.Context, repo *git.Repository, request StoreRequest)
 	if err := checkStoreOrigin(repo, request.Transport); err != nil {
 		return err
 	}
-	err := repo.FetchContext(ctx, &git.FetchOptions{RemoteName: "origin", Auth: request.Auth, Tags: git.AllTags})
+	err := repo.FetchContext(ctx, &git.FetchOptions{RemoteName: "origin", RemoteURL: request.URL, Auth: request.Auth, Tags: git.AllTags})
 	if err == nil || errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return nil
 	}
@@ -162,6 +184,7 @@ func fetchStoreCommit(ctx context.Context, repo *git.Repository, request StoreRe
 	sha := request.Commit.String()
 	err := repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: "origin",
+		RemoteURL:  request.URL,
 		Auth:       request.Auth,
 		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec(sha + ":refs/drydock/" + sha)},
 	})

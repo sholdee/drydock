@@ -87,6 +87,7 @@ func TestDefaultGitAcquirerOfflineSSHCacheHitDoesNotRequireCredentials(t *testin
 	if err := os.Rename(seed.Path, cachePath); err != nil {
 		t.Fatalf("rename seed cache: %v", err)
 	}
+	setCacheEntryOrigin(t, cachePath, sshURL)
 	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: sshURL, Revision: "HEAD"}, GitOptions{CacheDir: cacheDir})
 	if err != nil {
 		t.Fatalf("offline SSH cache Acquire() error = %v", err)

@@ -95,6 +95,9 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	if err := opts.Credentials.Validate(); err != nil {
 		return GitResult{}, err
 	}
+	if err := CheckGitRequestURL(request.URL); err != nil {
+		return GitResult{}, err
+	}
 
 	cacheDir, err := gitCacheDir(opts.CacheDir)
 	if err != nil {
@@ -128,6 +131,10 @@ func acquireOnlineGitRepository(ctx context.Context, cachePath, key string, requ
 	if err != nil {
 		return GitResult{}, err
 	}
+	// Every fetch goes to cloneURL, the URL that auth is for, never to a
+	// URL that the cache entry stores.
+	fetchRequest := request
+	fetchRequest.URL = cloneURL
 
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -135,12 +142,12 @@ func acquireOnlineGitRepository(ctx context.Context, cachePath, key string, requ
 	}
 	refreshed := false
 	if opts.Refresh && !cloned {
-		if err := refreshGitRepository(ctx, repo, worktree, request, auth, opts.Credentials); err != nil {
+		if err := refreshGitRepository(ctx, repo, worktree, fetchRequest, auth, opts.Credentials); err != nil {
 			return GitResult{}, err
 		}
 		refreshed = true
 	}
-	revision, fetched, err := checkoutAcquiredGitRepository(ctx, repo, worktree, request, cloned, auth, opts.Credentials)
+	revision, fetched, err := checkoutAcquiredGitRepository(ctx, repo, worktree, fetchRequest, cloned, auth, opts.Credentials)
 	if err != nil {
 		return GitResult{}, err
 	}
@@ -166,6 +173,9 @@ func acquireCachedGitRepository(ctx context.Context, cachePath, key string, requ
 	}
 	if err := gittree.ScrubRemoteUserinfo(repo); err != nil {
 		return GitResult{}, err
+	}
+	if !gittree.OriginMatches(repo, sameGitRepository(request.URL)) {
+		return GitResult{}, fmt.Errorf("offline cache miss for Git repository %s: the cache entry is a clone of another repository", RedactURL(request.URL))
 	}
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -216,8 +226,33 @@ func writeGitMetadata(cachePath, key string, request GitRequest, revision string
 	})
 }
 
+// CheckGitRequestURL fails for a repository URL whose host part holds
+// "?", "#", or "\" (gittree.CheckURLAuthority). net/url and the cache key
+// read another host from such a URL than code that cuts at "/", so drydock
+// does not fetch it.
+func CheckGitRequestURL(repoURL string) error {
+	if err := gittree.CheckURLAuthority(repoURL); err != nil {
+		return fmt.Errorf("repository %s: %w", RedactURL(repoURL), err)
+	}
+	return nil
+}
+
+// gitCacheTarget is the repository that a cache key names. It starts from
+// the URL without userinfo that drydock clones (gittree.SplitURLUserinfo),
+// so the host of the key is the host that drydock contacts. For a URL that
+// net/url parses, the target is the same as before.
 func gitCacheTarget(repoURL string) string {
-	return NormalizeURL(cache.RedactedTarget(repoURL))
+	clean, _, _ := gittree.SplitURLUserinfo(strings.TrimSpace(repoURL))
+	return NormalizeURL(cache.RedactedTarget(clean))
+}
+
+// sameGitRepository returns a test that an origin URL of a cache entry
+// names the repository of repoURL: both have the same cache target.
+func sameGitRepository(repoURL string) func(originURL string) bool {
+	want := gitCacheTarget(repoURL)
+	return func(originURL string) bool {
+		return want != "" && gitCacheTarget(originURL) == want
+	}
 }
 
 func openExistingGitRepository(cachePath string) (*git.Repository, error) {
@@ -229,9 +264,15 @@ func openOrCloneGitRepository(ctx context.Context, cachePath, repoURL string, au
 	if err == nil {
 		// An entry that an older drydock cloned from a URL with userinfo
 		// loses it now.
-		return repo, false, gittree.ScrubRemoteUserinfo(repo)
-	}
-	if !errors.Is(err, git.ErrRepositoryNotExists) {
+		if err := gittree.ScrubRemoteUserinfo(repo); err != nil {
+			return nil, false, err
+		}
+		// An entry whose origin names another repository is cloned
+		// again, so drydock never fetches it with the auth of repoURL.
+		if gittree.OriginMatches(repo, sameGitRepository(repoURL)) {
+			return repo, false, nil
+		}
+	} else if !errors.Is(err, git.ErrRepositoryNotExists) {
 		return nil, false, fmt.Errorf("open cached repository %s: %s", RedactURL(repoURL), redactGitError(err, repoURL, credentials))
 	}
 
@@ -274,7 +315,7 @@ func checkoutAcquiredGitRepository(ctx context.Context, repo *git.Repository, wo
 		// A commit that no branch or tag holds: `git submodule update`
 		// fetches the SHA itself, so drydock fetches it into a ref of its
 		// own and tries again.
-		if fetchErr := fetchGitCommit(ctx, repo, strings.ToLower(strings.TrimSpace(request.Revision)), auth); fetchErr == nil {
+		if fetchErr := fetchGitCommit(ctx, repo, request.URL, strings.ToLower(strings.TrimSpace(request.Revision)), auth); fetchErr == nil {
 			fetched = true
 			revision, err = checkoutGitRevision(repo, worktree, request.Revision, request.URL)
 		}
@@ -285,11 +326,12 @@ func checkoutAcquiredGitRepository(ctx context.Context, repo *git.Repository, wo
 	return revision, fetched, nil
 }
 
-// fetchGitCommit fetches the commit sha from origin into
+// fetchGitCommit fetches the commit sha from repoURL into
 // refs/drydock/<sha>.
-func fetchGitCommit(ctx context.Context, repo *git.Repository, sha string, auth transport.AuthMethod) error {
+func fetchGitCommit(ctx context.Context, repo *git.Repository, repoURL, sha string, auth transport.AuthMethod) error {
 	err := repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: "origin",
+		RemoteURL:  repoURL,
 		Auth:       auth,
 		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec(sha + ":refs/drydock/" + sha)},
 	})
@@ -305,6 +347,7 @@ func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL strin
 	// ls-remote in the Argo CD repo-server no longer finds it.
 	err := repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: "origin",
+		RemoteURL:  repoURL,
 		Auth:       auth,
 		Tags:       git.AllTags,
 		Prune:      true,
@@ -321,6 +364,7 @@ func pullGitRepository(ctx context.Context, worktree *git.Worktree, repoURL stri
 	}
 	err := worktree.PullContext(ctx, &git.PullOptions{
 		RemoteName: "origin",
+		RemoteURL:  repoURL,
 		Auth:       auth,
 		Force:      true,
 	})

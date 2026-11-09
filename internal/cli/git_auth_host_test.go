@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -122,5 +123,90 @@ spec:
 	}
 	if got := other.AuthorizationHeaders(); len(got) != 0 {
 		t.Fatalf("other host received Authorization headers %q, want none", got)
+	}
+}
+
+// writeCLIGitApplication writes an Application named name whose source is
+// repoURL at revision main, path manifests.
+func writeCLIGitApplication(t *testing.T, root, name, repoURL string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", name+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+name+`
+  namespace: argocd
+spec:
+  source:
+    repoURL: "`+repoURL+`"
+    targetRevision: main
+    path: manifests
+  destination:
+    name: in-cluster
+    namespace: `+name+`
+`)
+}
+
+// TestBuildAppsNeverSendsTheTokenThroughACacheKeyCollision runs the attack
+// of the security review through `drydock build apps --refresh-git`. One
+// Application uses "<listed>?@<attacker>/repo.git", which net/url keys as
+// the listed host. Another uses the listed host. The listed server serves
+// its repository at the root, so both share one cache key. The test runs
+// both orders in one run, and the poisoning Application in an earlier run
+// with the same --git-cache-dir. The attacker host never gets the token,
+// and no output holds the attacker content. A run with only the listed
+// Application renders the listed content. Before the fix, drydock cloned
+// the attacker repository into the entry of the listed host, served its
+// content for the listed Application, and fetched it with the token.
+func TestBuildAppsNeverSendsTheTokenThroughACacheKeyCollision(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		runs [][2]string
+	}{
+		{name: "poison first in one run", runs: [][2]string{{"a-poison", "b-listed"}}},
+		{name: "listed first in one run", runs: [][2]string{{"b-poison", "a-listed"}}},
+		{name: "poison in an earlier run", runs: [][2]string{{"a-poison", ""}, {"", "a-listed"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			listedDir := t.TempDir()
+			submoduletest.NewRepo(t, listedDir, "repo", map[string]string{"manifests/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: listed-content\n"})
+			listed := submoduletest.ServeSmartHTTP(t, filepath.Join(listedDir, "repo.git"))
+			attackerDir := t.TempDir()
+			submoduletest.NewRepo(t, attackerDir, "repo", map[string]string{"manifests/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: attacker-content\n"})
+			attacker := submoduletest.ServeSmartHTTP(t, attackerDir)
+			poisonURL := listed.URL + "?@" + strings.TrimPrefix(attacker.URL, "http://") + "/repo.git"
+			cacheDir := t.TempDir()
+			for _, run := range tc.runs {
+				root := t.TempDir()
+				if run[0] != "" {
+					writeCLIGitApplication(t, root, run[0], poisonURL)
+				}
+				if run[1] != "" {
+					writeCLIGitApplication(t, root, run[1], listed.URL)
+				}
+				var stdout, stderr bytes.Buffer
+				cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: app.Orchestrator{}})
+				cmd.SetArgs([]string{
+					"build", "apps", "--path", root, "--git-cache-dir", cacheDir, "--render-cache=false", "--refresh-git",
+					"--git-bearer-token", "cli-secret-token", "--git-auth-host", listed.URL,
+				})
+				cmd.SetOut(&stdout)
+				cmd.SetErr(&stderr)
+				err := cmd.Execute()
+				if run[0] != "" && (err == nil || !strings.Contains(fmt.Sprint(err)+stderr.String(), "host part of the URL")) {
+					t.Fatalf("Execute() error = %v, want the refusal of the two-host URL\nstderr:\n%s", err, stderr.String())
+				}
+				if run[0] == "" && !strings.Contains(stdout.String(), "name: listed-content") {
+					t.Fatalf("stdout lacks the listed content:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+				}
+				if output := stdout.String() + stderr.String(); strings.Contains(output, "attacker-content") {
+					t.Fatalf("output holds the attacker content:\n%s", output)
+				}
+			}
+			for _, header := range attacker.AuthorizationHeaders() {
+				if strings.Contains(header, "cli-secret-token") {
+					t.Fatal("the attacker host received the --git-bearer-token")
+				}
+			}
+		})
 	}
 }

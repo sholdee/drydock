@@ -106,6 +106,7 @@ func openRemoteSubmoduleStore(ctx context.Context, ref gittree.SubmoduleRef, opt
 	}
 	repo, fetched, err := gittree.OpenSubmoduleStore(ctx, gittree.StoreRequest{
 		Path: path, URL: ref.URL, Commit: ref.Commit, Transport: ref.Transport, Auth: auth, AllowNetwork: !opts.Offline,
+		SameRepository: sameRemoteGitRepository(ref.URL),
 	})
 	if err == nil && fetched {
 		writeGitRepoMetadata(filepath.Dir(path), key, normalized, ref.Commit.String())
@@ -149,6 +150,7 @@ func checkoutOrFetchCommit(ctx context.Context, repo *git.Repository, worktree *
 	}
 	fetchErr := repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: "origin",
+		RemoteURL:  repoURL,
 		Auth:       auth,
 		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec(sha + ":refs/drydock/" + sha)},
 	})

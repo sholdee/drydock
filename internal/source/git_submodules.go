@@ -83,6 +83,7 @@ func openSubmoduleStore(ctx context.Context, ref gittree.SubmoduleRef, opts GitO
 	}
 	repo, fetched, err := gittree.OpenSubmoduleStore(ctx, gittree.StoreRequest{
 		Path: path, URL: ref.URL, Commit: ref.Commit, Transport: ref.Transport, Auth: auth, AllowNetwork: opts.AllowNetwork,
+		SameRepository: sameGitRepository(ref.URL),
 	})
 	if err != nil {
 		return nil, fetched, err

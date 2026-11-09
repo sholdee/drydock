@@ -221,6 +221,7 @@ func TestDefaultAcquirerUsesOfflineGitCacheWithoutCredentials(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PlainClone() error = %v", err)
 	}
+	setCacheEntryOrigin(t, cachePath, request.RepoURL)
 
 	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir, Offline: true})
 	if err != nil {
