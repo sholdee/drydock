@@ -293,7 +293,8 @@ data:
 
 // localGitCacheAcquirer acquires every remote Git ref from the local Git
 // repository repoURL (a file:// URL) through the Git cache of
-// remote.DefaultAcquirer. It records the path of each result.
+// remote.DefaultAcquirer, which refuses the file transport unless
+// AllowFileTransport is set. It records the path of each result.
 type localGitCacheAcquirer struct {
 	repoURL string
 	paths   []string
@@ -302,6 +303,7 @@ type localGitCacheAcquirer struct {
 func (a *localGitCacheAcquirer) Acquire(ctx context.Context, request remote.Request, opts remote.Options) (remote.Result, error) {
 	request.URL = a.repoURL
 	request.RepoURL = a.repoURL
+	opts.AllowFileTransport = true
 	result, err := remote.DefaultAcquirer{}.Acquire(ctx, request, opts)
 	if err == nil {
 		a.paths = append(a.paths, result.Path)

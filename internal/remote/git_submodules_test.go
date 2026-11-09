@@ -19,7 +19,7 @@ func TestDefaultAcquirerChecksOutRemoteGitSubmodules(t *testing.T) {
 	fixture := submoduletest.New(t)
 	cacheDir := t.TempDir()
 	request := Request{Kind: RequestGitRepo, RepoURL: fixture.ParentURL, Revision: "main", Submodules: true}
-	opts := Options{CacheDir: cacheDir, AllowFileSubmoduleTransport: true}
+	opts := Options{AllowFileTransport: true, CacheDir: cacheDir, AllowFileSubmoduleTransport: true}
 	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, opts)
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
@@ -53,7 +53,7 @@ func TestDefaultAcquirerRemoteSubmodulesOfflineCacheMiss(t *testing.T) {
 	fixture := submoduletest.New(t)
 	cacheDir := t.TempDir()
 	request := Request{Kind: RequestGitRepo, RepoURL: fixture.ParentURL, Revision: "main"}
-	opts := Options{CacheDir: cacheDir, AllowFileSubmoduleTransport: true}
+	opts := Options{AllowFileTransport: true, CacheDir: cacheDir, AllowFileSubmoduleTransport: true}
 	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, opts); err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
@@ -71,7 +71,7 @@ func TestDefaultAcquirerRemoteSubmodulesOfflineCacheMiss(t *testing.T) {
 func TestDefaultAcquirerRefusesRemoteSubmoduleURLsThatReadLocalRepositories(t *testing.T) {
 	for _, prefix := range []string{"git@x y:", "x y:"} {
 		parentURL := submoduletest.LocalPathURLFixture(t, prefix)
-		result, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: parentURL, Revision: "main", Submodules: true}, Options{CacheDir: t.TempDir()})
+		result, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: parentURL, Revision: "main", Submodules: true}, Options{AllowFileTransport: true, CacheDir: t.TempDir()})
 		if err == nil {
 			data, _ := os.ReadFile(filepath.Join(result.Path, "sub", "app", "cm.yaml"))
 			t.Fatalf("prefix %q: Acquire() error = nil, sub/app/cm.yaml = %q; want the URL refused", prefix, data)
@@ -86,7 +86,7 @@ func TestDefaultAcquirerRefusesRemoteSubmoduleURLsThatReadLocalRepositories(t *t
 // remote Kustomize base fetches a submodule commit that no branch holds.
 func TestDefaultAcquirerFetchesUnreachablePinnedRemoteCommit(t *testing.T) {
 	parentURL := submoduletest.UnreachableCommitFixture(t)
-	result, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: parentURL, Revision: "main", Submodules: true}, Options{CacheDir: t.TempDir(), AllowFileSubmoduleTransport: true})
+	result, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: parentURL, Revision: "main", Submodules: true}, Options{AllowFileTransport: true, CacheDir: t.TempDir(), AllowFileSubmoduleTransport: true})
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
@@ -101,7 +101,7 @@ func TestDefaultAcquirerFetchesUnreachablePinnedRemoteCommit(t *testing.T) {
 // drydock does not fetch it, which is a recorded difference.
 func TestDefaultAcquirerNamesTheGitTransportDifference(t *testing.T) {
 	parentURL := submoduletest.SubmoduleURLFixture(t, "git://git.example.invalid/child.git")
-	_, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: parentURL, Revision: "main", Submodules: true}, Options{CacheDir: t.TempDir()})
+	_, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: parentURL, Revision: "main", Submodules: true}, Options{AllowFileTransport: true, CacheDir: t.TempDir()})
 	if err == nil || !strings.Contains(err.Error(), "recorded difference") {
 		t.Fatalf("Acquire() error = %v, want the git:// difference named", err)
 	}
@@ -115,7 +115,7 @@ func TestDefaultAcquirerStoresNoUserinfo(t *testing.T) {
 	const token = "SECRET-TOKEN-5678"
 	withUserinfo := strings.Replace(fixture.ParentURL, "file://", "file://ci-token:"+token+"@", 1)
 	cacheDir := t.TempDir()
-	result, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: withUserinfo, Revision: "main"}, Options{CacheDir: cacheDir})
+	result, err := DefaultAcquirer{}.Acquire(context.Background(), Request{Kind: RequestGitRepo, RepoURL: withUserinfo, Revision: "main"}, Options{AllowFileTransport: true, CacheDir: cacheDir})
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
@@ -136,7 +136,7 @@ func TestDefaultAcquirerScrubsUserinfoFromOldEntries(t *testing.T) {
 	const token = "SECRET-TOKEN-OLD-REMOTE"
 	cacheDir := t.TempDir()
 	request := Request{Kind: RequestGitRepo, RepoURL: fixture.ParentURL, Revision: "main"}
-	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestDefaultAcquirerScrubsUserinfoFromOldEntries(t *testing.T) {
 	if err := os.WriteFile(config, []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{CacheDir: cacheDir, Offline: true}); err != nil {
+	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir, Offline: true}); err != nil {
 		t.Fatalf("offline Acquire() error = %v", err)
 	}
 	if data, _ := os.ReadFile(config); strings.Contains(string(data), token) {

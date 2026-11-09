@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/sholdee/drydock/internal/acquisition"
@@ -170,6 +171,7 @@ metadata:
 		Username:    "remote-user",
 		Password:    "remote-pass",
 		BearerToken: "remote-token",
+		Hosts:       []string{"raw.githubusercontent.com"},
 	}
 	acquirer := &fakeRemoteAcquirer{path: remoteFile}
 
@@ -188,7 +190,7 @@ metadata:
 	if len(acquirer.options) != 1 {
 		t.Fatalf("remote acquire options = %d, want 1", len(acquirer.options))
 	}
-	if got := acquirer.options[0].Credentials; got != credentials {
+	if got := acquirer.options[0].Credentials; !reflect.DeepEqual(got, credentials) {
 		t.Fatalf("remote credentials = %#v, want %#v", got, credentials)
 	}
 }

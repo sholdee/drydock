@@ -38,7 +38,7 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RefreshRemoteResources", request.RefreshRemoteResources, true)
 	assertDeepEqual(t, "RemoteResourceCacheDir", request.RemoteResourceCacheDir, "remote-cache")
 	assertDeepEqual(t, "RemoteResourceForbiddenRoots", request.RemoteResourceForbiddenRoots, []string{"/repo"})
-	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
+	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user", Hosts: []string{"files.example.test"}})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
 	assertDeepEqual(t, "OCICredentials", request.OCICredentials, ociCredentialsFixture())
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
@@ -107,7 +107,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "GitCredentials", request.GitCredentials, source.GitCredentials{Username: "git-user"})
 	assertDeepEqual(t, "RefreshRemoteResources", request.RefreshRemoteResources, true)
 	assertDeepEqual(t, "RemoteResourceCacheDir", request.RemoteResourceCacheDir, "remote-cache")
-	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
+	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user", Hosts: []string{"files.example.test"}})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
 	assertDeepEqual(t, "OCICredentials", request.OCICredentials, ociCredentialsFixture())
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
@@ -183,7 +183,7 @@ func fixtureOptions() Options {
 		RefreshRemoteResources:       true,
 		RemoteResourceCacheDir:       "remote-cache",
 		RemoteResourceForbiddenRoots: []string{"/repo"},
-		RemoteResourceCredentials:    remote.Credentials{Username: "remote-user"},
+		RemoteResourceCredentials:    remote.Credentials{Username: "remote-user", Hosts: []string{"files.example.test"}},
 		RemoteResourceGitCredentials: remote.GitCredentials{Username: "remote-git-user"},
 		OCICredentials:               ociCredentialsFixture(),
 		EnableAVPCompat:              true,

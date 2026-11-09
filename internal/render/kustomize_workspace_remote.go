@@ -314,6 +314,9 @@ func acquiredRemoteKustomizePath(acquired remote.Result, ref kustomizeRemoteRef)
 }
 
 func unsupportedRemoteKustomizeRefError(field, ref string) error {
+	if isFileTransportKustomizeRef(ref) {
+		return fmt.Errorf("kustomize %s %q uses the local file transport; %s", field, redactKustomizeRef(ref), fileTransportRefusal)
+	}
 	return fmt.Errorf("kustomize %s %q is a remote ref; remote Kustomize refs are unsupported", field, redactKustomizeRef(ref))
 }
 

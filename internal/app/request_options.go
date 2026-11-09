@@ -132,6 +132,14 @@ type CRDScopeOptions struct {
 	Disabled bool
 }
 
+// validateRemoteResourceCredentials fails when a --remote-* credential is
+// set and no --remote-auth-host names a host that receives it. Build,
+// ListApplications, and the diff entry points run it first, so the run
+// fails before it fetches anything.
+func (options AcquisitionOptions) validateRemoteResourceCredentials() error {
+	return options.RemoteResourceCredentials.Validate()
+}
+
 // validateKubeVersion checks --kube-version once per run. A per-app kubeVersion wins
 // over it, so the render alone would check it only for Applications
 // without one.

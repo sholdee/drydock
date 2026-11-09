@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,9 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 	}
 	normalizedURL, err := NormalizeGitRepoCacheURL(repoURL)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := rejectLocalGitTransport(repoURL, opts.AllowFileTransport); err != nil {
 		return Result{}, err
 	}
 	cacheDir, err := ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
@@ -222,6 +226,30 @@ func gitAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMe
 // newSSHEnvironment builds the ambient environment SSH identity resolution
 // reads. Tests replace it so they never touch the developer's ~/.ssh or agent.
 var newSSHEnvironment = gitauth.Default
+
+// rejectLocalGitTransport fails when repoURL names the file transport, or
+// when go-git would read it as a local path, unless allowFile is set. The
+// error never quotes the parse error, which can hold a password.
+func rejectLocalGitTransport(repoURL string, allowFile bool) error {
+	if allowFile {
+		return nil
+	}
+	if parsed, err := url.Parse(repoURL); err == nil && parsed.Scheme == "file" {
+		return localGitTransportError(repoURL)
+	}
+	endpoint, err := transport.NewEndpoint(repoURL)
+	if err != nil {
+		return fmt.Errorf("remote Git repository URL %q cannot be parsed by drydock's Git client", RedactGitRepoURL(repoURL))
+	}
+	if endpoint.Protocol == "file" {
+		return localGitTransportError(repoURL)
+	}
+	return nil
+}
+
+func localGitTransportError(repoURL string) error {
+	return fmt.Errorf("remote Git repository URL %q uses the local file transport; drydock fetches remote Git repositories only over http, https, or ssh", RedactGitRepoURL(repoURL))
+}
 
 func isSCPStyleGitURL(repoURL string) bool {
 	return giturl.IsSCPStyle(repoURL)

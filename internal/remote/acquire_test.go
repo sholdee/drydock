@@ -377,7 +377,7 @@ func TestDefaultAcquirerUsesBearerToken(t *testing.T) {
 		URL: server.URL + "/resource.yaml",
 	}, Options{
 		CacheDir:    t.TempDir(),
-		Credentials: Credentials{BearerToken: token},
+		Credentials: Credentials{BearerToken: token, Hosts: []string{server.URL}},
 	})
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
@@ -403,6 +403,7 @@ func TestDefaultAcquirerUsesBasicAuth(t *testing.T) {
 		Credentials: Credentials{
 			Username: username,
 			Password: password,
+			Hosts:    []string{server.URL},
 		},
 	})
 	if err != nil {
@@ -428,6 +429,7 @@ func TestDefaultAcquirerBearerWinsOverBasic(t *testing.T) {
 			Username:    "user",
 			Password:    "secret-password",
 			BearerToken: token,
+			Hosts:       []string{server.URL},
 		},
 	})
 	if err != nil {
@@ -440,6 +442,7 @@ func TestDefaultAcquirerRedactsCredentialFetchErrors(t *testing.T) {
 		Username:    "user",
 		Password:    "secret-password",
 		BearerToken: "secret-token",
+		Hosts:       []string{"example.test"},
 	}
 	_, err := (DefaultAcquirer{Client: &http.Client{
 		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {

@@ -42,10 +42,18 @@ type Request struct {
 	Submodules bool
 }
 
+// Credentials are the --remote-* credentials for remote HTTP(S) files:
+// remote Kustomize resources, Helm value files, and Helm file parameters.
 type Credentials struct {
 	Username    string
 	Password    string
 	BearerToken string
+	// Hosts lists the hosts that receive the credentials, one
+	// --remote-auth-host entry each: host[:port] or https://host[:port]
+	// for HTTPS, and http://host[:port] to allow plain HTTP. A request
+	// receives the credentials only when its scheme, host, and port match
+	// an entry. Validate fails when a credential is set and Hosts is empty.
+	Hosts []string
 }
 
 type GitCredentials struct {
@@ -72,6 +80,10 @@ type Options struct {
 	// AllowFileSubmoduleTransport lets a submodule URL be a local path or a
 	// file URL, which git refuses for submodules. Only tests set it.
 	AllowFileSubmoduleTransport bool
+	// AllowFileTransport lets the URL of a Git request be a file URL or a
+	// local path. drydock refuses them, so that a repository cannot make
+	// drydock read another Git repository on the machine. Only tests set it.
+	AllowFileTransport bool
 }
 
 type Result struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -153,6 +154,50 @@ spec:
 	}
 }
 
+// TestClientRefusesRemoteResourceCredentialsWithoutHosts checks that a
+// Config with a remote credential and no RemoteResourceCredentials.Hosts
+// entry fails before the remote acquirer runs, and that the error names
+// --remote-auth-host and no credential value.
+func TestClientRefusesRemoteResourceCredentialsWithoutHosts(t *testing.T) {
+	root := t.TempDir()
+	writeAPIFile(t, filepath.Join(root, "apps", "remote.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: remote
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: remote
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAPIFile(t, filepath.Join(root, "remote", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/example/repo/main/remote.yaml
+`)
+	remoteAcquirer := &recordingRemoteAcquirer{path: filepath.Join(t.TempDir(), "remote.yaml")}
+	_, err := NewClient(Config{
+		Path:                      root,
+		Offline:                   true,
+		RemoteResourceCacheDir:    t.TempDir(),
+		RemoteResourceCredentials: RemoteResourceCredentials{BearerToken: "api-secret-token"},
+		RemoteResourceAcquirer:    remoteAcquirer,
+	}).Render(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "--remote-auth-host") {
+		t.Fatalf("Render() error = %v, want an error that names --remote-auth-host", err)
+	}
+	if strings.Contains(err.Error(), "api-secret-token") {
+		t.Fatalf("Render() error %q leaks the token", err)
+	}
+	if len(remoteAcquirer.options) != 0 {
+		t.Fatalf("remote acquire calls = %d, want 0", len(remoteAcquirer.options))
+	}
+}
+
 func TestClientPassesRemoteResourceCredentials(t *testing.T) {
 	root := t.TempDir()
 	remoteFile := filepath.Join(t.TempDir(), "remote.yaml")
@@ -184,6 +229,7 @@ metadata:
 		Username:    "remote-user",
 		Password:    "remote-pass",
 		BearerToken: "remote-token",
+		Hosts:       []string{"raw.githubusercontent.com"},
 	}
 	gitCredentials := GitCredentials{
 		Username:          "git-user",
@@ -210,7 +256,7 @@ metadata:
 	if len(remoteAcquirer.options) != 1 {
 		t.Fatalf("remote options = %d, want 1", len(remoteAcquirer.options))
 	}
-	if got := remoteAcquirer.options[0].Credentials; got != credentials {
+	if got := remoteAcquirer.options[0].Credentials; !reflect.DeepEqual(got, credentials) {
 		t.Fatalf("remote credentials = %#v, want %#v", got, credentials)
 	}
 	if got := remoteAcquirer.options[0].GitCredentials; got != gitCredentials {
@@ -263,6 +309,7 @@ resources:
 			Username:    "remote-user",
 			Password:    "remote-pass",
 			BearerToken: "remote-token",
+			Hosts:       []string{"example.test"},
 		},
 		GitCredentials: GitCredentials{
 			Username:      "git-user",
