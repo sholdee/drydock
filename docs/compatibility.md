@@ -2778,7 +2778,11 @@ Supported:
   `env.ParseBoolFromEnv`. So `true` in any case turns it on, and every other
   value, such as `1`, `yes`, ` true`, or an empty value, leaves it off.
   drydock uses the value of the current side, as for the other diff
-  settings. drydock reads the key from a committed or rendered
+  settings. The application controller reads the key only when it starts.
+  The argo-cd Helm chart restarts it after a change through its checksum
+  annotation, but with a plain `install.yaml` the live mode stays the old one
+  until the controller restarts, while drydock already uses the new value.
+  drydock reads the key from a committed or rendered
   `argocd-cmd-params-cm`, also from the one that the argo-cd Helm chart
   makes from `configs.params`. It does not read the application controller
   StatefulSet or Deployment. So drydock does not see the switch when the
