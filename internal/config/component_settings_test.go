@@ -120,6 +120,12 @@ func TestParseComponentArgs(t *testing.T) {
 			notes:     []string{"flag --help prints the help of argocd-repo-server, so argocd-repo-server does not start"},
 		},
 		{
+			name:      "otlp-sample-ratio takes the next argument",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--otlp-sample-ratio", "0.5", "--allow-oob-symlinks"},
+			want:      []ComponentFlag{{Flag: "allow-oob-symlinks", Value: "true"}},
+		},
+		{
 			name:      "a known value flag takes the next argument",
 			component: ApplicationControllerComponent,
 			args:      []string{"/usr/local/bin/argocd-application-controller", "--kubeconfig", "--application-namespaces", "-n", "argocd"},

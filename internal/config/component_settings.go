@@ -111,7 +111,8 @@ var componentBoolFlags = map[ArgoCDComponent][]string{
 // other than the setting flags. With componentBoolFlags and the setting
 // flags, they are all the flags of the program, so any other flag stops it
 // at startup ("unknown flag"). They come from the flag calls of Argo CD
-// v3.6.1 in the command files above, util/cache/cache.go
+// v3.6.1 in the command files above, with the util/cli helpers such as
+// BoundedFloat64Var (otlp-sample-ratio), util/cache/cache.go
 // (AddCacheFlagsToCmd), reposerver/cache/cache.go:74-76,
 // util/cache/appstate/cache.go:37, util/tls/tls.go (AddTLSFlagsToCmd for
 // the repo-server, AddClientTLSFlagsToCmdWithPrefix for the controllers),
@@ -120,7 +121,7 @@ var componentBoolFlags = map[ArgoCDComponent][]string{
 var componentValueFlags = map[ArgoCDComponent][]string{
 	RepoServerComponent: append([]string{
 		"logformat", "loglevel", "parallelismlimit", "address", "port", "metrics-address", "metrics-port",
-		"otlp-address", "otlp-headers", "otlp-attrs", "plugin-tar-exclude", "streamed-manifest-max-tar-size",
+		"otlp-address", "otlp-sample-ratio", "otlp-headers", "otlp-attrs", "plugin-tar-exclude", "streamed-manifest-max-tar-size",
 		"streamed-manifest-max-extracted-size", "helm-manifest-max-extracted-size", "helm-registry-max-index-size",
 		"oci-manifest-max-extracted-size", "oci-layer-media-types", "client-ca-path",
 		"tlsminversion", "tlsmaxversion", "tlsciphers", "tlscurvepreferences",
@@ -133,7 +134,7 @@ var componentValueFlags = map[ArgoCDComponent][]string{
 		"self-heal-timeout-seconds", "self-heal-backoff-timeout-seconds", "self-heal-backoff-factor",
 		"self-heal-backoff-cap-seconds", "self-heal-backoff-cooldown-seconds", "sync-timeout",
 		"kubectl-parallelism-limit", "metrics-application-labels", "metrics-application-conditions",
-		"metrics-cluster-labels", "otlp-address", "otlp-headers", "otlp-attrs", "sharding-method",
+		"metrics-cluster-labels", "otlp-address", "otlp-sample-ratio", "otlp-headers", "otlp-attrs", "sharding-method",
 		"wq-bucket-size", "wq-bucket-qps", "wq-cooldown-ns", "wq-basedelay-ns", "wq-maxdelay-ns",
 		"wq-backoff-factor", "enable-k8s-event", "app-state-cache-expiration",
 	}, cacheValueFlags...), controllerClientValueFlags...),
