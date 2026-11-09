@@ -319,12 +319,12 @@ func applicationSetOptionsForRun(ctx context.Context, root string, request Build
 // (warnGitGeneratorProjects) warns about an AppProject that the repository
 // does not declare.
 func applyFinalGates(root string, request BuildRequest, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, error) {
-	settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
+	settings, landing, _, err := loadSettingsWithLanding(root, request.namespaceScope(), discovered)
 	if err != nil {
 		return discovered, nil, err
 	}
 	discovered, diags := pruneNotEnabledNamespaces(discovered, namespaceGateFromSettings(settings))
-	projectDiags := warnGitGeneratorProjects(discovered, settings, committedLandings(root, request, discovered, settings))
+	projectDiags := warnGitGeneratorProjects(discovered, settings, landing)
 	return discovered, append(diags, request.normalizeDiagnostics(projectDiags, false)...), nil
 }
 

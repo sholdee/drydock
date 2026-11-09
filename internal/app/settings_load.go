@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -29,21 +30,20 @@ import (
 // (commandParametersNamespaces), and drydock warns when they do not agree
 // with the namespace that it uses.
 func loadSettingsFromDiscovery(root string, scope controllerNamespaceScope, discovered discovery.Result) (config.ArgoSettings, []diagnostic.Diagnostic, error) {
+	settings, _, diags, err := loadSettingsWithLanding(root, scope, discovered)
+	return settings, diags, err
+}
+
+// loadSettingsWithLanding is loadSettingsFromDiscovery that also returns
+// the landing namespaces that the --argocd-namespace filter used, or nil
+// without the flag, so the AppProject filter uses the same ones.
+func loadSettingsWithLanding(root string, scope controllerNamespaceScope, discovered discovery.Result) (config.ArgoSettings, landingFunc, []diagnostic.Diagnostic, error) {
 	active := activeSettingsCandidates(discovered.SettingsCandidates)
-	loaded, err := loadSettingsCandidates(root, active)
-	if err != nil {
-		return config.DefaultSettings(), nil, err
+	loaded, loadErrors := loadSettingsCandidates(root, active)
+	walker, landing, scoped, skip, diags := scopeSettingsCandidates(root, scope, discovered, active, loaded, loadErrors)
+	if err := firstLoadError(scoped, loadErrors); err != nil {
+		return config.DefaultSettings(), nil, diags, err
 	}
-	// The settings of every candidate resolve the destinations of the
-	// Applications that render committed files.
-	all, _ := mergeLoadedSettings(loaded, scope, nil)
-	walker := newCommittedFileWalker(scope.walkerProvider(root), discovered.Applications, all, scope.renders)
-	var landing landingFunc
-	if scope.flag != "" {
-		landing = walker.committedLanding
-	}
-	scoped, diags := settingsCandidatesInNamespace(active, scope.flag, landing)
-	skip := withoutKeys(active, scoped)
 	merged, mergeDiags := mergeLoadedSettings(loaded, scope, skip)
 	found := commandParametersNamespaces(walker, active)
 	other := otherInstallSettings(scoped, settingsWithNamedNamespaces(merged, found).ControllerNamespace(""))
@@ -63,12 +63,77 @@ func loadSettingsFromDiscovery(root string, scope controllerNamespaceScope, disc
 	// The repo-server rules read the argocd-cm candidates too, so they see
 	// the same ones.
 	inNamespace := discovered
-	inNamespace.SettingsCandidates, _ = settingsCandidatesInNamespace(discovered.SettingsCandidates, scope.flag, landing)
+	inNamespace.SettingsCandidates, _ = settingsCandidatesInNamespace(discovered.SettingsCandidates, scope.flag, landing, nil)
 	inNamespace.SettingsCandidates = withoutSettingsCandidates(inNamespace.SettingsCandidates, other)
 	namespace, namespaceDiags := repoServerHelmNamespace(root, inNamespace, merged)
 	merged.RepoServerHelmNamespace = namespace
 	diags = append(diags, namespaceDiags...)
-	return merged, diags, nil
+	return merged, landing, diags, nil
+}
+
+// scopeSettingsCandidates applies the --argocd-namespace filter to active
+// and returns the walker that decides where committed objects land, the
+// landing function of the filter (nil without the flag), the candidates
+// that stay, the load keys of the ones that do not, and the skip warnings.
+//
+// The walker resolves destinations and source types with settings, which
+// the filter decides. It starts from the candidates that the flag cannot
+// skip: those whose own or rendered namespace is the flag namespace or
+// empty. When the settings of the candidates that stay give other source
+// type gates or clusters, it decides once more with those.
+func scopeSettingsCandidates(root string, scope controllerNamespaceScope, discovered discovery.Result, active []discovery.SettingsCandidate, loaded []loadedSettingsCandidate, loadErrors map[string]error) (*committedFileWalker, landingFunc, []discovery.SettingsCandidate, map[string]struct{}, []diagnostic.Diagnostic) {
+	if scope.flag == "" {
+		all, _ := mergeLoadedSettings(loaded, scope, nil)
+		walker := newCommittedFileWalker(scope.walkerProvider(root), discovered.Applications, all, scope.renders)
+		return walker, nil, active, map[string]struct{}{}, nil
+	}
+	base, _ := mergeLoadedSettings(loaded, scope, outsideFlagNamespace(active, scope.flag))
+	walker := newCommittedFileWalker(scope.walkerProvider(root), discovered.Applications, base, scope.renders)
+	scoped, diags := settingsCandidatesInNamespace(active, scope.flag, walker.committedLandings, loadErrors)
+	skip := withoutKeys(active, scoped)
+	if kept, _ := mergeLoadedSettings(loaded, scope, skip); walkerSettingsKey(kept) != walkerSettingsKey(base) {
+		walker = newCommittedFileWalker(scope.walkerProvider(root), discovered.Applications, kept, scope.renders)
+		scoped, diags = settingsCandidatesInNamespace(active, scope.flag, walker.committedLandings, loadErrors)
+		skip = withoutKeys(active, scoped)
+	}
+	return walker, walker.committedLandings, scoped, skip, diags
+}
+
+// outsideFlagNamespace returns the load keys of the candidates whose own or
+// rendered namespace is set and is not namespace.
+func outsideFlagNamespace(candidates []discovery.SettingsCandidate, namespace string) map[string]struct{} {
+	skip := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if own := candidateNamespace(candidate); controllerNamespaceScoped(candidate.Kind) && own != "" && own != namespace {
+			skip[settingsCandidateLoadKey(candidate)] = struct{}{}
+		}
+	}
+	return skip
+}
+
+// walkerSettingsKey is what a committedFileWalker reads from settings: the
+// source type gates and the clusters that resolve destinations.
+func walkerSettingsKey(settings config.ArgoSettings) string {
+	data, err := json.Marshal(struct {
+		Clusters  map[string]config.ClusterSettings `json:"clusters"`
+		InCluster config.Value[bool]                `json:"inCluster"`
+	}{settings.Clusters, settings.InClusterEnabled})
+	if err != nil {
+		// These settings always marshal. An error gives the source type
+		// gates alone.
+		return fmt.Sprintf("%+v", sourceTypeGatesFromSettings(settings))
+	}
+	return fmt.Sprintf("%+v\x00%s", sourceTypeGatesFromSettings(settings), data)
+}
+
+// firstLoadError returns the load error of the first candidate that stays.
+func firstLoadError(candidates []discovery.SettingsCandidate, loadErrors map[string]error) error {
+	for _, candidate := range candidates {
+		if err := loadErrors[settingsCandidateLoadKey(candidate)]; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // loadedSettingsCandidate is a settings candidate with the settings that it
@@ -79,19 +144,24 @@ type loadedSettingsCandidate struct {
 	diags    []diagnostic.Diagnostic
 }
 
-func loadSettingsCandidates(root string, candidates []discovery.SettingsCandidate) ([]loadedSettingsCandidate, error) {
+// loadSettingsCandidates loads every candidate. A candidate that does not
+// load is in loadErrors: it fails the settings only when the
+// --argocd-namespace filter keeps it.
+func loadSettingsCandidates(root string, candidates []discovery.SettingsCandidate) ([]loadedSettingsCandidate, map[string]error) {
 	var loaded []loadedSettingsCandidate
+	loadErrors := map[string]error{}
 	for _, candidate := range candidates {
 		settings, diags, handled, err := loadSettingsCandidate(root, candidate)
 		if !handled {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			loadErrors[settingsCandidateLoadKey(candidate)] = err
+			continue
 		}
 		loaded = append(loaded, loadedSettingsCandidate{key: settingsCandidateLoadKey(candidate), settings: settings, diags: diags})
 	}
-	return loaded, nil
+	return loaded, loadErrors
 }
 
 func settingsCandidateLoadKey(candidate discovery.SettingsCandidate) string {

@@ -78,9 +78,11 @@ func (r settingsReach) addCommitted(out *namedNamespaces, candidate discovery.Se
 	verdict := r.walker.commandParametersReach(candidate)
 	switch {
 	case verdict.counts:
-		addNamespacePath(out.named, r.walker.committedLanding(candidate.Path, candidateNamespace(candidate)), candidate)
+		for _, landing := range r.walker.committedLandings(candidate.Path, candidateNamespace(candidate)) {
+			addNamespacePath(out.named, landing, candidate)
+		}
 	case len(verdict.renderers) > 0:
-		addNamespacePath(out.others, firstNonEmpty(r.walker.committedLanding(candidate.Path, candidateNamespace(candidate)), verdict.landing), candidate)
+		addNamespacePath(out.others, verdict.landing, candidate)
 		r.otherFiles[filepath.ToSlash(candidate.Path)] = true
 		for _, key := range verdict.renderers {
 			r.otherOrigins[key] = true
@@ -330,24 +332,22 @@ func (w *committedFileWalker) localRenderers(file string) []committedRenderer {
 	return renderers
 }
 
-// committedLanding returns the namespace where a committed object with
-// namespace own lands: when Applications on this cluster render its file
-// and all put it in one namespace, the outermost kustomization namespace,
-// else own, that namespace. When nothing renders the file, or the
-// Applications disagree, it is own.
-func (w *committedFileWalker) committedLanding(file, own string) string {
-	landing := ""
-	for _, renderer := range w.localRenderers(filepath.ToSlash(file)) {
-		namespace := firstNonEmpty(renderer.render.kustomizeNamespace, own)
-		if namespace == "" {
-			continue
-		}
-		if landing != "" && landing != namespace {
-			return own
-		}
-		landing = namespace
+// committedLandings returns the sorted namespaces where a committed
+// object with namespace own lands. Each Application on this cluster that
+// renders its file puts it in the outermost kustomization namespace on the
+// way, else in own, else in its destination namespace. When nothing
+// renders the file, the object is in own. An object without a namespace
+// that nothing renders gives none.
+func (w *committedFileWalker) committedLandings(file, own string) []string {
+	var landings []string
+	renderers := w.localRenderers(filepath.ToSlash(file))
+	for _, renderer := range renderers {
+		landings = appendSortedUnique(landings, firstNonEmpty(renderer.render.kustomizeNamespace, own, renderer.application.Application.Spec.Destination.Namespace))
 	}
-	return firstNonEmpty(landing, own)
+	if len(renderers) == 0 {
+		landings = appendSortedUnique(landings, own)
+	}
+	return landings
 }
 
 // rendersAll asks, in parallel, whether each Application renders file.

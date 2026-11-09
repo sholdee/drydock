@@ -122,30 +122,41 @@ func controllerNamespaceScoped(kind string) bool {
 	return discovery.IsSettingsConfigMapKind(kind) || kind == "repository-secret" || kind == "cluster-secret"
 }
 
-// landingFunc returns the namespace where a committed object at path with
-// namespace own lands (committedFileWalker.committedLanding). A nil one
+// landingFunc returns the namespaces where a committed object at path with
+// namespace own lands (committedFileWalker.committedLandings). A nil one
 // returns own.
-type landingFunc func(path, own string) string
+type landingFunc func(path, own string) []string
 
-// of returns the namespace of an object: as rendered for a rendered one,
-// and where it lands for a committed one.
-func (landing landingFunc) of(tier discovery.SourceTier, path, own string) string {
+// of returns the namespaces of an object: the one that the render gives a
+// rendered object, and where a committed one lands. It is empty for an
+// object that has no namespace after it lands.
+func (landing landingFunc) of(tier discovery.SourceTier, path, own string) []string {
 	if landing == nil || tier != discovery.SourceTierStatic {
-		return own
+		if own == "" {
+			return nil
+		}
+		return []string{own}
 	}
 	return landing(path, own)
 }
 
+// inNamespace reports whether an object in namespaces is in namespace. An
+// object that has no namespace after it lands is in every namespace.
+func inNamespace(namespaces []string, namespace string) bool {
+	return len(namespaces) == 0 || slices.Contains(namespaces, namespace)
+}
+
 // settingsCandidatesInNamespace drops the settings candidates that Argo CD
-// never reads because they are in another namespace than namespace, the
-// one that --argocd-namespace names. Argo CD reads its settings ConfigMaps
-// and its repository and cluster Secrets only in the namespace that it
-// runs in (util/settings, util/db at v3.6.1). Without the flag, namespace
-// is empty and every candidate stays. A rendered candidate is in its
-// namespace as rendered, and a committed one where it lands (landing). A
-// candidate without a namespace always stays: a kustomization or the
-// destination can put it in any namespace.
-func settingsCandidatesInNamespace(candidates []discovery.SettingsCandidate, namespace string, landing landingFunc) ([]discovery.SettingsCandidate, []diagnostic.Diagnostic) {
+// never reads because no Application puts them in namespace, the one that
+// --argocd-namespace names. Argo CD reads its settings ConfigMaps and its
+// repository and cluster Secrets only in the namespace that it runs in
+// (util/settings, util/db at v3.6.1). Without the flag, namespace is empty
+// and every candidate stays. A rendered candidate is in its namespace as
+// rendered, and a committed one in each namespace where an Application on
+// this cluster puts it (landing). drydock never skips an object that has
+// no namespace after it lands. loadErrors holds why a candidate does not
+// load; the warning for a skipped one names it.
+func settingsCandidatesInNamespace(candidates []discovery.SettingsCandidate, namespace string, landing landingFunc, loadErrors map[string]error) ([]discovery.SettingsCandidate, []diagnostic.Diagnostic) {
 	if namespace == "" {
 		return candidates, nil
 	}
@@ -156,12 +167,16 @@ func settingsCandidatesInNamespace(candidates []discovery.SettingsCandidate, nam
 			kept = append(kept, candidate)
 			continue
 		}
-		carried := landing.of(candidate.Tier, candidate.Path, candidateNamespace(candidate))
-		if carried == "" || carried == namespace {
+		namespaces := landing.of(candidate.Tier, candidate.Path, candidateNamespace(candidate))
+		if inNamespace(namespaces, namespace) {
 			kept = append(kept, candidate)
 			continue
 		}
-		diags = append(diags, outsideControllerNamespaceDiagnostic(settingsCandidateDisplayKind(candidate.Kind), carried, candidateName(candidate), namespace, "reads its settings", candidate.Path))
+		diag := outsideControllerNamespaceDiagnostic(settingsCandidateDisplayKind(candidate.Kind), strings.Join(namespaces, ","), candidateName(candidate), namespace, "reads its settings", candidate.Path)
+		if err := loadErrors[settingsCandidateLoadKey(candidate)]; err != nil {
+			diag.Message += fmt.Sprintf("; drydock does not read it, so it does not fail on it: %v", err)
+		}
+		diags = append(diags, diag)
 	}
 	return kept, diags
 }
@@ -204,15 +219,15 @@ func settingsCandidateDisplayKind(kind string) string {
 // an AppProject. They look an AppProject up only in their own namespace
 // (util/argo GetAppProject, projLister.AppProjects(ns) at v3.6.1). drydock
 // applies that only when --argocd-namespace names the namespace. A
-// committed AppProject is in the namespace where it lands (landing). An
-// AppProject without a namespace stays.
+// committed AppProject is in each namespace where it lands (landing). An
+// AppProject that has no namespace after it lands stays.
 func projectInControllerNamespace(projectFile discovery.ProjectFile, settings config.ArgoSettings, landing landingFunc) (string, bool) {
 	namespace := strings.TrimSpace(settings.ArgoCDNamespace)
 	if namespace == "" {
 		return projectFile.Project.Namespace, true
 	}
-	carried := landing.of(projectFile.Tier, projectFile.Path, projectFile.Project.Namespace)
-	return carried, carried == "" || carried == namespace
+	namespaces := landing.of(projectFile.Tier, projectFile.Path, projectFile.Project.Namespace)
+	return strings.Join(namespaces, ","), inNamespace(namespaces, namespace)
 }
 
 // projectNamespaceDiagnostics warns once for each discovered AppProject
@@ -249,14 +264,4 @@ func appendDiscoveredProjects(projects []argoappv1.AppProject, discovered discov
 func addDiscoveredProjects(result *BuildResult, discovered discovery.Result, landing landingFunc) {
 	result.projectsDeclared = result.projectsDeclared || len(discovered.Projects) > 0
 	result.Projects = appendDiscoveredProjects(result.Projects, discovered, result.Settings, landing)
-}
-
-// committedLandings returns where the committed objects of discovered
-// land (committedFileWalker.committedLanding), when --argocd-namespace
-// filters them by namespace, and nil otherwise.
-func committedLandings(root string, request BuildRequest, discovered discovery.Result, settings config.ArgoSettings) landingFunc {
-	if strings.TrimSpace(settings.ArgoCDNamespace) == "" {
-		return nil
-	}
-	return newCommittedFileWalker(settingsInstallProbe(root, request, ""), discovered.Applications, settings, request.committedRenderMemo).committedLanding
 }

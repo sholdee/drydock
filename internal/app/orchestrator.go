@@ -172,6 +172,10 @@ type BuildResult struct {
 	// Projects holds none of them because --argocd-namespace skips them
 	// (addDiscoveredProjects).
 	projectsDeclared bool
+	// landing is where the committed objects land for the
+	// --argocd-namespace filter of the settings, or nil without the flag
+	// (loadSettingsWithLanding). The AppProject filter uses it too.
+	landing landingFunc
 }
 
 type DiagRequest = BuildRequest
@@ -369,7 +373,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 		return result, err
 	}
 
-	addDiscoveredProjects(&result, discovered, committedLandings(root, request, discovered, result.Settings))
+	addDiscoveredProjects(&result, discovered, result.landing)
 	if err := appendDiscoveredApplications(discovered, &result); err != nil {
 		return result, err
 	}
@@ -849,7 +853,7 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 			result.Statuses = skippedApplicationStatuses(result.Applications, err)
 			return result, err
 		}
-		addDiscoveredProjects(&result, discovered, committedLandings(root, request, discovered, result.Settings))
+		addDiscoveredProjects(&result, discovered, result.landing)
 		if err := diagnosticFailure(request.filterProjectDiagnostics(diags), request.Strict); err != nil {
 			result.Statuses = skippedApplicationStatuses(result.Applications, err)
 			return result, err
@@ -867,7 +871,7 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
 	}
-	addDiscoveredProjects(&result, discovered, committedLandings(root, request, discovered, result.Settings))
+	addDiscoveredProjects(&result, discovered, result.landing)
 	if err := diagnosticFailure(request.filterProjectDiagnostics(diags), request.Strict); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
