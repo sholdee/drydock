@@ -179,6 +179,26 @@ func TestDefaultAcquirerDropsCredentialsOnRedirects(t *testing.T) {
 			},
 			want: []string{start + auth, "https://other.example.test/bounce auth=", "https://files.example.test/final.yaml auth="},
 		},
+		{
+			// net/http keeps the header on each hop of this chain, because
+			// the host name never changes.
+			name: "back to the first host from another port",
+			responses: map[string]string{
+				start:                                    "->https://files.example.test:8443/bounce",
+				"https://files.example.test:8443/bounce": "->https://files.example.test/final.yaml",
+				"https://files.example.test/final.yaml":  "",
+			},
+			want: []string{start + auth, "https://files.example.test:8443/bounce auth=", "https://files.example.test/final.yaml auth="},
+		},
+		{
+			name: "back to https after a downgrade",
+			responses: map[string]string{
+				start:                                   "->http://files.example.test/bounce",
+				"http://files.example.test/bounce":      "->https://files.example.test/final.yaml",
+				"https://files.example.test/final.yaml": "",
+			},
+			want: []string{start + auth, "http://files.example.test/bounce auth=", "https://files.example.test/final.yaml auth="},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := &authRecorder{responses: tc.responses}

@@ -614,6 +614,34 @@ func TestDefaultAcquirerRefreshPrunesDeletedBranches(t *testing.T) {
 // request never reads a Git repository from the local file system: a file
 // URL, in any case, and a file: form without a host. drydock refuses them
 // before it opens the cache, so no cache entry exists afterwards.
+// TestRejectLocalGitTransport checks the second rule of
+// rejectLocalGitTransport: a URL without the file scheme that go-git reads
+// as a local path, such as an absolute or a relative path. NormalizeGitRepoURL
+// refuses these forms before Acquire reaches the rule, so the test calls it
+// directly. URLs of the remote transports pass.
+func TestRejectLocalGitTransport(t *testing.T) {
+	fixture := filepath.ToSlash(createRemoteGitFixture(t).path)
+	for _, repoURL := range []string{"/abs/repo.git", "../x", "./x", "x", fixture} {
+		if err := rejectLocalGitTransport(repoURL, false); err == nil || !strings.Contains(err.Error(), "uses the local file transport") {
+			t.Fatalf("rejectLocalGitTransport(%q) error = %v, want local file transport refusal", repoURL, err)
+		}
+		if err := rejectLocalGitTransport(repoURL, true); err != nil {
+			t.Fatalf("rejectLocalGitTransport(%q, allowFile) error = %v", repoURL, err)
+		}
+	}
+	for _, repoURL := range []string{
+		"https://github.com/org/repo.git",
+		"http://git.example.test/org/repo.git",
+		"ssh://git@github.com/org/repo.git",
+		"git@github.com:org/repo.git",
+		"git.example.test:org/repo.git",
+	} {
+		if err := rejectLocalGitTransport(repoURL, false); err != nil {
+			t.Fatalf("rejectLocalGitTransport(%q) error = %v, want nil", repoURL, err)
+		}
+	}
+}
+
 func TestDefaultAcquirerRefusesLocalGitTransport(t *testing.T) {
 	remote := createRemoteGitFixture(t)
 	commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")
@@ -624,6 +652,13 @@ func TestDefaultAcquirerRefusesLocalGitTransport(t *testing.T) {
 		"file://localhost" + local,
 		"file:" + local,
 		"file::" + local,
+		// NormalizeGitRepoURL refuses a bare path first, with another
+		// message. TestRejectLocalGitTransport covers the transport rule
+		// for these forms.
+		local,
+		"/abs/repo.git",
+		"../x",
+		"./x",
 	} {
 		t.Run(repoURL, func(t *testing.T) {
 			cacheDir := t.TempDir()
@@ -632,8 +667,8 @@ func TestDefaultAcquirerRefusesLocalGitTransport(t *testing.T) {
 				RepoURL:  repoURL,
 				Revision: "HEAD",
 			}, Options{CacheDir: cacheDir})
-			if err == nil || !strings.Contains(err.Error(), "uses the local file transport") {
-				t.Fatalf("Acquire() error = %v, want local file transport refusal", err)
+			if err == nil || (!strings.Contains(err.Error(), "uses the local file transport") && !strings.Contains(err.Error(), "must use file, http, https, or ssh")) {
+				t.Fatalf("Acquire() error = %v, want a refusal of the local path", err)
 			}
 			entries, readErr := os.ReadDir(cacheDir)
 			if readErr != nil {
