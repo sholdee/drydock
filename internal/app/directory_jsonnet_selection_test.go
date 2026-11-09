@@ -35,8 +35,9 @@ func TestWithSelectionOnlyPathsJsonnetCodeEnvPerApplication(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "app", "main.jsonnet"), "std.extVar('cfg')\n")
 	writeTestFile(t, filepath.Join(root, "shared", "alpha.libsonnet"), "{}\n")
 	writeTestFile(t, filepath.Join(root, "shared", "beta.libsonnet"), "{}\n")
-	inputs := []ApplicationSelectionInput{}
-	for _, name := range []string{"alpha", "beta"} {
+	names := []string{"alpha", "beta"}
+	inputs := make([]ApplicationSelectionInput, 0, len(names))
+	for _, name := range names {
 		inputs = append(inputs, ApplicationSelectionInput{Application: argoappv1.Application{
 			Name:      name,
 			Namespace: "argocd",
