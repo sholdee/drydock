@@ -760,30 +760,37 @@ func annotateCompareOptions(t *testing.T, root, name, options string) {
 // "true", that holds for an Application without any diff option, so a new
 // ConfigMap shows the field that its Application's rule hides from a
 // changed one. With ServerSideDiff=false, or without the switch, the
-// client-side diff removes it.
+// client-side diff removes it. Argo CD compares a live object that the new
+// desired state no longer has under the current settings, so when the switch
+// changes between the two sides, the deleted resource follows the current
+// (right) side's value too.
 func TestOrchestratorDiffAppsControllerServerSideDiffCreatedAndDeletedResources(t *testing.T) {
 	rule := "  ignoreDifferences:\n    - kind: ConfigMap\n      jsonPointers:\n        - /data/ignored\n"
 	for _, tt := range []struct {
 		name        string
-		switchValue string
+		left, right string
 		optOut      bool
 		wantShown   bool
 	}{
 		{name: "client-side diff"},
-		{name: "controller switch", switchValue: "true", wantShown: true},
-		{name: "controller switch with ServerSideDiff=false", switchValue: "true", optOut: true},
+		{name: "controller switch", left: "true", right: "true", wantShown: true},
+		{name: "controller switch with ServerSideDiff=false", left: "true", right: "true", optOut: true},
+		{name: "switch turned off by the change", left: "true", right: "false"},
+		{name: "switch turned on by the change", left: "false", right: "true", wantShown: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
 			left := filepath.Join(root, "left")
 			right := filepath.Join(root, "right")
-			for _, side := range []string{left, right} {
-				writeConfigMapApp(t, side, "demo", "same", rule)
+			for _, side := range []struct {
+				root, switchValue string
+			}{{left, tt.left}, {right, tt.right}} {
+				writeConfigMapApp(t, side.root, "demo", "same", rule)
 				if tt.optOut {
-					annotateCompareOptions(t, side, "demo", "ServerSideDiff=false")
+					annotateCompareOptions(t, side.root, "demo", "ServerSideDiff=false")
 				}
-				if tt.switchValue != "" {
-					writeCommandParameters(t, side, "  controller.diff.server.side: \""+tt.switchValue+"\"\n")
+				if side.switchValue != "" {
+					writeCommandParameters(t, side.root, "  controller.diff.server.side: \""+side.switchValue+"\"\n")
 				}
 			}
 			writeTestFile(t, filepath.Join(left, "manifests", "demo", "deleted.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: deleted\ndata:\n  ignored: deleted-value\n  kept: same\n")
