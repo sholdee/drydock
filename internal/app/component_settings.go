@@ -142,7 +142,7 @@ func applyComponentWorkloadSettings(root string, collected workloadCandidates, s
 // of the program does, with the notes about its command lines. drydock
 // then keeps the argocd-cmd-params-cm values.
 func withoutProgramDiagnostics(component config.ArgoCDComponent, items []repoServerCandidate) []diagnostic.Diagnostic {
-	var diags []diagnostic.Diagnostic
+	diags := make([]diagnostic.Diagnostic, 0, len(items))
 	for _, item := range items {
 		message := fmt.Sprintf("the Argo CD %s %s has no container whose command line runs %s, for example because a shell starts it; drydock does not read its env or flags and keeps the argocd-cmd-params-cm values", component, repoServerDisplayName(item), component)
 		var notes []string

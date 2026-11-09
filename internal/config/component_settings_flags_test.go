@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -66,14 +67,10 @@ func TestComponentFlagTablesMatchArgoCD(t *testing.T) {
 		t.Run(string(component), func(t *testing.T) {
 			want := map[string]bool{}
 			for _, source := range sources {
-				for name, isBool := range registeredFlags(t, filepath.Join(dir, filepath.FromSlash(source.file)), source.funcs) {
-					want[name] = isBool
-				}
+				maps.Copy(want, registeredFlags(t, filepath.Join(dir, filepath.FromSlash(source.file)), source.funcs))
 			}
 			if component != RepoServerComponent {
-				for name, isBool := range kubectlOverrideFlags() {
-					want[name] = isBool
-				}
+				maps.Copy(want, kubectlOverrideFlags())
 			}
 			got := drydockComponentFlags(component)
 			if diff := flagTableDiff(want, got); diff != "" {
