@@ -153,7 +153,7 @@ before the frontier. If an install fails to render, drydock reports a
 sources of their own unless another rendered install read them.
 
 A `--discover-kustomize` path names the Argo CD install of this cluster.
-Its rendered settings ConfigMaps in the `argocd` namespace replace the
+Its rendered settings ConfigMaps replace the
 values files and settings ConfigMap files that its render reads, also when
 no Application installs Argo CD.
 

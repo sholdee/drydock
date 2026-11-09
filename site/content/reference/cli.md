@@ -91,8 +91,7 @@ install on their own. `--strict` fails on this warning.
 
 A `--discover-kustomize` path also counts as the Argo CD install of this
 cluster. If its render holds `argocd-cm`, `argocd-cmd-params-cm`, or
-`argocd-cmp-cm` in the `argocd` namespace, drydock reads the Argo CD settings
-from them. The Helm values files and settings ConfigMap files that the render
+`argocd-cmp-cm`, drydock reads the Argo CD settings from them. The Helm values files and settings ConfigMap files that the render
 reads are then not settings sources of their own, also when no Application
 installs Argo CD.
 
@@ -115,6 +114,56 @@ directory, unlike `--discover-kustomize`, which is relative to `--path`. The
 file must hold only Argo CD `Application` or `ApplicationSet` documents, must
 not contain `..` path components, and must not be a symlink. It is not read from
 either ref snapshot and is never a changed path of the diff.
+
+### Argo CD namespace
+
+Argo CD builds the instance name of an Application from the namespace where
+Argo CD runs. The instance name is the bare name for an Application in that
+namespace, and `<namespace>_<name>` for any other Application. It sets
+`ARGOCD_APP_NAME`, the `.argocd-source-<app>.yaml` file name, and resource
+tracking. Argo CD learns the namespace from its own pod, so drydock cannot
+always read it from the repository. Pass it with `--argocd-namespace`:
+
+```bash
+drydock diff apps --repo . --ref-orig origin/main --ref HEAD \
+  --argocd-namespace gitops
+```
+
+Every command with path discovery accepts the flag: `build`, `get`, `test`,
+`diff`, and `diag`. A diff uses the value on both sides. Without the flag,
+drydock uses the namespace that every `argocd-cmd-params-cm` on this cluster
+names in its `metadata.namespace`. If the ConfigMaps name no namespace,
+drydock uses `argocd`. If they name several namespaces, drydock uses `argocd`
+and warns with `settings.controller-namespace-ambiguous` when `argocd` is
+one of them, or with `settings.controller-namespace-unconfirmed` when it is
+not. The unconfirmed warning also appears when the flag names a namespace
+that no `argocd-cmd-params-cm` names. `--strict` fails on the unconfirmed
+warning only.
+
+With the flag, drydock also skips `argocd-cm`, `argocd-cmd-params-cm`,
+`argocd-cmp-cm`, repository and cluster Secrets, and AppProjects that are in
+another namespace, because Argo CD reads them only in its own namespace. Each
+skipped object gets a `discovery.outside-controller-namespace` warning.
+A committed object is in each namespace where an Application puts it: the
+kustomization namespace, else its own namespace, else the destination
+namespace. drydock keeps it when one of these is the flag namespace, and
+never skips an object that has no namespace after it lands. A file that
+does not parse in a skipped namespace gives only the skip warning. Without the flag, drydock
+skips none of these objects, with one exception from earlier releases. The
+settings ConfigMaps that an Argo CD install on this cluster renders count
+only in the controller namespace. A ConfigMap of the install without a
+namespace lands in the destination namespace of the install. An
+`argocd-cmd-params-cm` whose Argo CD would not reconcile any Application
+that puts it on this cluster belongs to another Argo CD, such as a tenant
+one. This holds for a Helm install, a plain Kustomize or directory source,
+and a committed file. Such a ConfigMap names no namespace, and the
+`argocd-cm`, `argocd-cmd-params-cm`, and `argocd-cmp-cm` ConfigMaps of that
+install do not count. Its repository and cluster Secrets still count without
+the flag.
+
+If a rendered install names the namespace only after other Applications
+rendered, drydock runs discovery once more with that namespace. See
+[compatibility](/compatibility/) for the full rule.
 
 For repositories that also commit non-deployable YAML, such as unrendered
 chart templates that fail strict decoding, exclude those files from discovery

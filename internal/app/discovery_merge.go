@@ -137,7 +137,47 @@ func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]dis
 		func(item discovery.SettingsCandidate) (discovery.SourceTier, string, int) {
 			return item.Tier, item.Path, item.DocumentIndex
 		})
-	return keepSettingsRenderInputs(out, base, overlay), diags
+	return keepSettingsReach(keepSettingsRenderInputs(out, base, overlay), base, overlay), diags
+}
+
+// keepSettingsReach keeps the marks of a merged candidate independent of
+// which copy the merge keeps. It is RemoteOnly only when every copy with
+// its identity is: an object that an Application on this cluster renders
+// too counts. It is OtherInstall when a render produced it and every
+// rendered copy is another install's. A committed copy does not change
+// that, because only a render knows its install. Its InstallNamespace is
+// the first one that a copy sets.
+func keepSettingsReach(out, base, overlay []discovery.SettingsCandidate) []discovery.SettingsCandidate {
+	type marks struct {
+		local, rendered, own bool
+		installNamespace     string
+	}
+	byKey := map[string]marks{}
+	marked := false
+	for _, item := range append(append([]discovery.SettingsCandidate(nil), base...), overlay...) {
+		key := settingsDiscoveryKey(item)
+		entry := byKey[key]
+		entry.local = entry.local || !item.RemoteOnly
+		if item.Tier != discovery.SourceTierStatic {
+			entry.rendered = true
+			entry.own = entry.own || !item.OtherInstall
+		}
+		if entry.installNamespace == "" {
+			entry.installNamespace = item.InstallNamespace
+		}
+		byKey[key] = entry
+		marked = marked || item.RemoteOnly || item.OtherInstall || item.InstallNamespace != ""
+	}
+	if !marked {
+		return out
+	}
+	for i := range out {
+		entry := byKey[settingsDiscoveryKey(out[i])]
+		out[i].RemoteOnly = !entry.local
+		out[i].OtherInstall = entry.rendered && !entry.own
+		out[i].InstallNamespace = entry.installNamespace
+	}
+	return out
 }
 
 // keepSettingsRenderInputs gives each merged candidate the union of the

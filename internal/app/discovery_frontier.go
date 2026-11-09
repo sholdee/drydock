@@ -25,7 +25,10 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 	defer cleanup()
 
 	inputs := applicationInputsByKey(discovered)
-	renderSettings := discoveryRenderSettings{signature: settingsSig, tracking: trackingOptionsFromSettings(settings), settings: settings}
+	renderSettings := discoveryRenderSettings{signature: settingsSig, tracking: trackingOptionsFromSettings(settings), settings: settings, applications: discovered.Applications}
+	if len(discovered.Applications) > 0 {
+		request.renderNamespaces.record(renderSettings.tracking.ControllerNamespace)
+	}
 	parallelism, err := normalizeParallelism(request.Parallelism)
 	if err != nil {
 		return discovery.Result{}, nil, recorder.Events(), err
@@ -59,6 +62,9 @@ type discoveryRenderSettings struct {
 	// settings resolves Application destinations
 	// (settingsInstallInCluster).
 	settings config.ArgoSettings
+	// applications are the discovered Applications, which tell where an
+	// Application without a namespace lives (applicationNamespaces).
+	applications []discovery.ApplicationFile
 }
 
 type indexedDiscoveryRenderResult struct {
@@ -222,22 +228,49 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 	}
 	destinationNamespace := application.Spec.Destination.Namespace
 	result = placeRepoServerCandidates(result, destinationNamespace, inCluster)
+	if !inCluster {
+		// The settings that an Application on another cluster renders stay
+		// settings sources, but they never name the controller namespace
+		// of this cluster (commandParametersNamespaces).
+		markRemoteSettingsCandidates(&result)
+	}
 	if !hasSettingsConfigMapCandidate(result) || !inCluster {
 		return result, diags, nil
 	}
+	markOtherInstallRender(request, provider, renderSettings, appFile, &result)
 	install := applicationSettingsInstall(ctx, request, provider, application)
 	if !settingsOnly && !install.installsArgoCD() {
 		// Not an Argo CD install: its settings ConfigMaps stay candidates
 		// as for any rendered object.
 		return result, diags, nil
 	}
-	// Only the settings ConfigMaps in the Argo CD namespace are settings of
-	// this Argo CD, also when the frontier renders the install for discovery.
-	result = settingsConfigMapsInNamespace(result, destinationNamespace, argoNamespace)
+	// Every settings ConfigMap of the install stays, in every namespace, so
+	// that the controller namespace decision sees each namespace that an
+	// install names (commandParametersNamespaces). The settings load then
+	// counts only the ones in the controller namespace
+	// (otherInstallSettings). A repo-server outside the controller
+	// namespace runs another Argo CD.
+	result = repoServersInNamespace(result, destinationNamespace, argoNamespace)
+	markArgoCDInstallSettings(&result, application)
 	if install.installsArgoCD() {
-		markSettingsRenderInputs(&result, install, destinationNamespace, argoNamespace)
+		markSettingsRenderInputs(&result, install)
 	}
 	return result, diags, nil
+}
+
+// markOtherInstallRender marks the settings ConfigMaps of result as those of
+// another Argo CD install when result holds an argocd-cmd-params-cm whose
+// Argo CD would not reconcile the Application of appFile, which renders it
+// on this cluster (installReconciles). Any render that holds that ConfigMap
+// configures an Argo CD, not only a Helm install.
+func markOtherInstallRender(request BuildRequest, provider localProvider, renderSettings discoveryRenderSettings, appFile discovery.ApplicationFile, result *discovery.Result) {
+	if !hasCommandParametersCandidate(*result) {
+		return
+	}
+	walker := newCommittedFileWalker(settingsInstallProbe(provider.repoRoot, request, ""), renderSettings.applications, renderSettings.settings, request.committedRenderMemo)
+	if !installReconciles(*result, walker.applicationNamespaces(appFile), appFile.Application.Spec.Destination.Namespace) {
+		markOtherInstallSettings(result)
+	}
 }
 
 func skippedRenderedDiscovery() (discovery.Result, []diagnostic.Diagnostic, error) {

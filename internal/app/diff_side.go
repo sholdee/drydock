@@ -313,7 +313,7 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	var projectNames map[string]struct{}
 	if request.ProjectDiagnosticsMode.Normalize() != diagnostic.ProjectDiagnosticsModeOff {
 		var all bool
-		projectNames, all = changedProjectNames(leftList.Projects, rightList.Projects)
+		projectNames, all = changedProjectNames(leftList.Projects, rightList.Projects, leftList.projectsDeclared, rightList.projectsDeclared)
 		if all {
 			return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{changedOnlyProjectsDiagnostic()}, nil
 		}
@@ -322,8 +322,8 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	// Each side owns the selection-only inputs of its own tree, so a base
 	// file added or deleted by the change is owned by the side that has it.
 	// Each side's self-repo facts decide which $ref roots are local.
-	leftSide := withSelectionOnlyPaths(ctx, leftBuildRequest.Path, leftBuildRequest.RepoMaps, leftBuildRequest.selfRepo, sourceTypeGatesFromSettings(leftList.Settings), leftList.ApplicationInputs)
-	rightSide := withSelectionOnlyPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, sourceTypeGatesFromSettings(rightList.Settings), rightList.ApplicationInputs)
+	leftSide := withSelectionOnlyPathsIn(ctx, leftBuildRequest.Path, leftBuildRequest.RepoMaps, leftBuildRequest.selfRepo, sourceTypeGatesFromSettings(leftList.Settings), leftList.Settings.ControllerNamespace(""), leftList.ApplicationInputs)
+	rightSide := withSelectionOnlyPathsIn(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, sourceTypeGatesFromSettings(rightList.Settings), rightList.Settings.ControllerNamespace(""), rightList.ApplicationInputs)
 	leftSelected, rightSelected, unowned := selectChangedDiffSides(leftSide, rightSide, changedPaths, projectNames)
 	var scanDiags []diagnostic.Diagnostic
 	var unscanned []string
@@ -361,9 +361,11 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 // or spec, indexed as validation indexes them (project.ByName). all reports
 // that exactly one side declares no AppProject: there every Application
 // validates against the implicit default project and repository metadata
-// goes unchecked (project.ValidateApplications), so every one is affected.
-func changedProjectNames(left, right []argoappv1.AppProject) (names map[string]struct{}, all bool) {
-	if (len(left) == 0) != (len(right) == 0) {
+// goes unchecked (project.ValidateDeclaredApplications), so every one is
+// affected. A side declares AppProjects also when --argocd-namespace skips
+// all of them (BuildResult.projectsDeclared).
+func changedProjectNames(left, right []argoappv1.AppProject, leftDeclared, rightDeclared bool) (names map[string]struct{}, all bool) {
+	if (leftDeclared || len(left) > 0) != (rightDeclared || len(right) > 0) {
 		return nil, true
 	}
 	leftFingerprints := projectFingerprints(left)

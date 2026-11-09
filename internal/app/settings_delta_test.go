@@ -73,10 +73,15 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	"IgnoreNormalizerJQTimeout": settingsRenderAll,
 	// Which Applications and ApplicationSets Argo CD reconciles at all
 	// (namespaceGate).
-	"CommandParametersFound":     settingsRenderAll,
-	"CommandParametersNamespace": settingsRenderAll,
-	"ApplicationNamespaces":      settingsRenderAll,
-	"ApplicationSetNamespaces":   settingsRenderAll,
+	"CommandParametersFound":      settingsRenderAll,
+	"CommandParametersNamespace":  settingsRenderAll,
+	"CommandParametersNamespaces": settingsRenderAll,
+	// The controller namespace of every instance name and the namespace
+	// gate (config.ArgoSettings.ControllerNamespace).
+	"ArgoCDNamespace":          settingsRenderAll,
+	"ControllerNamespaceHint":  settingsRenderAll,
+	"ApplicationNamespaces":    settingsRenderAll,
+	"ApplicationSetNamespaces": settingsRenderAll,
 	// Project validation of the Applications that use the entry; the OCI
 	// repository set it implies is render-all (renderAllSettingsSignature).
 	"HelmRepositories": settingsScoped,

@@ -27,6 +27,7 @@ type Options struct {
 	DiscoverKustomizePaths         []string
 	DiscoverIgnores                []string
 	DiscoverManifestPaths          []string
+	ArgoCDNamespace                string
 	ChangedOnly                    *bool
 	ChangedOnlyIncludes            []string
 	ChangedOnlyIgnores             []string
@@ -138,6 +139,7 @@ func (options Options) discoveryOptions() app.DiscoveryOptions {
 		DiscoverKustomizePaths: append([]string(nil), options.DiscoverKustomizePaths...),
 		DiscoverIgnoreGlobs:    append([]string(nil), options.DiscoverIgnores...),
 		DiscoverManifestPaths:  append([]string(nil), options.DiscoverManifestPaths...),
+		ArgoCDNamespace:        options.ArgoCDNamespace,
 	}
 }
 

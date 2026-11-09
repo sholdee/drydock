@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/argo-cd/v3/util/security"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
@@ -61,11 +62,16 @@ func (install settingsInstall) installsArgoCD() bool {
 // sourceResolvesToRepoRoot reads, so drydock can find the installs before it
 // builds a full provider. applicationSettingsInstall gives the same result
 // with it as with the full provider of the same root and request.
-func settingsInstallProbe(root string, request BuildRequest) localProvider {
+// controllerNamespace is the Argo CD controller namespace of the settings
+// found so far, which decides the .argocd-source-<app>.yaml file name.
+func settingsInstallProbe(root string, request BuildRequest, controllerNamespace string) localProvider {
+	if controllerNamespace == "" {
+		controllerNamespace = defaultArgoCDControllerNamespace
+	}
 	provider := localProvider{
 		repoRoot:            root,
 		sourceResolver:      sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
-		controllerNamespace: defaultArgoCDControllerNamespace,
+		controllerNamespace: controllerNamespace,
 	}
 	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
 		provider.selfRepoURLKeys = matcher.urlKeys
@@ -78,7 +84,7 @@ func settingsInstallProbe(root string, request BuildRequest) localProvider {
 // reads only local files and never acquires a source. Results are kept in
 // request.settingsInstallMemo for one discovery run.
 func applicationSettingsInstall(ctx context.Context, request BuildRequest, provider localProvider, application argoappv1.Application) settingsInstall {
-	key, keyOK := settingsInstallMemoKey(application)
+	key, keyOK := settingsInstallMemoKey(application, settingsInstallInstanceKey(provider, application, request.settingsInstallMemo))
 	if keyOK && request.settingsInstallMemo != nil {
 		if cached, ok := request.settingsInstallMemo.Load(key); ok {
 			if install, ok := cached.(settingsInstall); ok {
@@ -93,21 +99,80 @@ func applicationSettingsInstall(ctx context.Context, request BuildRequest, provi
 	return install
 }
 
+// settingsInstallInstanceKey is the instance name of application when
+// computeSettingsInstall can read it: the Application names
+// ARGOCD_APP_NAME, any .argocd-source*.yaml file exists in the path of a
+// source (a generic .argocd-source.yaml can use $ARGOCD_APP_NAME too), or
+// a source path is not in this tree. Otherwise it is "", so a new
+// controller namespace does not compute the same install again.
+func settingsInstallInstanceKey(provider localProvider, application argoappv1.Application, memo *sync.Map) string {
+	instance := provider.overrideInstanceName(application)
+	if data, err := json.Marshal(application.Spec); err != nil || strings.Contains(string(data), "ARGOCD_APP_NAME") {
+		return instance
+	}
+	for _, source := range applicationSources(application) {
+		if source.Path == "" {
+			continue
+		}
+		sourcePath, err := cleanLocalSourcePath(source.Path)
+		if err != nil || !provider.sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {
+			return instance
+		}
+		if hasArgocdSourceFile(filepath.Join(provider.repoRoot, sourcePath), memo) {
+			return instance
+		}
+	}
+	return ""
+}
+
+// hasArgocdSourceFile reports whether dir holds a .argocd-source*.yaml
+// file, or whether drydock cannot tell. memo keeps the answer for each
+// directory for one discovery run.
+func hasArgocdSourceFile(dir string, memo *sync.Map) bool {
+	key := "argocd-source-files\x00" + dir
+	if memo != nil {
+		if cached, ok := memo.Load(key); ok {
+			if found, ok := cached.(bool); ok {
+				return found
+			}
+		}
+	}
+	found := false
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		found = !os.IsNotExist(err)
+	}
+	for _, entry := range entries {
+		if name := entry.Name(); strings.HasPrefix(name, ".argocd-source") && strings.HasSuffix(name, ".yaml") {
+			found = true
+			break
+		}
+	}
+	if memo != nil {
+		memo.Store(key, found)
+	}
+	return found
+}
+
 // settingsInstallMemoKey covers every input of computeSettingsInstall that
 // comes from the Application: the name, namespace, and project, which the
 // build environment and the .argocd-source-<app>.yaml file name read, the
 // destination, which the build environment reads, and the sources, with the
-// source hydrator, whose sync source replaces them.
-func settingsInstallMemoKey(application argoappv1.Application) (string, bool) {
+// source hydrator, whose sync source replaces them. instanceName is the
+// instance name in the controller namespace of the provider when the
+// build environment or an override file name reads it
+// (settingsInstallInstanceKey).
+func settingsInstallMemoKey(application argoappv1.Application, instanceName string) (string, bool) {
 	data, err := json.Marshal(struct {
-		Name        string                           `json:"name"`
-		Namespace   string                           `json:"namespace"`
-		Project     string                           `json:"project"`
-		Destination argoappv1.ApplicationDestination `json:"destination"`
-		Source      *argoappv1.ApplicationSource     `json:"source,omitempty"`
-		Sources     argoappv1.ApplicationSources     `json:"sources,omitempty"`
-		Hydrator    *argoappv1.SourceHydrator        `json:"sourceHydrator,omitempty"`
-	}{application.Name, application.Namespace, application.Spec.Project, application.Spec.Destination, application.Spec.Source, application.Spec.Sources, application.Spec.SourceHydrator})
+		Name         string                           `json:"name"`
+		Namespace    string                           `json:"namespace"`
+		InstanceName string                           `json:"instanceName"`
+		Project      string                           `json:"project"`
+		Destination  argoappv1.ApplicationDestination `json:"destination"`
+		Source       *argoappv1.ApplicationSource     `json:"source,omitempty"`
+		Sources      argoappv1.ApplicationSources     `json:"sources,omitempty"`
+		Hydrator     *argoappv1.SourceHydrator        `json:"sourceHydrator,omitempty"`
+	}{application.Name, application.Namespace, instanceName, application.Spec.Project, application.Spec.Destination, application.Spec.Source, application.Spec.Sources, application.Spec.SourceHydrator})
 	if err != nil {
 		return "", false
 	}
@@ -538,17 +603,107 @@ func isSettingsConfigMapObject(obj *unstructured.Unstructured) bool {
 }
 
 // markSettingsRenderInputs records the files that the render of install
-// read on every settings ConfigMap in result that lands in namespace, the
-// Argo CD namespace. A rendered object without a namespace lands in the
-// destination namespace of the Application.
-func markSettingsRenderInputs(result *discovery.Result, install settingsInstall, destinationNamespace, namespace string) {
+// read on every settings ConfigMap in result.
+func markSettingsRenderInputs(result *discovery.Result, install settingsInstall) {
 	for i := range result.SettingsCandidates {
 		candidate := &result.SettingsCandidates[i]
-		if !discovery.IsSettingsConfigMapKind(candidate.Kind) || settingsCandidateNamespace(*candidate, destinationNamespace) != namespace {
+		if !discovery.IsSettingsConfigMapKind(candidate.Kind) {
 			continue
 		}
 		candidate.RenderValuesFiles = append([]string(nil), install.valuesFilesRead...)
 		candidate.RenderFiles = append([]string(nil), install.files...)
+	}
+}
+
+// markArgoCDInstallSettings records, on the settings ConfigMaps of result,
+// which application installs on this cluster, the namespace where each
+// lands: its own, or else the destination namespace of the install.
+func markArgoCDInstallSettings(result *discovery.Result, application argoappv1.Application) {
+	destinationNamespace := application.Spec.Destination.Namespace
+	for i := range result.SettingsCandidates {
+		candidate := &result.SettingsCandidates[i]
+		if discovery.IsSettingsConfigMapKind(candidate.Kind) {
+			candidate.InstallNamespace = settingsCandidateNamespace(*candidate, destinationNamespace)
+		}
+	}
+}
+
+// markOtherInstallSettings marks the settings ConfigMaps of result as
+// those of another Argo CD install.
+func markOtherInstallSettings(result *discovery.Result) {
+	for i := range result.SettingsCandidates {
+		if discovery.IsSettingsConfigMapKind(result.SettingsCandidates[i].Kind) {
+			result.SettingsCandidates[i].OtherInstall = true
+		}
+	}
+}
+
+// installReconciles reports whether the Argo CD that the
+// argocd-cmd-params-cm of result configures would reconcile the
+// Application that renders it, which lives in one of applicationNamespaces
+// (committedFileWalker.applicationNamespaces). Argo CD reconciles an
+// Application in its own namespace, or in a namespace that its
+// application.namespaces enables (isAppNamespaceAllowed,
+// controller/appcontroller.go:2852-2854). This is a check of the render
+// against itself: a render without an argocd-cmd-params-cm, or an
+// Application whose namespace drydock cannot tell (""), passes. A ConfigMap
+// without a namespace lands in destinationNamespace.
+func installReconciles(result discovery.Result, applicationNamespaces []string, destinationNamespace string) bool {
+	found := false
+	for _, candidate := range result.SettingsCandidates {
+		if candidate.Kind != commandParametersCandidateKind || candidate.Object == nil {
+			continue
+		}
+		found = true
+		enabled, _, _ := unstructured.NestedString(candidate.Object.Object, "data", "application.namespaces")
+		if namespaceReconciled(applicationNamespaces, settingsCandidateNamespace(candidate, destinationNamespace), enabled) {
+			return true
+		}
+	}
+	return !found
+}
+
+// namespaceReconciled reports whether an Argo CD in installNamespace with
+// application.namespaces enabled reconciles an Application in one of
+// applicationNamespaces. An empty namespace is one that drydock cannot
+// tell, and it passes.
+func namespaceReconciled(applicationNamespaces []string, installNamespace, enabled string) bool {
+	if installNamespace == "" {
+		return true
+	}
+	list := config.ParseNamespaceList(enabled)
+	for _, namespace := range applicationNamespaces {
+		if namespace == "" || security.IsNamespaceEnabled(namespace, installNamespace, list) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCommandParametersCandidate(result discovery.Result) bool {
+	for _, candidate := range result.SettingsCandidates {
+		if candidate.Kind == commandParametersCandidateKind {
+			return true
+		}
+	}
+	return false
+}
+
+// applicationDestinations maps the key of each Application to its
+// destination namespace.
+func applicationDestinations(applications []discovery.ApplicationFile) map[string]string {
+	out := make(map[string]string, len(applications))
+	for _, appFile := range applications {
+		out[applicationKey(appFile.Application)] = appFile.Application.Spec.Destination.Namespace
+	}
+	return out
+}
+
+// markRemoteSettingsCandidates marks the settings candidates of result as
+// rendered by an Application on another cluster.
+func markRemoteSettingsCandidates(result *discovery.Result) {
+	for i := range result.SettingsCandidates {
+		result.SettingsCandidates[i].RemoteOnly = true
 	}
 }
 
@@ -563,14 +718,12 @@ func settingsCandidateNamespace(candidate discovery.SettingsCandidate, destinati
 	return namespace
 }
 
-// settingsConfigMapsInNamespace drops the settings ConfigMaps and the
-// repo-server objects of result that do not land in namespace. Other
-// settings candidates stay.
-func settingsConfigMapsInNamespace(result discovery.Result, destinationNamespace, namespace string) discovery.Result {
+// repoServersInNamespace drops the repo-server objects of result that do
+// not land in namespace. Other settings candidates stay.
+func repoServersInNamespace(result discovery.Result, destinationNamespace, namespace string) discovery.Result {
 	kept := result.SettingsCandidates[:0:0]
 	for _, candidate := range result.SettingsCandidates {
-		namespaced := discovery.IsSettingsConfigMapKind(candidate.Kind) || discovery.IsRepoServerKind(candidate.Kind)
-		if !namespaced || settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
+		if !discovery.IsRepoServerKind(candidate.Kind) || settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
 			kept = append(kept, candidate)
 		}
 	}

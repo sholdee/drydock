@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,9 +41,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		merged.CommandParametersFound = merged.CommandParametersFound || candidate.CommandParametersFound
 		merged.ArgoCDConfigMapFound = merged.ArgoCDConfigMapFound || candidate.ArgoCDConfigMapFound
 		diags = append(diags, mergeKustomizeVersions(&merged, candidate)...)
-		if merged.CommandParametersNamespace == "" {
-			merged.CommandParametersNamespace = candidate.CommandParametersNamespace
-		}
+		mergeCommandParametersNamespaces(&merged, candidate)
 		diags = append(diags, mergeNamespaceList(&merged.ApplicationNamespaces, candidate.ApplicationNamespaces, applicationNamespacesKey)...)
 		diags = append(diags, mergeNamespaceList(&merged.ApplicationSetNamespaces, candidate.ApplicationSetNamespaces, applicationSetNamespacesKey)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
@@ -52,6 +51,22 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 	}
 
 	return merged, diags
+}
+
+// mergeCommandParametersNamespaces adds the namespaces that candidate's
+// argocd-cmd-params-cm ConfigMaps name to merged. The merged settings keep
+// all of them, so ControllerNamespace decides by the whole set and not by
+// the order of the candidates.
+func mergeCommandParametersNamespaces(merged *ArgoSettings, candidate ArgoSettings) {
+	for _, namespace := range candidate.NamedControllerNamespaces() {
+		if !slices.Contains(merged.CommandParametersNamespaces, namespace) {
+			merged.CommandParametersNamespaces = append(merged.CommandParametersNamespaces, namespace)
+		}
+	}
+	slices.Sort(merged.CommandParametersNamespaces)
+	if merged.ArgoCDNamespace == "" {
+		merged.ArgoCDNamespace = candidate.ArgoCDNamespace
+	}
 }
 
 func mergeKustomizeBuildOptions(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {

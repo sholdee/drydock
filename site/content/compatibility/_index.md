@@ -85,11 +85,20 @@ cache, or a fetch. drydock cannot run the hydrator offline, so it warns
 `source.hydrator-sync-source`: a change to the dry source shows only after
 the hydrator commits it.
 
-When drydock reads an `argocd-cmd-params-cm` that names its namespace, it
-applies `application.namespaces` and `applicationsetcontroller.namespaces`. Argo CD
-never reconciles an Application or an ApplicationSet outside those
-namespaces and the Argo CD namespace, so drydock skips it with the
-`discovery.namespace-not-enabled` warning.
+drydock uses one Argo CD controller namespace for instance names
+(`ARGOCD_APP_NAME`, `.argocd-source-<app>.yaml`, and resource tracking), the
+namespace gate, and AppProject validation. The `--argocd-namespace` flag
+names it. Without the flag, drydock uses the namespace that every
+`argocd-cmd-params-cm` on this cluster names, else `argocd`. If the
+ConfigMaps name several namespaces, drydock warns. Only with the flag does
+drydock skip Argo CD settings objects and AppProjects in other namespaces.
+
+When drydock reads an `argocd-cmd-params-cm` and knows the controller
+namespace, it applies `application.namespaces` and
+`applicationsetcontroller.namespaces`. Argo CD never reconciles an
+Application or an ApplicationSet outside those namespaces and the Argo CD
+namespace, so drydock skips it with the `discovery.namespace-not-enabled`
+warning.
 
 See [ApplicationSet support](/docs/applicationsets/) and
 [repository topologies](/concepts/topologies/).

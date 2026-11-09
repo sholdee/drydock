@@ -25,6 +25,7 @@ import (
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -71,6 +72,15 @@ type BuildRequest struct {
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map
 	settingsInstallMemo  *sync.Map
+	// committedRenderMemo keeps, for one build side, which Applications
+	// render a committed settings file (commandParametersNamespaces).
+	committedRenderMemo *sync.Map
+	// controllerNamespaceHint is the controller namespace of a restarted
+	// discovery run (discoverWithControllerNamespace).
+	controllerNamespaceHint string
+	// renderNamespaces records the controller namespaces that the renders
+	// of one discovery run use.
+	renderNamespaces *namespaceRecorder
 	// appsetGeneration, when set, holds the argocd-cmd-params-cm values
 	// that change ApplicationSet generation for a restarted discovery run
 	// (discoverRepositoryWithOCI).
@@ -158,6 +168,14 @@ type BuildResult struct {
 	renderSettingsSignature string
 	discovered              *discovery.Result
 	pluginOptions           PluginOptions
+	// projectsDeclared reports that discovery found AppProjects, also when
+	// Projects holds none of them because --argocd-namespace skips them
+	// (addDiscoveredProjects).
+	projectsDeclared bool
+	// landing is where the committed objects land for the
+	// --argocd-namespace filter of the settings, or nil without the flag
+	// (loadSettingsWithLanding). The AppProject filter uses it too.
+	landing landingFunc
 }
 
 type DiagRequest = BuildRequest
@@ -298,7 +316,7 @@ func (o Orchestrator) DiagStatic(ctx context.Context, request DiagRequest, selec
 	if selectApps != nil {
 		diagResult.Applications = selectApps(result.Applications)
 	}
-	projectDiags := project.ValidateGeneratedApplications(diagResult.Applications, result.Projects, result.Settings, generatedApplicationSets(result.ApplicationInputs))
+	projectDiags := project.ValidateDeclaredApplications(diagResult.Applications, result.Projects, result.projectsDeclared, result.Settings, generatedApplicationSets(result.ApplicationInputs))
 	projectDiags = request.normalizeDiagnostics(projectDiags, false)
 	diagResult.Diagnostics = dedupeDiagnostics(append(diagResult.Diagnostics, projectDiags...))
 	if err := diagnosticFailure(projectDiags, request.Strict); err != nil {
@@ -345,6 +363,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 	}
 	request = loadedRequest
 	result.pluginOptions = request.PluginOptions
+	request.committedRenderMemo = &sync.Map{}
 	discovered, discoveryDiags, err := o.loadBuildSideDiscovery(ctx, root, request, &result)
 	if err != nil {
 		return result, diagnosticsError(discoveryDiags, err)
@@ -354,7 +373,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 		return result, err
 	}
 
-	result.Projects = appendDiscoveredProjects(result.Projects, discovered)
+	addDiscoveredProjects(&result, discovered, result.landing)
 	if err := appendDiscoveredApplications(discovered, &result); err != nil {
 		return result, err
 	}
@@ -522,6 +541,32 @@ func normalizeDiscoveryMode(value string) (string, error) {
 	default:
 		return "", fmt.Errorf("discovery-mode must be %q or %q", DiscoveryModeFleet, DiscoveryModeStatic)
 	}
+}
+
+// normalizeDiscoveryOptions checks the discovery options of a run and
+// returns its discovery mode and maximum depth.
+func normalizeDiscoveryOptions(options DiscoveryOptions) (string, int, error) {
+	mode, err := normalizeDiscoveryMode(options.DiscoveryMode)
+	if err != nil {
+		return "", 0, err
+	}
+	maxDepth, err := normalizeMaxDiscoveryDepth(options.MaxDiscoveryDepth, options.MaxDiscoveryDepthSet)
+	if err != nil {
+		return "", 0, err
+	}
+	return mode, maxDepth, validateArgoCDNamespace(options.ArgoCDNamespace)
+}
+
+// validateArgoCDNamespace checks --argocd-namespace: empty, or a valid
+// Kubernetes namespace name.
+func validateArgoCDNamespace(value string) error {
+	if value == "" {
+		return nil
+	}
+	if errs := validation.IsDNS1123Label(value); len(errs) > 0 {
+		return fmt.Errorf("argocd-namespace %q is not a valid namespace name: %s", value, strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 func normalizeMaxDiscoveryDepth(value int, explicitlySet bool) (int, error) {
@@ -802,30 +847,31 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 		result.renderSettingsSignature = request.renderSettingsSignature
 		result.discovered = request.discovered
 		result.pluginOptions = request.PluginOptions
-		result.Projects = appendDiscoveredProjects(result.Projects, discovered)
 		result.ApplicationInputs = selectApplicationInputsForApplications(discoveredApplicationSelectionInputs(discovered), result.Applications)
 		diags, err := loadBuildSideSettings(root, request, discovered, &result)
 		if err != nil {
 			result.Statuses = skippedApplicationStatuses(result.Applications, err)
 			return result, err
 		}
+		addDiscoveredProjects(&result, discovered, result.landing)
 		if err := diagnosticFailure(request.filterProjectDiagnostics(diags), request.Strict); err != nil {
 			result.Statuses = skippedApplicationStatuses(result.Applications, err)
 			return result, err
 		}
 		return result, nil
 	}
+	request.committedRenderMemo = &sync.Map{}
 	discovered, discoveryDiags, err := o.loadBuildSideDiscovery(ctx, root, request, &result)
 	if err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, diagnosticsError(discoveryDiags, err)
 	}
-	result.Projects = appendDiscoveredProjects(result.Projects, discovered)
 	diags, err := loadBuildSideSettings(root, request, discovered, &result)
 	if err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
 	}
+	addDiscoveredProjects(&result, discovered, result.landing)
 	if err := diagnosticFailure(request.filterProjectDiagnostics(diags), request.Strict); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
@@ -1202,10 +1248,14 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // the whole ApplicationSet, which then contributes no Applications.
 // selector.no-match is advisory too: the command did what the -l selector
 // asked, and an empty selection is a valid answer, so --strict must not
-// fail a run that the user narrowed on purpose.
+// fail a run that the user narrowed on purpose. Like
+// namespace-not-enabled, discovery.outside-controller-namespace reports
+// objects that Argo CD ignores. settings.controller-namespace-ambiguous
+// reports a hub Argo CD next to tenant installs, a normal layout, when
+// drydock uses one of the namespaces that they name.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, namespaceNotEnabledCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode, SelectorNoMatchCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, namespaceNotEnabledCode, outsideControllerNamespaceCode, controllerNamespaceAmbiguousCode, controllerNamespaceUnsettledCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode, SelectorNoMatchCode:
 		return true
 	}
 	return false

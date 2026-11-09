@@ -12,7 +12,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-const defaultArgoCDControllerNamespace = "argocd"
+// defaultArgoCDControllerNamespace is the Argo CD controller namespace that
+// drydock assumes when nothing in the repository names one.
+const defaultArgoCDControllerNamespace = config.DefaultControllerNamespace
 
 func defaultTrackingOptions() TrackingOptions {
 	return TrackingOptions{
@@ -31,6 +33,12 @@ func trackingOptionsFromSettings(settings config.ArgoSettings) TrackingOptions {
 		opts.InstanceLabelKey = settings.InstanceLabelKey.Value
 	}
 	opts.InstallationID = settings.InstallationID.Value
+	// The application controller builds the instance name, which
+	// ARGOCD_APP_NAME, the .argocd-source-<app>.yaml lookup, and resource
+	// tracking read, with its own namespace (controller/state.go:402 and
+	// :797 at v3.6.1). config.ArgoSettings.ControllerNamespace is the rule
+	// that the namespace gate and AppProject validation use too.
+	opts.ControllerNamespace = settings.ControllerNamespace("")
 	return opts
 }
 

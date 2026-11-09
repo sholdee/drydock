@@ -75,6 +75,12 @@ type Config struct {
 	// resolve against the current working directory; diffs feed the same files
 	// to both sides.
 	DiscoverManifestPaths []string
+	// ArgoCDNamespace is the namespace where Argo CD runs, as the
+	// --argocd-namespace flag names it. It wins over the namespace of the
+	// argocd-cmd-params-cm ConfigMaps, and only with it are Argo CD settings
+	// objects and AppProjects in other namespaces skipped. Empty uses the
+	// namespace that every argocd-cmd-params-cm names, else argocd.
+	ArgoCDNamespace string
 	// Strict promotes supported diagnostics that are warnings by default to
 	// operation errors.
 	Strict bool
@@ -331,6 +337,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		DiscoverKustomizePaths:         append([]string(nil), client.config.DiscoverKustomizePaths...),
 		DiscoverIgnores:                append([]string(nil), client.config.DiscoverIgnores...),
 		DiscoverManifestPaths:          append([]string(nil), client.config.DiscoverManifestPaths...),
+		ArgoCDNamespace:                client.config.ArgoCDNamespace,
 		ChangedOnly:                    client.config.ChangedOnly,
 		ChangedOnlyIncludes:            append([]string(nil), client.config.ChangedOnlyIncludes...),
 		ChangedOnlyIgnores:             append([]string(nil), client.config.ChangedOnlyIgnores...),

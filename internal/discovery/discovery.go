@@ -102,6 +102,21 @@ type SettingsCandidate struct {
 	// Origin is the key of the Application whose render produced the
 	// candidate. It is empty for a committed file.
 	Origin string
+	// RemoteOnly reports a rendered candidate that only Applications on
+	// other clusters render. It stays a settings source, but it never names
+	// the Argo CD controller namespace of this cluster.
+	RemoteOnly bool
+	// InstallNamespace is set on a settings ConfigMap that an Argo CD
+	// install on this cluster renders: the namespace where it lands, its
+	// own or else the destination namespace of the install. It counts as a
+	// setting only when that is the controller namespace.
+	InstallNamespace string
+	// OtherInstall reports a settings ConfigMap of an Argo CD install whose
+	// own argocd-cmd-params-cm would not reconcile the Application that
+	// installs it. That install is another Argo CD, such as a tenant one:
+	// its ConfigMaps never name the controller namespace and are never
+	// settings.
+	OtherInstall bool
 }
 
 // IsSettingsConfigMapKind reports whether kind is the candidate kind of an
@@ -121,6 +136,11 @@ type Result struct {
 	ApplicationSets    []ApplicationSetFile
 	SettingsCandidates []SettingsCandidate
 	Projects           []ProjectFile
+	// ControllerNamespaceHint is the Argo CD controller namespace that the
+	// last discovery run used, when its settings do not settle on it. The
+	// settings of the result then use it too, so discovery and the final
+	// render agree. It is empty otherwise.
+	ControllerNamespaceHint string
 }
 
 func Scan(root string, opts Options) (Result, error) {

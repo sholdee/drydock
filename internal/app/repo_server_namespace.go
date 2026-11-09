@@ -287,7 +287,15 @@ func appendSortedUnique(values []string, value string) []string {
 // globs let the file through. A Helm chart renders its templates, not a
 // committed file, and a plugin is not known.
 func sourceRendersCommittedFile(root string, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) (bool, string) {
-	if source.Path == "" || !(localProvider{repoRoot: root}).sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {
+	return sourceRendersCommittedFileWith(localProvider{repoRoot: root}, source, file, gates)
+}
+
+// sourceRendersCommittedFileWith is sourceRendersCommittedFile with
+// provider, which tells whether the source renders this repository with
+// its --repo-map entries and self-repo facts (settingsInstallProbe).
+func sourceRendersCommittedFileWith(provider localProvider, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) (bool, string) {
+	root := provider.repoRoot
+	if source.Path == "" || !provider.sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {
 		return false, ""
 	}
 	sourcePath, err := cleanLocalSourcePath(source.Path)
