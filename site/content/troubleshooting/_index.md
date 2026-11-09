@@ -331,14 +331,17 @@ is `argocd`. `--strict` fails on it. Make sure that `--argocd-namespace`
 names the namespace where Argo CD runs, or pass it if it is not set.
 
 A warning that names other Argo CD installs means that an Application
-installs an Argo CD that would not reconcile that Application, such as a
-tenant install. drydock reads none of the settings of such an install.
+renders an `argocd-cmd-params-cm` whose Argo CD would not reconcile that
+Application, such as a tenant install. The `argocd-cm`,
+`argocd-cmd-params-cm`, and `argocd-cmp-cm` ConfigMaps of such an install do
+not count. Its repository and cluster Secrets still count unless
+`--argocd-namespace` names another namespace.
 
 ## Symptom: `settings.controller-namespace-unsettled`
 
 Discovery found the namespace where Argo CD runs only late, ran again with
 that namespace, and then found yet another namespace. drydock keeps the
-second run. `--strict` does not fail on the warning. Pass
+second run and its namespace, also for the final render. `--strict` does not fail on the warning. Pass
 `--argocd-namespace` with the namespace where Argo CD runs.
 
 ## Symptom: `discovery.outside-controller-namespace`

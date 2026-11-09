@@ -148,10 +148,14 @@ drydock never skips an object without a namespace. Without the flag, drydock
 skips none of these objects, with one exception from earlier releases. The
 settings ConfigMaps that an Argo CD install on this cluster renders count
 only in the controller namespace. A ConfigMap of the install without a
-namespace lands in the destination namespace of the install. An install
-that does not reconcile the Application that installs it is another Argo
-CD, such as a tenant one. None of its settings count, and its
-`argocd-cmd-params-cm` names no namespace.
+namespace lands in the destination namespace of the install. An
+`argocd-cmd-params-cm` whose Argo CD would not reconcile any Application
+that puts it on this cluster belongs to another Argo CD, such as a tenant
+one. This holds for a Helm install, a plain Kustomize or directory source,
+and a committed file. Such a ConfigMap names no namespace, and the
+`argocd-cm`, `argocd-cmd-params-cm`, and `argocd-cmp-cm` ConfigMaps of that
+install do not count. Its repository and cluster Secrets still count without
+the flag.
 
 If a rendered install names the namespace only after other Applications
 rendered, drydock runs discovery once more with that namespace. See

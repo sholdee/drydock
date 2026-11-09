@@ -255,12 +255,28 @@ Supported:
   it, and a committed file that no Application renders counts. The rule is
   a set test, so the order of files does not change the result.
 
-  A rendered Argo CD install also must reconcile the Application that
-  installs it. The Application must be in the namespace of the install, or
-  in a namespace that the `application.namespaces` of the install enables.
-  Otherwise the install is another Argo CD, such as a tenant one. Its
-  `argocd-cmd-params-cm` does not count, and drydock reads none of its
-  settings. The namespace warning then names it as another install.
+  Each `argocd-cmd-params-cm` must also pass one test: the Argo CD that
+  it configures must reconcile at least one Application on this cluster
+  that puts it there. drydock applies the test to the
+  `argocd-cmd-params-cm` of every render on this cluster, a Helm install or
+  a plain Kustomize or directory source, and to every committed one that
+  Applications on this cluster render. The Application must be in the
+  namespace where the ConfigMap lands, or in a namespace that its
+  `application.namespaces` enables. A committed ConfigMap lands in the
+  outermost kustomization namespace on the way, else its own namespace,
+  else the destination namespace of the Application. An Application
+  without a namespace lives in the destination namespace of the
+  Application that renders it (`controller/state.go:588-590`), its parent
+  or the Applications that render its committed file. A committed
+  `argocd-cmd-params-cm` that no Application renders passes.
+
+  If the test fails for every Application that puts it there, the
+  ConfigMap belongs to another Argo CD, such as a tenant one. It names no
+  namespace. The `argocd-cm`, `argocd-cmd-params-cm`, and `argocd-cmp-cm`
+  ConfigMaps that the same Applications render do not count as settings.
+  Without `--argocd-namespace`, the repository and cluster Secrets of that
+  install still count. The namespace warning names the namespace of the
+  other install.
 
   Fleet discovery can find the install that names the namespace late, for
   example one level below an app-of-apps. The Applications of the earlier
@@ -270,11 +286,14 @@ Supported:
   more from the start with that namespace. The second run renders the
   bootstrap entrypoints with that namespace too. drydock never runs
   discovery a third time. If the second run ends with yet another
-  namespace, drydock keeps its result and warns with
+  namespace, drydock keeps its result and the namespace of the second run,
+  also for the final render, and warns with
   `settings.controller-namespace-unsettled`, which `--strict` does not
-  fail on. With `--argocd-namespace`, or when every render used the final
-  namespace, as in a repository whose Argo CD runs in `argocd`, there is
-  no second run.
+  fail on. The second run starts with the ApplicationSet generation values
+  of the first run. With `--argocd-namespace`, or when every render used
+  the final namespace, there is no second run. A repository whose Argo CD
+  runs in `argocd`, and an Argo CD install at the top level of the
+  repository, never need one.
 
   If the counting ConfigMaps name more than one namespace, drydock warns
   once. The warning lists the namespaces and names `--argocd-namespace`.
@@ -2511,7 +2530,8 @@ Supported:
   drydock renders it for settings only and when the discovery frontier
   renders it. A ConfigMap without a namespace lands in the destination
   namespace. An install that does not reconcile the Application that
-  installs it is another Argo CD, and none of its settings count. An Application that installs Argo
+  installs it is another Argo CD, and none of its settings ConfigMaps
+  count. An Application that installs Argo
   CD on another cluster is not an install. drydock does not render it for
   settings, and its values files stay settings sources of their own, as in
   earlier releases.
