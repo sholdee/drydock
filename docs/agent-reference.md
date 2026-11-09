@@ -349,6 +349,13 @@ identity resolution:
 - Do not read ambient Git credential helpers.
 - Do not read ambient Helm registry config.
 - Git HTTPS auth supports bearer and basic auth; bearer wins.
+- Send the `--git-*` HTTP credentials only to a Git URL whose scheme, host,
+  and port match a `--git-auth-host` entry (same entry form as
+  `--remote-auth-host`). This covers Application sources, Git cache fetches,
+  remote Kustomize Git bases, and submodules, which also keep the same-host
+  rule. Fail before any fetch when an HTTP Git credential is set without
+  `--git-auth-host`. Send URL userinfo only to the host of that URL. SSH keys
+  need no entry.
 - Git SSH auth uses an explicit key file when given; otherwise the agent,
   `~/.ssh/config` `IdentityFile`, and `~/.ssh/id_*` identities in that order.
   known_hosts verification is always on; no prompting.

@@ -187,10 +187,33 @@ drydock test apps --path . --registry-config ./ci/registry-config.json
 drydock test apps --path . \
   --remote-bearer-token "$REMOTE_TOKEN" \
   --remote-auth-host files.example.com
+drydock test apps --path . \
+  --git-bearer-token "$GIT_TOKEN" \
+  --git-auth-host github.com
 ```
 
-The `--remote-*` credentials need `--remote-auth-host`. drydock sends them only
-to the hosts that you name, over HTTPS unless an entry starts with `http://`.
+The `--remote-*` credentials need `--remote-auth-host`, and the
+`--git-username`, `--git-password`, and `--git-bearer-token` credentials need
+`--git-auth-host`. drydock sends them only to the hosts that you name, over
+HTTPS unless an entry starts with `http://`. A Git source, a remote Kustomize
+Git base, or a submodule on any other host is fetched without credentials.
+SSH keys need no host entry.
+
+In the drydock pull request action, add the host flag on its own line next to
+each credential flag that you pass in `extra-test-args`, `extra-diff-args`, or
+`extra-image-diff-args`. The action passes no Git credential to drydock by
+itself, so a run without these inputs needs no change.
+
+```yaml
+- uses: sholdee/drydock/pr-action@main
+  with:
+    extra-test-args: |
+      --git-bearer-token=${{ secrets.GIT_TOKEN }}
+      --git-auth-host=github.com
+    extra-diff-args: |
+      --git-bearer-token=${{ secrets.GIT_TOKEN }}
+      --git-auth-host=github.com
+```
 
 Explicit credentials win: `--git-ssh-key-file` disables the ambient identity
 lookup entirely, and `--registry-config` covers OCI Helm chart registries and
