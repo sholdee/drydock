@@ -66,6 +66,7 @@ func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kusto
 			values.out.Files = append(values.out.Files, rel)
 		}
 	}
+	graph = append(graph, sourceKustomizeComponentNodes(ctx, repoRoot, sourcePath, kustomize)...)
 	for _, node := range graph {
 		if err := ctx.Err(); err != nil {
 			return KustomizeHelmValuesInputs{}, err
@@ -77,6 +78,28 @@ func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kusto
 	sort.Strings(out.KustomizeParsedValuesFiles)
 	sort.Strings(out.HelmParsedValuesFiles)
 	return out, nil
+}
+
+// sourceKustomizeComponentNodes returns the graph of the
+// spec.source.kustomize components that the render adds to the source
+// kustomization (sourceKustomizeWorkspaceAdditions): every component, or
+// under ignoreMissingComponents only the first valid one. Their helmCharts
+// entries render with the source, so their values files and chart names
+// count too. When the components cannot be read, the render fails too, and
+// this returns nothing.
+func sourceKustomizeComponentNodes(ctx context.Context, repoRoot, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) []kustomizeGraphNode {
+	if kustomize == nil || len(kustomize.Components) == 0 {
+		return nil
+	}
+	root, err := sourceRoot(ResolvedSource{RepoRoot: repoRoot, Path: sourcePath})
+	if err != nil {
+		return nil
+	}
+	graph, _, _, err := sourceKustomizeWorkspaceAdditions(ctx, repoRoot, root, RenderOptions{Kustomize: kustomize})
+	if err != nil {
+		return nil
+	}
+	return graph
 }
 
 type kustomizeHelmValuesCollector struct {

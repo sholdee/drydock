@@ -232,6 +232,10 @@ func argoCDInstallShapes() []argoCDInstallShape {
 			write: writeApplicationSetKustomizeArgoCDInstall,
 		},
 		{
+			name:  "kustomize helmCharts in a component of the Application",
+			write: writeKustomizeComponentArgoCDInstall,
+		},
+		{
 			name:       "local chart that the frontier renders",
 			write:      writeLocalChartArgoCDInstall,
 			localChart: true,
@@ -320,6 +324,37 @@ spec:
     namespace: argocd
 `)
 	writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), kustomizeArgoCDInstallYAML("", valuesFiles))
+	writeDiffApplication(t, root, "other", "other", "same")
+}
+
+// writeKustomizeComponentArgoCDInstall puts the argo-cd helmCharts entry in
+// a Kustomize component that spec.source.kustomize.components adds. The
+// kustomization of the source path holds no helmCharts entry of its own.
+func writeKustomizeComponentArgoCDInstall(t *testing.T, root string, valuesFiles []string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "argocd.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: install
+    kustomize:
+      components:
+        - ../argocd
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+	writeTestFile(t, filepath.Join(root, "install", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: argocd\n")
+	component := strings.Replace(kustomizeArgoCDInstallYAML("", valuesFiles),
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: argocd\n",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n", 1)
+	writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), component)
 	writeDiffApplication(t, root, "other", "other", "same")
 }
 
