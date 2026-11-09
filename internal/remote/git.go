@@ -45,7 +45,7 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 	if err != nil {
 		return Result{}, err
 	}
-	if err := rejectLocalGitTransport(repoURL, opts.AllowFileTransport); err != nil {
+	if err := checkGitRepoRequest(repoURL, opts); err != nil {
 		return Result{}, err
 	}
 	cacheDir, err := ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
@@ -226,6 +226,16 @@ func gitAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMe
 // newSSHEnvironment builds the ambient environment SSH identity resolution
 // reads. Tests replace it so they never touch the developer's ~/.ssh or agent.
 var newSSHEnvironment = gitauth.Default
+
+// checkGitRepoRequest runs the checks of a remote Git request that come
+// before the cache: the transport of repoURL (rejectLocalGitTransport) and
+// the hosts of the HTTP Git credentials (GitCredentials.Validate).
+func checkGitRepoRequest(repoURL string, opts Options) error {
+	if err := rejectLocalGitTransport(repoURL, opts.AllowFileTransport); err != nil {
+		return err
+	}
+	return opts.GitCredentials.Validate()
+}
 
 // rejectLocalGitTransport fails when repoURL names the file transport, or
 // when go-git would read it as a local path, unless allowFile is set. The

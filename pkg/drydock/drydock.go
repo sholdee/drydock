@@ -119,7 +119,8 @@ type Config struct {
 	// RefreshGit refreshes Git cache entries instead of reusing cached checkouts
 	// when network acquisition is allowed.
 	RefreshGit bool
-	// GitCredentials supplies credentials for Git source acquisition.
+	// GitCredentials supplies credentials for Git source acquisition and
+	// the hosts that receive the HTTP ones (GitCredentials.Hosts).
 	GitCredentials GitCredentials
 	// RefreshRemoteResources refreshes remote Kustomize resource cache entries
 	// instead of reusing cached resources when network acquisition is allowed.

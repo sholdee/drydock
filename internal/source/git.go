@@ -60,6 +60,10 @@ type GitCredentials struct {
 	SSHPrivateKey     string
 	SSHPassphrase     string
 	SSHKnownHostsPath string
+	// Hosts lists the hosts that receive Username, Password, and
+	// BearerToken, one --git-auth-host entry each (gitauth.Credentials).
+	// The SSH fields ignore it.
+	Hosts []string
 }
 
 type GitResult struct {
@@ -86,6 +90,9 @@ type DefaultGitAcquirer struct{}
 
 func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts GitOptions) (GitResult, error) {
 	if err := ctx.Err(); err != nil {
+		return GitResult{}, err
+	}
+	if err := opts.Credentials.Validate(); err != nil {
 		return GitResult{}, err
 	}
 
@@ -739,17 +746,20 @@ func RedactGitCredentialError(message string, credentials GitCredentials) string
 
 // cloneURLAndCredentials removes the userinfo of repoURL, so the cache
 // entry stores a URL without a token (gittree.SplitURLUserinfo). The user
-// and password become the credentials of an http or https URL unless
-// explicit credentials are set; a git URL has no credentials.
+// and password become the credentials of an http or https URL, for that
+// URL's scheme, host, and port only, unless the --git-* credentials are set
+// for that host (gitauth.Credentials.WithURLUserinfo); a git URL has no
+// credentials.
 func cloneURLAndCredentials(repoURL string, credentials GitCredentials) (string, GitCredentials) {
 	clean, info, found := gittree.SplitURLUserinfo(repoURL)
 	if !found {
 		return repoURL, credentials
 	}
-	isHTTP := strings.HasPrefix(clean, "http://") || strings.HasPrefix(clean, "https://")
-	if isHTTP && credentials.Username == "" && credentials.Password == "" && credentials.BearerToken == "" {
-		credentials.Username = info.Username
-		credentials.Password = info.Password
-	}
-	return clean, credentials
+	return clean, GitCredentials(gitauth.Credentials(credentials).WithURLUserinfo(clean, info.Username, info.Password))
+}
+
+// Validate fails when a username, a password, or a bearer token is set
+// without a valid Hosts entry (gitauth.Credentials.Validate).
+func (credentials GitCredentials) Validate() error {
+	return gitauth.Credentials(credentials).Validate()
 }

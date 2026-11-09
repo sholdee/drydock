@@ -198,6 +198,66 @@ resources:
 	}
 }
 
+// TestClientRefusesGitCredentialsWithoutHosts checks that a Config with an
+// HTTP Git credential and no GitCredentials.Hosts entry fails before any
+// acquirer runs, and that the error names --git-auth-host, the library
+// field, and no credential value. An SSH key alone needs no entry.
+func TestClientRefusesGitCredentialsWithoutHosts(t *testing.T) {
+	root := t.TempDir()
+	writeAPIFile(t, filepath.Join(root, "apps", "external.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://git.example.test/org/repo.git
+    targetRevision: main
+    path: external
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	for name, credentials := range map[string]GitCredentials{
+		"bearer token": {BearerToken: "api-secret-token"},
+		"basic auth":   {Username: "api-user", Password: "api-secret-password"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gitAcquirer := &recordingGitAcquirer{path: t.TempDir(), revision: "abc123"}
+			_, err := NewClient(Config{
+				Path:           root,
+				GitCredentials: credentials,
+				GitAcquirer:    gitAcquirer,
+			}).Render(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "--git-auth-host") || !strings.Contains(err.Error(), "GitCredentials.Hosts") {
+				t.Fatalf("Render() error = %v, want an error that names --git-auth-host and GitCredentials.Hosts", err)
+			}
+			for _, secret := range []string{"api-secret-token", "api-secret-password"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("Render() error %q leaks %q", err, secret)
+				}
+			}
+			if len(gitAcquirer.requests) != 0 {
+				t.Fatalf("Git acquire calls = %d, want 0", len(gitAcquirer.requests))
+			}
+		})
+	}
+	externalRepo := t.TempDir()
+	writeAPIFile(t, filepath.Join(externalRepo, "external", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external
+`)
+	gitAcquirer := &recordingGitAcquirer{path: externalRepo, revision: "abc123"}
+	if _, err := NewClient(Config{
+		Path:           root,
+		GitCredentials: GitCredentials{SSHPrivateKeyPath: filepath.Join(t.TempDir(), "id_ed25519")},
+		GitAcquirer:    gitAcquirer,
+	}).Render(context.Background()); err != nil {
+		t.Fatalf("Render() with an SSH key only error = %v", err)
+	}
+}
+
 func TestClientPassesRemoteResourceCredentials(t *testing.T) {
 	root := t.TempDir()
 	remoteFile := filepath.Join(t.TempDir(), "remote.yaml")
@@ -238,6 +298,7 @@ metadata:
 		SSHPrivateKeyPath: filepath.Join(root, "id_ed25519"),
 		SSHPassphrase:     "git-phrase",
 		SSHKnownHostsPath: filepath.Join(root, "known_hosts"),
+		Hosts:             []string{"github.com"},
 	}
 	remoteAcquirer := &recordingRemoteAcquirer{path: remoteFile}
 
@@ -259,7 +320,7 @@ metadata:
 	if got := remoteAcquirer.options[0].Credentials; !reflect.DeepEqual(got, credentials) {
 		t.Fatalf("remote credentials = %#v, want %#v", got, credentials)
 	}
-	if got := remoteAcquirer.options[0].GitCredentials; got != gitCredentials {
+	if got := remoteAcquirer.options[0].GitCredentials; !reflect.DeepEqual(got, gitCredentials) {
 		t.Fatalf("remote git credentials = %#v, want %#v", got, gitCredentials)
 	}
 }
@@ -317,6 +378,7 @@ resources:
 			BearerToken:   "git-token",
 			SSHPrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-key-line\n-----END OPENSSH PRIVATE KEY-----",
 			SSHPassphrase: "git-phrase",
+			Hosts:         []string{"github.com"},
 		},
 		RemoteResourceCacheDir: t.TempDir(),
 		RemoteResourceAcquirer: remoteAcquirer,
@@ -411,7 +473,7 @@ resources:
 	remoteAcquirer := &recordingRemoteAcquirer{path: remoteFile}
 	result, err := NewClient(Config{
 		Path:                   root,
-		GitCredentials:         GitCredentials{Username: "git-user", Password: "git-pass"},
+		GitCredentials:         GitCredentials{Username: "git-user", Password: "git-pass", Hosts: []string{"git.example.test"}},
 		ChartCredentials:       ChartCredentials{BearerToken: "helm-token"},
 		GitAcquirer:            gitAcquirer,
 		ChartAcquirer:          chartAcquirer,
@@ -429,8 +491,8 @@ resources:
 	if !gitAcquirer.options[0].AllowNetwork {
 		t.Fatalf("Git AllowNetwork = false, want true")
 	}
-	if gitAcquirer.options[0].Credentials.Username != "git-user" || gitAcquirer.options[0].Credentials.Password != "git-pass" {
-		t.Fatalf("Git credentials were not passed through")
+	if got := gitAcquirer.options[0].Credentials; got.Username != "git-user" || got.Password != "git-pass" || !reflect.DeepEqual(got.Hosts, []string{"git.example.test"}) {
+		t.Fatalf("Git credentials were not passed through: %#v", got)
 	}
 	if len(chartAcquirer.requests) != 1 {
 		t.Fatalf("Chart acquire calls = %d, want 1", len(chartAcquirer.requests))

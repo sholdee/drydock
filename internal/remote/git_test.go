@@ -304,6 +304,7 @@ func TestDefaultAcquirerRedactsGitRemoteCredentialErrors(t *testing.T) {
 		BearerToken:   "secret-token",
 		SSHPrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----",
 		SSHPassphrase: "secret-passphrase",
+		Hosts:         []string{"example.invalid"},
 	}
 	_, err := DefaultAcquirer{}.Acquire(context.Background(), Request{
 		Kind:     RequestGitRepo,

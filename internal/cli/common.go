@@ -41,6 +41,7 @@ type commonFlags struct {
 	gitUsername              string
 	gitPassword              string
 	gitBearerToken           string
+	gitAuthHosts             []string
 	gitSSHKeyFile            string
 	gitSSHPassphrase         string
 	gitKnownHostsFile        string
@@ -178,6 +179,7 @@ func bindAuthFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.gitUsername, "git-username", flags.gitUsername, "username for authenticated Git HTTPS sources")
 	cmd.Flags().StringVar(&flags.gitPassword, "git-password", flags.gitPassword, "password for authenticated Git HTTPS sources")
 	cmd.Flags().StringVar(&flags.gitBearerToken, "git-bearer-token", flags.gitBearerToken, "bearer token for authenticated Git HTTPS sources")
+	cmd.Flags().StringArrayVar(&flags.gitAuthHosts, "git-auth-host", flags.gitAuthHosts, "host[:port] that receives --git-username, --git-password, and --git-bearer-token, over HTTPS only unless written http://host[:port] (repeatable; required with those flags; SSH keys need no entry)")
 	cmd.Flags().StringVar(&flags.gitSSHKeyFile, "git-ssh-key-file", flags.gitSSHKeyFile, "private key file for Git SSH sources (default: ssh-agent, then ~/.ssh/config IdentityFile and ~/.ssh/id_*)")
 	cmd.Flags().StringVar(&flags.gitSSHPassphrase, "git-ssh-passphrase", flags.gitSSHPassphrase, "passphrase for encrypted Git SSH private keys")
 	cmd.Flags().StringVar(&flags.gitKnownHostsFile, "git-known-hosts-file", flags.gitKnownHostsFile, "known_hosts file for Git SSH sources (default: $SSH_KNOWN_HOSTS, then ~/.ssh/known_hosts)")
@@ -328,6 +330,7 @@ func (flags commonFlags) gitCredentials() source.GitCredentials {
 		SSHPrivateKeyPath: flags.gitSSHKeyFile,
 		SSHPassphrase:     flags.gitSSHPassphrase,
 		SSHKnownHostsPath: flags.gitKnownHostsFile,
+		Hosts:             append([]string(nil), flags.gitAuthHosts...),
 	}
 }
 
@@ -348,6 +351,7 @@ func (flags commonFlags) remoteGitCredentials() remote.GitCredentials {
 		SSHPrivateKeyPath: flags.gitSSHKeyFile,
 		SSHPassphrase:     flags.gitSSHPassphrase,
 		SSHKnownHostsPath: flags.gitKnownHostsFile,
+		Hosts:             append([]string(nil), flags.gitAuthHosts...),
 	}
 }
 

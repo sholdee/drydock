@@ -442,7 +442,7 @@ func TestDefaultGitAcquirerRedactsURLOnCloneFailure(t *testing.T) {
 }
 
 func TestGitCredentialsHTTPBasicAuth(t *testing.T) {
-	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass"}, "https://github.com/example/private")
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass", Hosts: []string{"github.com"}}, "https://github.com/example/private")
 	if err != nil {
 		t.Fatalf("gitAuthMethod() error = %v", err)
 	}
@@ -459,7 +459,7 @@ func TestGitCredentialsHTTPBasicAuth(t *testing.T) {
 }
 
 func TestGitCredentialsBearerToken(t *testing.T) {
-	auth, hasAuth, err := gitAuthMethod(GitCredentials{BearerToken: "token"}, "https://github.com/example/private")
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{BearerToken: "token", Hosts: []string{"github.com"}}, "https://github.com/example/private")
 	if err != nil {
 		t.Fatalf("gitAuthMethod() error = %v", err)
 	}
@@ -476,7 +476,7 @@ func TestGitCredentialsBearerToken(t *testing.T) {
 }
 
 func TestGitCredentialsBearerTokenPrecedence(t *testing.T) {
-	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass", BearerToken: "token"}, "https://github.com/example/private")
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass", BearerToken: "token", Hosts: []string{"github.com"}}, "https://github.com/example/private")
 	if err != nil {
 		t.Fatalf("gitAuthMethod() error = %v", err)
 	}

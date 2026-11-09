@@ -22,6 +22,17 @@ type RepoMap struct {
 // order. Host keys are always verified against known_hosts: the explicit file
 // when set, otherwise $SSH_KNOWN_HOSTS, ~/.ssh/known_hosts, and
 // /etc/ssh/ssh_known_hosts.
+//
+// Hosts lists the hosts that receive Username, Password, and BearerToken,
+// like the --git-auth-host flag: host[:port] or https://host[:port] for
+// HTTPS, and http://host[:port] to allow plain HTTP. The default Git
+// acquirers send them only to a Git URL whose scheme, host, and port match
+// an entry: Application sources, remote Kustomize Git bases, and
+// submodules. go-git removes them on a redirect that leaves that scheme,
+// host, and port. A run with Username, Password, or BearerToken and no
+// Hosts entry fails before it fetches anything. The SSH fields ignore
+// Hosts. A custom GitAcquirer or RemoteResourceAcquirer receives Hosts and
+// must apply the same rule itself.
 type GitCredentials struct {
 	Username          string
 	Password          string
@@ -30,6 +41,7 @@ type GitCredentials struct {
 	SSHPrivateKey     string
 	SSHPassphrase     string
 	SSHKnownHostsPath string
+	Hosts             []string
 }
 
 // GitRequest identifies a Git source to acquire.
@@ -235,6 +247,7 @@ func gitCredentialsToInternal(credentials GitCredentials) sourcepkg.GitCredentia
 		SSHPrivateKey:     credentials.SSHPrivateKey,
 		SSHPassphrase:     credentials.SSHPassphrase,
 		SSHKnownHostsPath: credentials.SSHKnownHostsPath,
+		Hosts:             append([]string(nil), credentials.Hosts...),
 	}
 }
 
@@ -247,6 +260,7 @@ func gitCredentialsToRemoteInternal(credentials GitCredentials) remote.GitCreden
 		SSHPrivateKey:     credentials.SSHPrivateKey,
 		SSHPassphrase:     credentials.SSHPassphrase,
 		SSHKnownHostsPath: credentials.SSHKnownHostsPath,
+		Hosts:             append([]string(nil), credentials.Hosts...),
 	}
 }
 
@@ -259,6 +273,7 @@ func remoteGitCredentialsFromInternal(credentials remote.GitCredentials) GitCred
 		SSHPrivateKey:     credentials.SSHPrivateKey,
 		SSHPassphrase:     credentials.SSHPassphrase,
 		SSHKnownHostsPath: credentials.SSHKnownHostsPath,
+		Hosts:             append([]string(nil), credentials.Hosts...),
 	}
 }
 
@@ -289,6 +304,7 @@ func gitCredentialsFromInternal(credentials sourcepkg.GitCredentials) GitCredent
 		SSHPrivateKey:     credentials.SSHPrivateKey,
 		SSHPassphrase:     credentials.SSHPassphrase,
 		SSHKnownHostsPath: credentials.SSHKnownHostsPath,
+		Hosts:             append([]string(nil), credentials.Hosts...),
 	}
 }
 

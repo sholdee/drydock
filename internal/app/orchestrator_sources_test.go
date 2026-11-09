@@ -165,7 +165,7 @@ data:
 	if options.LockEntry == nil {
 		t.Fatal("git options LockEntry = nil, want the session's entry lock")
 	}
-	if !options.AllowNetwork || options.CacheDir != cacheDir || !options.Refresh || !options.Submodules || options.AllowFileSubmoduleTransport || options.Credentials != (sourcepkg.GitCredentials{}) {
+	if !options.AllowNetwork || options.CacheDir != cacheDir || !options.Refresh || !options.Submodules || options.AllowFileSubmoduleTransport || !reflect.DeepEqual(options.Credentials, sourcepkg.GitCredentials{}) {
 		t.Fatalf("git options = %#v", options)
 	}
 	value, found, err := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "source")
@@ -1101,6 +1101,7 @@ metadata:
 		SSHPrivateKeyPath: filepath.Join(root, "id_ed25519"),
 		SSHPassphrase:     "git-phrase",
 		SSHKnownHostsPath: filepath.Join(root, "known_hosts"),
+		Hosts:             []string{"github.com"},
 	}
 	acquirer := &recordingRemoteAcquirer{path: remoteFile}
 
@@ -1120,7 +1121,7 @@ metadata:
 	if got := acquirer.options[0].Credentials; !reflect.DeepEqual(got, remoteCredentials) {
 		t.Fatalf("remote credentials = %#v, want %#v", got, remoteCredentials)
 	}
-	if got := acquirer.options[0].GitCredentials; got != remoteGitCredentials {
+	if got := acquirer.options[0].GitCredentials; !reflect.DeepEqual(got, remoteGitCredentials) {
 		t.Fatalf("remote git credentials = %#v, want %#v", got, remoteGitCredentials)
 	}
 }

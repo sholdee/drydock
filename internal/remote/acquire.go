@@ -64,6 +64,10 @@ type GitCredentials struct {
 	SSHPrivateKey     string
 	SSHPassphrase     string
 	SSHKnownHostsPath string
+	// Hosts lists the hosts that receive Username, Password, and
+	// BearerToken, one --git-auth-host entry each (gitauth.Credentials).
+	// The SSH fields ignore it.
+	Hosts []string
 }
 
 type Options struct {
