@@ -1541,6 +1541,16 @@ Supported:
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative
   libs, confines Jsonnet imports to the repository root as the Argo CD
   repo-server does from v3.5.4, and skips drydock cache metadata sidecars.
+- Jsonnet extVar and TLA values get the env substitution once more for each
+  Jsonnet file that is evaluated, as in the Argo CD v3.6.1 repo-server.
+  `makeJsonnetVM` writes each substituted value back into the request, so
+  the k-th Jsonnet file that `findManifests` evaluates, in walk order, gets
+  each value substituted k times (reposerver/repository/repository.go:
+  2005-2051 and 2281-2302). With an extVar `$$ARGOCD_APP_NAME`, the first
+  file gets `$ARGOCD_APP_NAME` and the second gets the Application name. A
+  file that the walk, the extension filter, `include`, `exclude`, the skip
+  marker, or `jsonnet.enable` leaves out is not evaluated, so it does not
+  count. The values in the spec do not change.
 - Jsonnet `libs` resolve as in the Argo CD v3.6.1 repo-server
   (`ResolveFileOrDirectoryPath`). A lib is relative to the repository root,
   also when it starts with `/`. A lib that is itself a symlink is followed,
@@ -1766,14 +1776,26 @@ Supported:
   Jsonnet file never resolves its libraries, so they do not count. drydock
   reads the import paths from the parsed Jsonnet files. It also follows the
   imports in `extVars` and `tlas` values with `code: true`, after the same
-  env substitution as the render, such as `$ARGOCD_APP_NAME`. Argo CD
-  evaluates such code with no importing file, so its relative imports
-  resolve against the Jsonnet paths: the libraries, last first, and then the
-  source path. A value with `code: false` is a plain string, and code that
-  does not parse adds nothing. Changed-only selection does not know the
-  revision of the render, so when an import path in such code names an
-  `ARGOCD_APP_REVISION` variable, it renders the source on every change,
-  with the warning below. The import scan has a budget of 1000 files and 10 MB per
+  env substitution as the render, such as `$ARGOCD_APP_NAME`, in every
+  pass: the render substitutes the values once more for each Jsonnet file,
+  so the scans take one pass for each `.jsonnet` file under the source
+  path. Argo CD evaluates such code with no importing file. Its importer
+  then tries the import path as a relative path against the repo-server's
+  working directory first (`/home/argocd` in the Argo CD image). Its
+  inbound check joins a relative path to the repository root
+  (`files.Inbound`, util/io/files/util.go:83-109), so a plain file found
+  there passes the check and is read, although it is outside the
+  repository. A path with `..` that leaves the root fails. After that the
+  importer tries the Jsonnet paths: the libraries, last first, and then
+  the source path (reposerver/repository/repository.go:2339-2397). drydock
+  does not model the working directory, and tries the Jsonnet paths only.
+  A normal repo-server has no file there that an import names. A value with
+  `code: false` is a plain string, and code that does not parse adds
+  nothing. Changed-only selection does not know the revision of the
+  render, so when an import path in such code names an
+  `ARGOCD_APP_REVISION` variable in any pass, or the code does not parse
+  with a probe revision, it renders the source on every change, with the
+  warning below. The import scan has a budget of 1000 files and 10 MB per
   source. The file limit is there because a symlink to a directory above a
   file can give that file endlessly many import paths. A single Jsonnet
   file over 10 MB also runs the budget out, because the scan does not read

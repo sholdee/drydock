@@ -403,7 +403,9 @@ each library path and the symlinks on the way to it
 (`render.DirectoryJsonnetLibInputs`), and the persistent render cache
 digest of a directory source holds them as optional paths. The import scan
 also follows the imports in `extVars` and `tlas` values with `code: true`,
-after the same env substitution as the render (`render.JsonnetCodeValues`).
+after the same env substitution as the render, in every pass: the render
+substitutes the values once more for each Jsonnet file that it evaluates,
+as Argo CD does (`render.JsonnetCodeValuePasses`).
 Such code has no file, so its imports resolve against the source path and
 the libraries only, as in the renderer's importer. The digest scan uses the
 build environment of the render. Changed-only selection does not know the
