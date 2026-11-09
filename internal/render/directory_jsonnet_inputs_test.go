@@ -211,14 +211,14 @@ func TestJsonnetCodeValuePasses(t *testing.T) {
 }
 
 // TestJsonnetCodeImportLiterals pins the import paths of one code value, in
-// source order, and that a value that does not parse has none.
+// source order, and that a value that does not parse is reported.
 func TestJsonnetCodeImportLiterals(t *testing.T) {
-	got := JsonnetCodeImportLiterals("{ a: import 'a.libsonnet', b: importstr 'b.txt', c: importbin 'c.bin' }")
-	if strings.Join(got, ",") != "a.libsonnet,b.txt,c.bin" {
-		t.Fatalf("JsonnetCodeImportLiterals() = %v", got)
+	got, ok := JsonnetCodeImportLiterals("{ a: import 'a.libsonnet', b: importstr 'b.txt', c: importbin 'c.bin' }")
+	if !ok || strings.Join(got, ",") != "a.libsonnet,b.txt,c.bin" {
+		t.Fatalf("JsonnetCodeImportLiterals() = %v, %t", got, ok)
 	}
-	if got := JsonnetCodeImportLiterals("import 'a.libsonnet' {"); len(got) != 0 {
-		t.Fatalf("JsonnetCodeImportLiterals() of code that does not parse = %v, want none", got)
+	if got, ok := JsonnetCodeImportLiterals("import 'a.libsonnet' {"); ok || len(got) != 0 {
+		t.Fatalf("JsonnetCodeImportLiterals() of code that does not parse = %v, %t, want none and false", got, ok)
 	}
 }
 

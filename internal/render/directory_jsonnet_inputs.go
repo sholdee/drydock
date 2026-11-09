@@ -403,19 +403,19 @@ func (c *jsonnetImportCollector) addRel(rel string) {
 }
 
 // JsonnetCodeImportLiterals returns the import, importstr, and importbin
-// paths of one Jsonnet code value, as written, in source order. A value
-// that does not parse has none.
-func JsonnetCodeImportLiterals(code string) []string {
+// paths of one Jsonnet code value, as written, in source order. It
+// reports false for a value that does not parse.
+func JsonnetCodeImportLiterals(code string) ([]string, bool) {
 	node, err := jsonnet.SnippetToAST("", code)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	literals := jsonnetImportLiterals(node)
 	out := make([]string, 0, len(literals))
 	for _, literal := range literals {
 		out = append(out, literal.path)
 	}
-	return out
+	return out, true
 }
 
 type jsonnetImportLiteral struct {

@@ -186,7 +186,9 @@ func TestChangedOnlyDiffSelectsJsonnetCodeImport(t *testing.T) {
 // an ARGOCD_APP_REVISION variable. Selection does not know the revision of
 // the render. When the variable is in an import path, the imports are not
 // known, so the source is selected on any change. When it is only in a
-// string, the imports are known.
+// string, the imports are known. Code that the probe revisions make
+// unparsable can parse with a real revision, so its imports are not known
+// either.
 func TestWithSelectionOnlyPathsJsonnetCodeReadsRevision(t *testing.T) {
 	for _, testCase := range []struct {
 		name        string
@@ -194,6 +196,7 @@ func TestWithSelectionOnlyPathsJsonnetCodeReadsRevision(t *testing.T) {
 		wantUnknown bool
 	}{
 		{name: "import path", code: "import '../shared/${ARGOCD_APP_REVISION_SHORT}.libsonnet'", wantUnknown: true},
+		{name: "identifier", code: "local ${ARGOCD_APP_REVISION_SHORT} = 1; import '../shared/${ARGOCD_APP_REVISION_SHORT}.libsonnet'", wantUnknown: true},
 		{name: "string", code: "{ revision: '$ARGOCD_APP_REVISION', cfg: import '../shared/cfg.libsonnet' }"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

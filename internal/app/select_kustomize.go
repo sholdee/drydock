@@ -243,13 +243,18 @@ func codePassAt(passes [][]string, index int) []string {
 }
 
 // codeImportsDiffer reports whether two substitutions of the same code
-// values import different paths.
+// values import different paths. A value that changes and does not parse
+// with one of the probe revisions counts as different: a real revision can
+// make it parse, for example as an identifier, and then its imports read
+// the revision.
 func codeImportsDiffer(first, second []string) bool {
 	for index := range first {
 		if first[index] == second[index] {
 			continue
 		}
-		if !slices.Equal(render.JsonnetCodeImportLiterals(first[index]), render.JsonnetCodeImportLiterals(second[index])) {
+		firstImports, firstParsed := render.JsonnetCodeImportLiterals(first[index])
+		secondImports, secondParsed := render.JsonnetCodeImportLiterals(second[index])
+		if !firstParsed || !secondParsed || !slices.Equal(firstImports, secondImports) {
 			return true
 		}
 	}
