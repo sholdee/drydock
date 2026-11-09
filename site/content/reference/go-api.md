@@ -37,7 +37,8 @@ to those hosts itself.
 mirrors `--git-auth-host`: the default Git acquirers send `Username`,
 `Password`, and `BearerToken` only to a Git URL whose scheme, host, and port
 match an entry. This covers Application sources, remote Kustomize Git bases,
-and submodules. An HTTP Git credential without a `Hosts` entry fails the call
+submodules, and the batch requests to a Git LFS server. An object download
+from a Git LFS server never gets them. An HTTP Git credential without a `Hosts` entry fails the call
 before drydock fetches anything. The SSH fields ignore `Hosts`. A custom
 `GitAcquirer`, and a custom `RemoteResourceAcquirer` through
 `RemoteResourceOptions.GitCredentials`, receives `Hosts` and must send the

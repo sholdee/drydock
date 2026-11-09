@@ -123,10 +123,43 @@ a submodule on the same host and port as the repository, never from
 entry (see [Git HTTPS credential hosts](#git-https-credential-hosts)). It refuses `file` URLs and local paths, as the
 repo-server's git does.
 
-drydock does not download Git LFS objects. When a repository Secret sets
-`enableLfs`, a `--ref` snapshot reads Git LFS content from the repository's
-`.git/lfs` store, and drydock warns `render.lfs-pointer` for each source
-whose tree still holds pointer files. See
+### Git LFS
+
+A Git LFS pointer file is a small text file that stands for a large file in
+a Git LFS store. When a repository Secret sets `enableLfs`, the Argo CD
+repo-server downloads the content of the pointer files with git-lfs.
+drydock has its own Git LFS client, which uses the Git LFS batch API over
+`http` and `https`. It fills the pointer files of fetched Git sources and
+of `--ref` and `--ref-orig` snapshots. It reads each object from these
+places, in this order:
+
+1. The local repository's `.git/lfs/objects` store, for a snapshot. drydock
+   never writes it.
+2. The Git LFS store of the Git cache, `<git cache>/lfs`. Repositories
+   share it, because an object has one path for its SHA-256.
+3. Unless `--offline` is set, the Git LFS server of the repository. This is
+   `lfs.url` or `remote.origin.lfsurl` from the `.lfsconfig` file of the
+   commit, or else the repository URL with `.git/info/lfs`.
+
+drydock makes sure that the size and the SHA-256 of each object match the
+pointer before it uses or stores the object. It downloads at most 100 MiB
+for one object and 512 MiB for one tree.
+
+The `--git-*` HTTP credentials go to the Git LFS server only when a
+`--git-auth-host` entry names its scheme, host, and port (see
+[Git HTTPS credential hosts](#git-https-credential-hosts)). The server
+gives a download URL for each object, often on another host. That request
+gets only the headers that the server gives for it, never the `--git-*`
+credentials. drydock refuses a plain `http` download from an `https`
+server. drydock has no Git LFS client for SSH repository URLs.
+
+A pointer file that drydock cannot fill stays a pointer, and drydock warns
+`render.lfs-pointer` with the reason. This happens, for example, with
+`--offline` when the Git cache does not hold the object, and for a
+working-tree file that still holds the pointer of `HEAD`. drydock never
+writes your working tree. Run `git lfs pull` to render the content there.
+Submodules keep their pointer files, as in Argo CD. The `drydock cache`
+commands do not list or prune the Git LFS store. See
 [Compatibility](/compatibility/#git-submodules-and-git-lfs).
 
 ## Helm Sources
@@ -773,6 +806,9 @@ applies to every Git fetch over HTTP(S):
 - Remote Kustomize Git bases.
 - Submodules of these repositories and of `--ref` snapshots. A submodule also
   must be on the host and port of its repository.
+- Git LFS batch requests of these repositories and of `--ref` snapshots, also
+  to a server that `.lfsconfig` names. The object downloads never get the
+  credentials.
 
 If you set an HTTP Git credential without `--git-auth-host`, drydock stops
 before it fetches anything. The error names `--git-auth-host`.

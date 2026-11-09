@@ -27,7 +27,8 @@ For task-oriented examples, start with [Getting started](/getting-started/),
 All render-backed commands are runtime-offline: they do not contact live Argo
 CD or Kubernetes. Declared Git, HTTP Helm, OCI Helm, OCI artifact, and remote
 Kustomize sources may still be fetched into explicit drydock caches unless
-`--offline` is set.
+`--offline` is set. This includes the Git LFS objects of a repository whose
+Secret sets `enableLfs`.
 
 ## Discovery Commands
 
@@ -644,6 +645,11 @@ drydock cache list --source oci -o json
 `--source` accepts `git`, `chart`, `remote`, `render`, or `oci`. OCI artifact
 entries list with source `oci` and kind `image`, keyed by repository URL and
 resolved digest.
+
+The Git LFS objects that drydock downloads are in the `lfs` directory of the
+Git cache root that `drydock cache path` prints. The cache commands do not
+list, prune, or delete them. To free that space, remove the directory. See
+[Git LFS](/concepts/source-acquisition/#git-lfs).
 
 Report stale entries without deleting them:
 

@@ -173,10 +173,14 @@ initialized. drydock refuses submodule URLs that git and its own Git client
 read differently, local paths, and `http` URLs with a query. No cache entry
 stores a user or password from a URL.
 
-drydock reads `enableLfs` from repository Secrets. It does not run git-lfs
-and does not download Git LFS objects. A `--ref` snapshot reads Git LFS
-content from the repository's `.git/lfs` store. Any pointer file that
-drydock cannot fill stays a pointer, with a `render.lfs-pointer` warning.
+drydock reads `enableLfs` from repository Secrets. It does not run git-lfs.
+Its own Git LFS client fills the pointer files of fetched Git sources and
+`--ref` snapshots: from the repository's `.git/lfs` store, then from the
+Git LFS store of the Git cache, then, unless `--offline` is set, from the
+Git LFS server of the repository. Any pointer file that drydock cannot fill
+stays a pointer, with a `render.lfs-pointer` warning. drydock has no Git
+LFS client for SSH repository URLs, and it sends the `--git-*` credentials
+only to a Git LFS server that `--git-auth-host` names.
 
 Covered rendering semantics are validated against real Argo CD through the
 [render parity smoke](/concepts/argocd-render-parity/).
