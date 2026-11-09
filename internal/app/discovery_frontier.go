@@ -222,6 +222,12 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 	}
 	destinationNamespace := application.Spec.Destination.Namespace
 	result = placeRepoServerCandidates(result, destinationNamespace, inCluster)
+	if !inCluster {
+		// The settings that an Application on another cluster renders stay
+		// settings sources, but they never name the controller namespace
+		// of this cluster (commandParametersNamespaces).
+		markRemoteSettingsCandidates(&result)
+	}
 	if !hasSettingsConfigMapCandidate(result) || !inCluster {
 		return result, diags, nil
 	}
@@ -231,11 +237,16 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 		// as for any rendered object.
 		return result, diags, nil
 	}
-	// Only the settings ConfigMaps in the Argo CD namespace are settings of
-	// this Argo CD, also when the frontier renders the install for discovery.
-	result = settingsConfigMapsInNamespace(result, destinationNamespace, argoNamespace)
+	// Every settings ConfigMap of the install stays, in every namespace, so
+	// that the controller namespace decision sees each namespace that an
+	// install names (commandParametersNamespaces). The settings load then
+	// counts only the ones in the controller namespace
+	// (otherInstallSettings). A repo-server outside the controller
+	// namespace runs another Argo CD.
+	result = repoServersInNamespace(result, destinationNamespace, argoNamespace)
+	markArgoCDInstallSettings(&result)
 	if install.installsArgoCD() {
-		markSettingsRenderInputs(&result, install, destinationNamespace, argoNamespace)
+		markSettingsRenderInputs(&result, install)
 	}
 	return result, diags, nil
 }

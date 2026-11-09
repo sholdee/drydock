@@ -354,7 +354,7 @@ func TestChangedProjectNames(t *testing.T) {
 		{name: "first unnamed declared", right: []argoappv1.AppProject{project("argocd", "", "*")}, wantAll: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			names, all := changedProjectNames(tc.left, tc.right)
+			names, all := changedProjectNames(tc.left, tc.right, false, false)
 			if all != tc.wantAll {
 				t.Fatalf("changedProjectNames() all = %t, want %t", all, tc.wantAll)
 			}

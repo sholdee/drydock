@@ -31,12 +31,23 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 // drydock does not know the AppProjects of the cluster offline, so it keeps
 // the Application.
 func ValidateGeneratedApplications(apps []argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings, generatedBy GeneratedByLookup) []diagnostic.Diagnostic {
+	return ValidateDeclaredApplications(apps, projects, len(projects) > 0, settings, generatedBy)
+}
+
+// ValidateDeclaredApplications is ValidateGeneratedApplications with
+// declared, which reports that the repository declares AppProjects. It can
+// be true while projects is empty: --argocd-namespace makes drydock skip an
+// AppProject in another namespace, because the controllers never find it
+// there (util/argo/argo.go:819-822). An Application that names such an
+// AppProject then gets project.missing, not the permissive implicit default
+// with project.unresolved.
+func ValidateDeclaredApplications(apps []argoappv1.Application, projects []argoappv1.AppProject, declared bool, settings config.ArgoSettings, generatedBy GeneratedByLookup) []diagnostic.Diagnostic {
 	if len(apps) == 0 {
 		return nil
 	}
 
 	index := ByName(projects)
-	hasLocalProjects := len(projects) > 0
+	hasLocalProjects := declared || len(projects) > 0
 	diags := make([]diagnostic.Diagnostic, 0)
 	for _, app := range apps {
 		projectName := applicationProject(app)

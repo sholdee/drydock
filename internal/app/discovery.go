@@ -49,7 +49,7 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 	if used == nil || !hasGenerationSensitiveApplicationSet(discovered) {
 		return discovered, diags, events, renderCache, renderSig, runErr
 	}
-	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
 	if err != nil {
 		if runErr != nil {
 			err = runErr
@@ -67,7 +67,7 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 	if err != nil {
 		return restarted, diags, events, renderCache, renderSig, err
 	}
-	restartedSettings, _, err := loadSettingsFromDiscovery(root, restarted)
+	restartedSettings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, restarted)
 	if err != nil {
 		return restarted, diags, events, renderCache, renderSig, err
 	}
@@ -215,11 +215,7 @@ func (o Orchestrator) observedDiscoveryRun(ctx context.Context, root string, req
 // as expandFirstApplicationSets has chosen them. It stays nil when the run
 // fails before that choice.
 func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **appsetGenerationSettings) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
-	mode, err := normalizeDiscoveryMode(request.DiscoveryMode)
-	if err != nil {
-		return discovery.Result{}, nil, nil, nil, "", err
-	}
-	maxDepth, err := normalizeMaxDiscoveryDepth(request.MaxDiscoveryDepth, request.MaxDiscoveryDepthSet)
+	mode, maxDepth, err := normalizeDiscoveryOptions(request.DiscoveryOptions)
 	if err != nil {
 		return discovery.Result{}, nil, nil, nil, "", err
 	}
@@ -266,7 +262,7 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 		return discovered, allDiags, allEvents, renderCache, "", err
 	}
 
-	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
 	if err != nil {
 		return discovered, allDiags, allEvents, renderCache, "", err
 	}
@@ -320,12 +316,12 @@ func applicationSetOptionsForRun(ctx context.Context, root string, request Build
 // (warnGitGeneratorProjects) warns about an AppProject that the repository
 // does not declare.
 func applyFinalGates(root string, request BuildRequest, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, error) {
-	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
 	if err != nil {
 		return discovered, nil, err
 	}
 	discovered, diags := pruneNotEnabledNamespaces(discovered, namespaceGateFromSettings(settings))
-	projectDiags := warnGitGeneratorProjects(discovered)
+	projectDiags := warnGitGeneratorProjects(discovered, settings)
 	return discovered, append(diags, request.normalizeDiagnostics(projectDiags, false)...), nil
 }
 
@@ -339,7 +335,7 @@ func expandFirstApplicationSets(root string, request BuildRequest, discovered di
 	if request.appsetGeneration != nil {
 		generation = *request.appsetGeneration
 	} else {
-		settings, _, err := loadSettingsFromDiscovery(root, discovered)
+		settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
 		if err != nil {
 			return discovered, nil, err
 		}
@@ -365,7 +361,7 @@ func (o Orchestrator) applyExplicitKustomizeDiscovery(ctx context.Context, root 
 	if len(request.DiscoverKustomizePaths) == 0 {
 		return discovered, nil, nil, nil
 	}
-	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
 	if err != nil {
 		return discovered, nil, nil, err
 	}
@@ -421,7 +417,7 @@ func (o Orchestrator) discoverRenderedKustomize(ctx context.Context, root string
 			// Best-effort: without the graph paths, committed settings
 			// files stay candidates as before.
 			if values, err := render.KustomizeHelmValues(ctx, root, displayPath, nil); err == nil {
-				markSettingsRenderInputs(&next, settingsInstall{valuesFilesRead: values.ValuesFiles, files: values.Files}, "", defaultArgoCDControllerNamespace)
+				markSettingsRenderInputs(&next, settingsInstall{valuesFilesRead: values.ValuesFiles, files: values.Files})
 			}
 		}
 		var mergeDiags []diagnostic.Diagnostic
@@ -446,7 +442,7 @@ func (o Orchestrator) discoverRenderedFleet(ctx context.Context, root string, re
 			return current, settingsSig, renderSig, allDiags, allEvents, err
 		}
 		current = settled
-		settings, _, err := loadSettingsFromDiscovery(root, current)
+		settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, current)
 		if err != nil {
 			return current, settingsSig, renderSig, allDiags, allEvents, err
 		}
@@ -479,7 +475,7 @@ func (o Orchestrator) discoverRenderedFleet(ctx context.Context, root string, re
 			return next, settingsSig, renderSig, allDiags, allEvents, err
 		}
 
-		nextSettings, _, err := loadSettingsFromDiscovery(root, next)
+		nextSettings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, next)
 		if err != nil {
 			return next, settingsSig, renderSig, allDiags, allEvents, err
 		}
@@ -527,7 +523,7 @@ func (o Orchestrator) settleSettingsInstalls(ctx context.Context, root string, r
 	var allEvents []cacheevent.Event
 	previous := ""
 	for round := range maxSettingsInstallRounds {
-		settings, _, err := loadSettingsFromDiscovery(root, current)
+		settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, current)
 		if err != nil {
 			return current, allDiags, allEvents, err
 		}
@@ -535,10 +531,14 @@ func (o Orchestrator) settleSettingsInstalls(ctx context.Context, root string, r
 		if err != nil {
 			return current, allDiags, allEvents, err
 		}
-		if round > 0 && installSig == previous {
+		// The controller namespace decides the instance name of an
+		// install, so a new one renders the installs again. It is part of
+		// the tracking options of the render key, not of installSig.
+		settled := installSig + "\x00" + settings.ControllerNamespace("")
+		if round > 0 && settled == previous {
 			break
 		}
-		previous = installSig
+		previous = settled
 		rendered, rendersInstalls, diags, events, err := o.renderSettingsInstalls(ctx, root, request, current, settings, installSig, renderCache)
 		allDiags = append(allDiags, diags...)
 		allEvents = append(allEvents, events...)
@@ -570,13 +570,13 @@ func settingsInstallRenderSignature(settings config.ArgoSettings) (string, error
 // frontier does not render for discovery (applicationMayRenderDiscoveryObjects).
 // rendersInstalls is false when there is none.
 //
-// The render is keyed by settingsInstallRenderSignature and default tracking,
-// not by the full render settings: it only reads the data of the settings
-// ConfigMaps, which these leave out, so a later round or frontier iteration
-// with the same signature reuses it. The final render renders the
-// Application again with the full settings.
+// The render is keyed by settingsInstallRenderSignature and default tracking
+// in the controller namespace, not by the full render settings: it only
+// reads the data of the settings ConfigMaps, which these leave out, so a
+// later round or frontier iteration with the same signature reuses it. The
+// final render renders the Application again with the full settings.
 func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, settings config.ArgoSettings, installSig string, renderCache *applicationRenderCache) (discovery.Result, bool, []diagnostic.Diagnostic, []cacheevent.Event, error) {
-	probe := settingsInstallProbe(root, request)
+	probe := settingsInstallProbe(root, request, settings.ControllerNamespace(""))
 	explicit := explicitDiscoverKustomizePaths(request)
 	var installs []discovery.ApplicationFile
 	for _, appFile := range discovered.Applications {
@@ -610,7 +610,14 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 	defer cleanup()
 
 	inputs := applicationInputsByKey(discovered)
-	renderSettings := discoveryRenderSettings{signature: "settings-install\x00" + installSig, settings: settings}
+	renderSettings := discoveryRenderSettings{
+		signature: "settings-install\x00" + installSig,
+		// Only the controller namespace of the tracking options counts:
+		// the instance name reaches the build environment and the
+		// override file name, as in the final render.
+		tracking: TrackingOptions{ControllerNamespace: settings.ControllerNamespace("")},
+		settings: settings,
+	}
 	var out discovery.Result
 	var allDiags []diagnostic.Diagnostic
 	for _, appFile := range installs {
@@ -655,7 +662,7 @@ func scanRepositoryWithSubmodules(ctx context.Context, root string, request Buil
 // read the settings: a configuration that git refuses, or a submodule
 // that drydock cannot find, fails the sources that render from it.
 func fillSnapshotSubmodulesForDiscovery(ctx context.Context, root string, request BuildRequest, discovered discovery.Result) (*snapshotFill, error) {
-	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
 	if err != nil {
 		return nil, err
 	}

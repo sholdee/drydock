@@ -195,3 +195,31 @@ data:
   value: `+value+`
 `)
 }
+
+// Every command that discovers or renders takes --argocd-namespace, and the
+// value reaches discovery, which checks it.
+func TestArgoCDNamespaceFlagOnEveryDiscoveringCommand(t *testing.T) {
+	root := NewRootCommand(VersionInfo{})
+	for _, path := range [][]string{
+		{"build", "apps"}, {"build", "app"},
+		{"diff", "apps"}, {"diff", "app"}, {"diff", "images"},
+		{"get", "apps"}, {"get", "images"},
+		{"test", "apps"}, {"test", "app"},
+		{"diag"},
+	} {
+		cmd, _, err := root.Find(path)
+		if err != nil || cmd.Name() != path[len(path)-1] {
+			t.Fatalf("Find(%v) = %v, %v", path, cmd, err)
+		}
+		if cmd.Flags().Lookup("argocd-namespace") == nil {
+			t.Fatalf("%s has no --argocd-namespace flag", strings.Join(path, " "))
+		}
+	}
+
+	dir := t.TempDir()
+	writeSimpleAppForCLI(t, dir, "stable")
+	_, _, err := executeCLIExpectingError(t, "build", "apps", "--path", dir, "--offline", "--argocd-namespace", "Not_A_Namespace")
+	if !strings.Contains(err.Error(), "argocd-namespace") {
+		t.Fatalf("Execute() error = %v, want an invalid --argocd-namespace error", err)
+	}
+}

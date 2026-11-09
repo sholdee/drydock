@@ -30,6 +30,7 @@ type commonFlags struct {
 	discoverKustomize        []string
 	discoverIgnore           []string
 	discoverManifest         []string
+	argocdNamespace          string
 	repoMaps                 []string
 	offline                  bool
 	refreshCharts            bool
@@ -138,6 +139,7 @@ func bindPathDiscoveryFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringArrayVar(&flags.discoverIgnore, "discover-ignore", flags.discoverIgnore, "repository-relative glob excluded from discovery before decoding")
 	cmd.Flags().StringArrayVar(&flags.discoverManifest, "discover-manifest", flags.discoverManifest, "local Application/ApplicationSet YAML file outside the repository to add to discovery; a diff feeds the same file to both sides")
 	cmd.Flags().StringArrayVar(&flags.repoMaps, "repo-map", flags.repoMaps, "repository URL mapping in from=to form")
+	cmd.Flags().StringVar(&flags.argocdNamespace, "argocd-namespace", flags.argocdNamespace, "namespace where Argo CD runs; wins over argocd-cmd-params-cm, and skips Argo CD settings and AppProjects in other namespaces (default: the namespace that every argocd-cmd-params-cm names, else argocd)")
 }
 
 // bindSelectorFlag registers -l/--selector. Only commands that run on many
@@ -381,6 +383,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		DiscoverKustomizePaths:         append([]string(nil), flags.discoverKustomize...),
 		DiscoverIgnores:                append([]string(nil), flags.discoverIgnore...),
 		DiscoverManifestPaths:          append([]string(nil), flags.discoverManifest...),
+		ArgoCDNamespace:                flags.argocdNamespace,
 		ChangedOnly:                    &flags.changedOnly,
 		ChangedOnlyIncludes:            append([]string(nil), flags.changedOnlyIncludes...),
 		ChangedOnlyIgnores:             append([]string(nil), flags.changedOnlyIgnores...),

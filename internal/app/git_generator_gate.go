@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
 	"github.com/sholdee/drydock/internal/gitref"
@@ -34,11 +35,13 @@ import (
 // the rest, once for each ApplicationSet. The default project always
 // exists. When the repository declares no AppProject at all, project
 // validation already reports that it cannot tell, and this warns nothing.
-func warnGitGeneratorProjects(discovered discovery.Result) []diagnostic.Diagnostic {
-	declared := appendDiscoveredProjects(nil, discovered)
-	if len(declared) == 0 {
+func warnGitGeneratorProjects(discovered discovery.Result, settings config.ArgoSettings) []diagnostic.Diagnostic {
+	// The repository declares AppProjects also when --argocd-namespace
+	// skips every one of them, because the controllers never find them.
+	if len(discovered.Projects) == 0 {
 		return nil
 	}
+	declared := appendDiscoveredProjects(nil, discovered, settings)
 	index := project.ByName(declared)
 	type lookup struct {
 		path    string

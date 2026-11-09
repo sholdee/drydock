@@ -18,11 +18,12 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// A plugin policy bootstrap entrypoint renders as an Application in the
+// Argo CD controller namespace that deploys to that namespace, so its
+// instance name is its bare name.
 const (
-	policyBootstrapApplicationNamespace = "argocd"
-	policyBootstrapApplicationProject   = "default"
-	policyBootstrapDestinationName      = "in-cluster"
-	policyBootstrapDestinationNamespace = "argocd"
+	policyBootstrapApplicationProject = "default"
+	policyBootstrapDestinationName    = "in-cluster"
 )
 
 func (o Orchestrator) applyPolicyBootstrapDiscovery(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, appsetOptions appset.Options, renderCache *applicationRenderCache, mode string) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {
@@ -30,7 +31,7 @@ func (o Orchestrator) applyPolicyBootstrapDiscovery(ctx context.Context, root st
 		return discovered, nil, nil, nil
 	}
 
-	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
 	if err != nil {
 		return discovered, nil, nil, err
 	}
@@ -79,12 +80,17 @@ func renderPolicyBootstrapEntrypoint(ctx context.Context, root string, request B
 	if err != nil {
 		return discovery.Result{}, nil, fmt.Errorf("plugin policy bootstrap entrypoint %q: %w", entrypoint.Name, err)
 	}
-	application := policyBootstrapEntrypointApplication(entrypoint, sourcePath)
+	controllerNamespace := provider.controllerNamespace
+	if controllerNamespace == "" {
+		controllerNamespace = defaultArgoCDControllerNamespace
+	}
+	application := policyBootstrapEntrypointApplication(entrypoint, sourcePath, controllerNamespace)
 	rendered, err := renderApplicationCached(renderContext{
 		context:              ctx,
 		provider:             provider,
 		cache:                renderCache,
 		settingsSignature:    settingsSig,
+		trackingOptions:      TrackingOptions{ControllerNamespace: controllerNamespace},
 		request:              request,
 		syntheticApplication: true,
 	}, application)
@@ -131,10 +137,10 @@ func validatePolicyBootstrapEntrypoint(root string, policy pluginpolicy.Policy, 
 	return filepath.ToSlash(sourcePath), nil
 }
 
-func policyBootstrapEntrypointApplication(entrypoint pluginpolicy.BootstrapEntrypoint, sourcePath string) argoappv1.Application {
+func policyBootstrapEntrypointApplication(entrypoint pluginpolicy.BootstrapEntrypoint, sourcePath, controllerNamespace string) argoappv1.Application {
 	return argoappv1.Application{
 		Name:      entrypoint.Name,
-		Namespace: policyBootstrapApplicationNamespace,
+		Namespace: controllerNamespace,
 		Spec: argoappv1.ApplicationSpec{
 			Project: policyBootstrapApplicationProject,
 			Source: &argoappv1.ApplicationSource{
@@ -146,7 +152,7 @@ func policyBootstrapEntrypointApplication(entrypoint pluginpolicy.BootstrapEntry
 			},
 			Destination: argoappv1.ApplicationDestination{
 				Name:      policyBootstrapDestinationName,
-				Namespace: policyBootstrapDestinationNamespace,
+				Namespace: controllerNamespace,
 			},
 		},
 	}

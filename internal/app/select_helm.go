@@ -169,7 +169,7 @@ func helmRefSelectionPaths(tree *selectionTree, application argoappv1.Applicatio
 			continue
 		}
 		if sourceRendersFromRoot(tree, application, sourcePlan.Source) {
-			sourcePlan.Source = selectionSourceWithOverrides(tree.root, application, sourcePlan.Source)
+			sourcePlan.Source = selectionSourceWithOverrides(tree, application, sourcePlan.Source)
 		}
 		if sourcePlan.Source.Helm == nil {
 			continue
@@ -263,12 +263,13 @@ func globStaticPrefix(pattern string) string {
 // and .argocd-source-<app>.yaml files of its path under root merged in, as
 // PrepareSource merges them before the render and the persistent cache key
 // reads the merged source. So an Application owns the value files, file
-// parameters, and other inputs that only an override file names. drydock
-// uses the default Argo CD controller namespace for the instance name, as
+// parameters, and other inputs that only an override file names. The
+// instance name in the file name uses the controller namespace of tree, as
 // the render does. When the files cannot be read or merged, it returns
 // source: the render then fails, and the Application still owns its path,
 // which holds the override files.
-func selectionSourceWithOverrides(root string, application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.ApplicationSource {
+func selectionSourceWithOverrides(tree *selectionTree, application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.ApplicationSource {
+	root := tree.root
 	if strings.TrimSpace(source.Path) == "" {
 		return source
 	}
@@ -276,7 +277,11 @@ func selectionSourceWithOverrides(root string, application argoappv1.Application
 	if err != nil {
 		return source
 	}
-	merged, err := mergeArgocdSourceOverrides(source, root, filepath.Join(root, sourcePath), application.InstanceName(defaultArgoCDControllerNamespace))
+	controllerNamespace := tree.controllerNamespace
+	if controllerNamespace == "" {
+		controllerNamespace = defaultArgoCDControllerNamespace
+	}
+	merged, err := mergeArgocdSourceOverrides(source, root, filepath.Join(root, sourcePath), application.InstanceName(controllerNamespace))
 	if err != nil {
 		return source
 	}

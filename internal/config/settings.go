@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -263,10 +264,19 @@ type ArgoSettings struct {
 	// ApplicationSets Argo CD reconciles: without the ConfigMap, drydock
 	// cannot tell how the cluster sets them.
 	CommandParametersFound bool `json:"commandParametersFound,omitempty" yaml:"commandParametersFound,omitempty"`
-	// CommandParametersNamespace is the metadata.namespace of the
+	// CommandParametersNamespace is the metadata.namespace of one
 	// argocd-cmd-params-cm ConfigMap, when it names one. The ConfigMap lives
 	// in the Argo CD namespace, which the controllers always reconcile.
+	// MergeDiscovered adds it to CommandParametersNamespaces and leaves it
+	// empty in the merged settings.
 	CommandParametersNamespace string `json:"commandParametersNamespace,omitempty" yaml:"commandParametersNamespace,omitempty"`
+	// CommandParametersNamespaces is the sorted set of namespaces that the
+	// argocd-cmd-params-cm ConfigMaps of the merged settings name.
+	CommandParametersNamespaces []string `json:"commandParametersNamespaces,omitempty" yaml:"commandParametersNamespaces,omitempty"`
+	// ArgoCDNamespace is the Argo CD controller namespace that the
+	// --argocd-namespace flag names. It wins over every
+	// argocd-cmd-params-cm.
+	ArgoCDNamespace string `json:"argocdNamespace,omitempty" yaml:"argocdNamespace,omitempty"`
 	// ApplicationNamespaces is the argocd-cmd-params-cm key
 	// application.namespaces, as written. The application controller
 	// reconciles an Application only in its own namespace or in a namespace
@@ -284,16 +294,26 @@ type ArgoSettings struct {
 const DefaultControllerNamespace = "argocd"
 
 // ControllerNamespace resolves the namespace that the Argo CD controllers
-// run in. The argocd-cmd-params-cm ConfigMap lives there, so its
-// metadata.namespace decides when it names one. Otherwise fallback decides,
-// such as the namespace of an AppProject, and then
-// DefaultControllerNamespace. The namespace gate and AppProject validation
-// use this one rule, so they cannot disagree. One known exception remains:
-// resource tracking and Application instance names (internal/app
-// tracking.go) still assume argocd, as docs/compatibility.md records.
+// run in. Argo CD learns it from its own pod, so drydock takes it from the
+// --argocd-namespace flag (ArgoCDNamespace) when it is set. Otherwise the
+// argocd-cmd-params-cm ConfigMap lives there, so its metadata.namespace
+// decides when every such ConfigMap names the same one. When they name
+// several, drydock uses DefaultControllerNamespace and warns. When none
+// names one, fallback decides, such as the namespace of an AppProject, and
+// then DefaultControllerNamespace. The namespace gate, AppProject
+// validation, Application instance names, and resource tracking use this
+// one rule, so they cannot disagree. Instance names and tracking pass no
+// fallback.
 func (s ArgoSettings) ControllerNamespace(fallback string) string {
-	if namespace := strings.TrimSpace(s.CommandParametersNamespace); namespace != "" {
+	if namespace := strings.TrimSpace(s.ArgoCDNamespace); namespace != "" {
 		return namespace
+	}
+	switch named := s.NamedControllerNamespaces(); len(named) {
+	case 0:
+	case 1:
+		return named[0]
+	default:
+		return DefaultControllerNamespace
 	}
 	if namespace := strings.TrimSpace(fallback); namespace != "" {
 		return namespace
@@ -301,10 +321,30 @@ func (s ArgoSettings) ControllerNamespace(fallback string) string {
 	return DefaultControllerNamespace
 }
 
-// ControllerNamespaceKnown reports whether an argocd-cmd-params-cm that
-// drydock read names its namespace, so ControllerNamespace does not guess.
+// NamedControllerNamespaces returns the sorted set of namespaces that the
+// argocd-cmd-params-cm ConfigMaps of s name.
+func (s ArgoSettings) NamedControllerNamespaces() []string {
+	named := append([]string(nil), s.CommandParametersNamespaces...)
+	if namespace := strings.TrimSpace(s.CommandParametersNamespace); namespace != "" && !slices.Contains(named, namespace) {
+		named = append(named, namespace)
+	}
+	slices.Sort(named)
+	return named
+}
+
+// ControllerNamespaceKnown reports whether drydock knows the controller
+// namespace from more than its default: drydock read an
+// argocd-cmd-params-cm, and either --argocd-namespace names the namespace
+// or one of these ConfigMaps names the one that ControllerNamespace uses.
+// The namespace gate applies only then.
 func (s ArgoSettings) ControllerNamespaceKnown() bool {
-	return s.CommandParametersFound && strings.TrimSpace(s.CommandParametersNamespace) != ""
+	if !s.CommandParametersFound {
+		return false
+	}
+	if strings.TrimSpace(s.ArgoCDNamespace) != "" {
+		return true
+	}
+	return slices.Contains(s.NamedControllerNamespaces(), s.ControllerNamespace(""))
 }
 
 func DefaultSettings() ArgoSettings {

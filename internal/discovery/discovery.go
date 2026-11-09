@@ -102,6 +102,14 @@ type SettingsCandidate struct {
 	// Origin is the key of the Application whose render produced the
 	// candidate. It is empty for a committed file.
 	Origin string
+	// RemoteOnly reports a rendered candidate that only Applications on
+	// other clusters render. It stays a settings source, but it never names
+	// the Argo CD controller namespace of this cluster.
+	RemoteOnly bool
+	// ArgoCDInstall reports a settings ConfigMap that an Argo CD install on
+	// this cluster renders. It names the namespace of that install, and it
+	// counts as a setting only when that is the controller namespace.
+	ArgoCDInstall bool
 }
 
 // IsSettingsConfigMapKind reports whether kind is the candidate kind of an

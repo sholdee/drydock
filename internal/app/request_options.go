@@ -23,6 +23,12 @@ type DiscoveryOptions struct {
 	// DiscoverManifestPaths are operator-supplied Application/ApplicationSet
 	// files outside the repository. Both diff sides share one load.
 	DiscoverManifestPaths []string
+	// ArgoCDNamespace is the --argocd-namespace flag: the namespace where
+	// Argo CD runs. It wins over the argocd-cmd-params-cm ConfigMaps, and
+	// only with it does drydock skip settings objects and AppProjects in
+	// other namespaces (loadSettingsFromDiscovery). Empty lets the
+	// repository decide (config.ArgoSettings.ControllerNamespace).
+	ArgoCDNamespace string
 
 	discoverManifests *discovery.Result
 }

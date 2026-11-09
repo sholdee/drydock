@@ -55,8 +55,19 @@ type selectionSide struct {
 // parent Application (ParentKey) owns only its own inputs here;
 // selectChangedDiffSides selects it with its parent. Directories in Paths
 // are never walked: a listed input is not a render root.
+//
+// It reads the override files with the default controller namespace;
+// withSelectionOnlyPathsIn takes the namespace from the settings.
 func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcepkg.RepoMap, selfRepo selfRepoRefs, gates sourceTypeGates, inputs []ApplicationSelectionInput) selectionSide {
+	return withSelectionOnlyPathsIn(ctx, root, repoMaps, selfRepo, gates, defaultArgoCDControllerNamespace, inputs)
+}
+
+// withSelectionOnlyPathsIn is withSelectionOnlyPaths for the Argo CD
+// controller namespace controllerNamespace, which decides the instance name
+// in the .argocd-source-<app>.yaml file name, as in the render.
+func withSelectionOnlyPathsIn(ctx context.Context, root string, repoMaps []sourcepkg.RepoMap, selfRepo selfRepoRefs, gates sourceTypeGates, controllerNamespace string, inputs []ApplicationSelectionInput) selectionSide {
 	tree := newSelectionTree(root, repoMaps, selfRepo)
+	tree.controllerNamespace = controllerNamespace
 	memo := map[string][]string{}
 	kustomizeGraph := func(source argoappv1.ApplicationSource) []string {
 		key := kustomizeSelectionMemoKey(source)
@@ -100,7 +111,7 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 				out[i].Paths = append(out[i].Paths, normalizeSelectPath(specSource.Path))
 			}
 			// The render reads the source after its override files.
-			source := selectionSourceWithOverrides(root, input.Application, specSource)
+			source := selectionSourceWithOverrides(tree, input.Application, specSource)
 			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(root, tree.helmGlobs, source)...)
 			// A directory source reads the files that its symlinks reach
 			// and its Jsonnet files import, also outside its path. The
@@ -227,6 +238,9 @@ type selectionTree struct {
 	// helmGlobs memoizes the paths that each Helm value file glob owns on
 	// this tree.
 	helmGlobs helmGlobMemo
+	// controllerNamespace is the Argo CD controller namespace, which
+	// decides the instance name in the .argocd-source-<app>.yaml file name.
+	controllerNamespace string
 }
 
 func newSelectionTree(root string, repoMaps []sourcepkg.RepoMap, selfRepo selfRepoRefs) *selectionTree {

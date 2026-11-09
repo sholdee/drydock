@@ -57,8 +57,8 @@ data:
 	if err != nil {
 		t.Fatalf("LoadCommandParametersConfigMap() error = %v", err)
 	}
-	if !settings.CommandParametersFound || settings.CommandParametersNamespace != "gitops" {
-		t.Fatalf("found = %t, namespace = %q, want true and gitops", settings.CommandParametersFound, settings.CommandParametersNamespace)
+	if !settings.CommandParametersFound || settings.ControllerNamespace("") != "gitops" {
+		t.Fatalf("found = %t, namespace = %q, want true and gitops", settings.CommandParametersFound, settings.ControllerNamespace(""))
 	}
 	if got := settings.ApplicationNamespaces.Value; got != "team-*, /^tenant-[0-9]+$/" {
 		t.Fatalf("ApplicationNamespaces = %q", got)
@@ -114,5 +114,62 @@ func TestMergeNamespaceListsConflict(t *testing.T) {
 	}
 	if !merged.CommandParametersFound {
 		t.Fatal("merged CommandParametersFound = false, want true")
+	}
+}
+
+// ControllerNamespace decides by the set of namespaces that the
+// argocd-cmd-params-cm ConfigMaps name: --argocd-namespace first, then the
+// one namespace when they agree, then argocd when they disagree, then the
+// fallback, then argocd. The namespace gate applies only when a found
+// ConfigMap names the chosen namespace or --argocd-namespace names it.
+func TestControllerNamespaceRule(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		flag      string
+		named     []string
+		fallback  string
+		want      string
+		wantKnown bool
+	}{
+		{name: "nothing", want: "argocd"},
+		{name: "fallback", fallback: "projects", want: "projects"},
+		{name: "one namespace", named: []string{"gitops"}, fallback: "projects", want: "gitops", wantKnown: true},
+		{name: "disagree with argocd", named: []string{"argocd", "gitops"}, fallback: "projects", want: "argocd", wantKnown: true},
+		{name: "disagree without argocd", named: []string{"gitops", "team-a"}, fallback: "projects", want: "argocd"},
+		{name: "flag wins", flag: "platform", named: []string{"gitops"}, want: "platform", wantKnown: true},
+		{name: "flag alone", flag: "platform", want: "platform", wantKnown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := DefaultSettings()
+			settings.CommandParametersFound = true
+			settings.CommandParametersNamespaces = tc.named
+			settings.ArgoCDNamespace = tc.flag
+			if got := settings.ControllerNamespace(tc.fallback); got != tc.want {
+				t.Fatalf("ControllerNamespace(%q) = %q, want %q", tc.fallback, got, tc.want)
+			}
+			if got := settings.ControllerNamespaceKnown(); got != tc.wantKnown {
+				t.Fatalf("ControllerNamespaceKnown() = %t, want %t", got, tc.wantKnown)
+			}
+		})
+	}
+}
+
+// MergeDiscovered keeps every namespace that the candidates name, so the
+// order of the candidates cannot decide the controller namespace.
+func TestMergeDiscoveredKeepsEveryCommandParametersNamespace(t *testing.T) {
+	hub := DefaultSettings()
+	hub.CommandParametersFound = true
+	hub.CommandParametersNamespace = "gitops"
+	spoke := DefaultSettings()
+	spoke.CommandParametersFound = true
+	spoke.CommandParametersNamespace = "argocd"
+	for _, order := range [][]ArgoSettings{{hub, spoke}, {spoke, hub}} {
+		merged, _ := MergeDiscovered(order)
+		if got := strings.Join(merged.NamedControllerNamespaces(), ","); got != "argocd,gitops" {
+			t.Fatalf("NamedControllerNamespaces() = %q, want argocd,gitops", got)
+		}
+		if got := merged.ControllerNamespace(""); got != "argocd" {
+			t.Fatalf("ControllerNamespace() = %q, want argocd", got)
+		}
 	}
 }

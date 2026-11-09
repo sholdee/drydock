@@ -137,7 +137,33 @@ func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]dis
 		func(item discovery.SettingsCandidate) (discovery.SourceTier, string, int) {
 			return item.Tier, item.Path, item.DocumentIndex
 		})
-	return keepSettingsRenderInputs(out, base, overlay), diags
+	return keepSettingsReach(keepSettingsRenderInputs(out, base, overlay), base, overlay), diags
+}
+
+// keepSettingsReach keeps the reach of a merged candidate independent of
+// which copy the merge keeps. It is RemoteOnly only when every base and
+// overlay candidate with its identity is: an object that an Application on
+// this cluster renders too reaches this cluster. It is an ArgoCDInstall
+// ConfigMap when any copy is.
+func keepSettingsReach(out, base, overlay []discovery.SettingsCandidate) []discovery.SettingsCandidate {
+	local := map[string]bool{}
+	install := map[string]bool{}
+	marked := false
+	for _, item := range append(append([]discovery.SettingsCandidate(nil), base...), overlay...) {
+		key := settingsDiscoveryKey(item)
+		local[key] = local[key] || !item.RemoteOnly
+		install[key] = install[key] || item.ArgoCDInstall
+		marked = marked || item.RemoteOnly || item.ArgoCDInstall
+	}
+	if !marked {
+		return out
+	}
+	for i := range out {
+		key := settingsDiscoveryKey(out[i])
+		out[i].RemoteOnly = !local[key]
+		out[i].ArgoCDInstall = install[key]
+	}
+	return out
 }
 
 // keepSettingsRenderInputs gives each merged candidate the union of the

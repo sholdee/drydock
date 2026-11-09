@@ -15,7 +15,7 @@ import (
 func expandApplicationSetDiscovery(root string, request BuildRequest, discovered discovery.Result, appsetOptions appset.Options) (discovery.Result, []diagnostic.Diagnostic, error) {
 	var generated discovery.Result
 	var allDiags []diagnostic.Diagnostic
-	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
 	if err != nil {
 		return discovered, nil, err
 	}
