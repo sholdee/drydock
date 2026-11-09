@@ -72,6 +72,10 @@ type Options struct {
 	// AllowFileSubmoduleTransport lets a submodule URL be a local path or a
 	// file URL, which git refuses for submodules. Only tests set it.
 	AllowFileSubmoduleTransport bool
+	// AllowFileTransport lets the URL of a Git request be a file URL or a
+	// local path. drydock refuses them, so that a repository cannot make
+	// drydock read another Git repository on the machine. Only tests set it.
+	AllowFileTransport bool
 }
 
 type Result struct {

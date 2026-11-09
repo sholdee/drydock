@@ -42,7 +42,7 @@ func TestDefaultAcquirerClonesGitRemoteIntoRemoteCache(t *testing.T) {
 		Kind:     RequestGitRepo,
 		RepoURL:  "file://" + filepath.ToSlash(remote.path),
 		Revision: "HEAD",
-	}, Options{CacheDir: cacheDir})
+	}, Options{AllowFileTransport: true, CacheDir: cacheDir})
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
@@ -75,7 +75,7 @@ func TestDefaultRemoteAcquirerWritesGitMetadata(t *testing.T) {
 		RepoURL:  "file://" + filepath.ToSlash(remote.path),
 		Revision: "HEAD",
 	}
-	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: t.TempDir()})
+	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
@@ -107,7 +107,7 @@ func TestDefaultRemoteAcquirerWritesGitMetadataOnCacheHit(t *testing.T) {
 		Revision: hash.String(),
 	}
 	cacheDir := t.TempDir()
-	first, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	first, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir})
 	if err != nil {
 		t.Fatalf("first Acquire() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestDefaultRemoteAcquirerWritesGitMetadataOnCacheHit(t *testing.T) {
 		t.Fatalf("Remove(metadata) error = %v", err)
 	}
 
-	second, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	second, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir})
 	if err != nil {
 		t.Fatalf("second Acquire() error = %v", err)
 	}
@@ -138,7 +138,7 @@ func TestDefaultAcquirerUsesCachedGitRemoteWhenOffline(t *testing.T) {
 		Revision: "HEAD",
 	}
 
-	first, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	first, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir})
 	if err != nil {
 		t.Fatalf("first Acquire() error = %v", err)
 	}
@@ -146,7 +146,7 @@ func TestDefaultAcquirerUsesCachedGitRemoteWhenOffline(t *testing.T) {
 		t.Fatalf("rename remote fixture out of the way: %v", err)
 	}
 
-	second, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir, Offline: true})
+	second, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir, Offline: true})
 	if err != nil {
 		t.Fatalf("offline Acquire() error = %v", err)
 	}
@@ -164,7 +164,7 @@ func TestDefaultAcquirerUsesCachedGitRemoteWhenOffline(t *testing.T) {
 		Kind:     RequestGitRepo,
 		RepoURL:  "file://" + filepath.ToSlash(filepath.Join(t.TempDir(), "missing")),
 		Revision: "HEAD",
-	}, Options{CacheDir: cacheDir, Offline: true})
+	}, Options{AllowFileTransport: true, CacheDir: cacheDir, Offline: true})
 	if err == nil || !strings.Contains(err.Error(), "offline cache miss") {
 		t.Fatalf("offline miss error = %v, want offline cache miss", err)
 	}
@@ -193,7 +193,7 @@ func TestDefaultAcquirerDoesNotFetchCachedGitRemoteWithoutRefresh(t *testing.T) 
 		t.Fatalf("rename remote fixture out of the way: %v", err)
 	}
 
-	_, err = DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	_, err = DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir})
 	if err == nil {
 		t.Fatal("Acquire() error = nil, want cached checkout error without fetch")
 	}
@@ -222,7 +222,7 @@ func TestDefaultAcquirerUsesOfflineGitCacheWithoutCredentials(t *testing.T) {
 		t.Fatalf("PlainClone() error = %v", err)
 	}
 
-	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir, Offline: true})
+	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir, Offline: true})
 	if err != nil {
 		t.Fatalf("offline Acquire() error = %v", err)
 	}
@@ -244,7 +244,7 @@ func TestDefaultAcquirerRefreshesGitRemoteWhenRequested(t *testing.T) {
 		Revision: "HEAD",
 	}
 
-	first, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	first, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir})
 	if err != nil {
 		t.Fatalf("first Acquire() error = %v", err)
 	}
@@ -253,7 +253,7 @@ func TestDefaultAcquirerRefreshesGitRemoteWhenRequested(t *testing.T) {
 	}
 
 	secondHash := commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: second\n")
-	cached, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	cached, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir})
 	if err != nil {
 		t.Fatalf("cached Acquire() error = %v", err)
 	}
@@ -264,7 +264,7 @@ func TestDefaultAcquirerRefreshesGitRemoteWhenRequested(t *testing.T) {
 		t.Fatal("cached FromCache = false, want true")
 	}
 
-	refreshed, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir, Refresh: true})
+	refreshed, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir, Refresh: true})
 	if err != nil {
 		t.Fatalf("refresh Acquire() error = %v", err)
 	}
@@ -291,7 +291,7 @@ func TestDefaultAcquirerRejectsGitRemoteCacheInsideForbiddenRoot(t *testing.T) {
 		Kind:     RequestGitRepo,
 		RepoURL:  "file://" + filepath.ToSlash(t.TempDir()),
 		Revision: "HEAD",
-	}, Options{CacheDir: cacheDir, ForbiddenRoots: []string{repoRoot}})
+	}, Options{AllowFileTransport: true, CacheDir: cacheDir, ForbiddenRoots: []string{repoRoot}})
 	if err == nil || !strings.Contains(err.Error(), "must not be inside repository root") {
 		t.Fatalf("Acquire() error = %v, want cache containment error", err)
 	}
@@ -309,7 +309,7 @@ func TestDefaultAcquirerRedactsGitRemoteCredentialErrors(t *testing.T) {
 		Kind:     RequestGitRepo,
 		RepoURL:  "https://user:url-secret@example.invalid/repo.git?token=query-secret#frag-secret",
 		Revision: "main",
-	}, Options{CacheDir: t.TempDir(), GitCredentials: creds})
+	}, Options{AllowFileTransport: true, CacheDir: t.TempDir(), GitCredentials: creds})
 	if err == nil {
 		t.Fatal("Acquire() error = nil, want clone error")
 	}
@@ -569,14 +569,14 @@ func TestDefaultAcquirerRefreshesTheDefaultBranchByName(t *testing.T) {
 	}
 	cacheDir := t.TempDir()
 	request := Request{Kind: RequestGitRepo, RepoURL: "file://" + filepath.ToSlash(remote.path), Revision: head.Name().Short()}
-	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{CacheDir: cacheDir}); err != nil {
+	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir}); err != nil {
 		t.Fatalf("first Acquire() error = %v", err)
 	}
 	pushed := commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: second\n")
 	for _, options := range []Options{
-		{CacheDir: cacheDir, Refresh: true},
-		{CacheDir: cacheDir},
-		{CacheDir: cacheDir, Offline: true},
+		{AllowFileTransport: true, CacheDir: cacheDir, Refresh: true},
+		{AllowFileTransport: true, CacheDir: cacheDir},
+		{AllowFileTransport: true, CacheDir: cacheDir, Offline: true},
 	} {
 		result, err := DefaultAcquirer{}.Acquire(context.Background(), request, options)
 		if err != nil {
@@ -599,13 +599,49 @@ func TestDefaultAcquirerRefreshPrunesDeletedBranches(t *testing.T) {
 	}
 	cacheDir := t.TempDir()
 	request := Request{Kind: RequestGitRepo, RepoURL: "file://" + filepath.ToSlash(remote.path), Revision: "feature"}
-	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{CacheDir: cacheDir}); err != nil {
+	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir}); err != nil {
 		t.Fatalf("first Acquire() error = %v", err)
 	}
 	if err := remote.repo.Storer.RemoveReference(branch); err != nil {
 		t.Fatalf("RemoveReference(feature) error = %v", err)
 	}
-	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{CacheDir: cacheDir, Refresh: true}); err == nil {
+	if _, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir, Refresh: true}); err == nil {
 		t.Fatal("refresh Acquire() of a deleted branch error = nil, want it to fail")
+	}
+}
+
+// TestDefaultAcquirerRefusesLocalGitTransport checks that a remote Git
+// request never reads a Git repository from the local file system: a file
+// URL, in any case, and a file: form without a host. drydock refuses them
+// before it opens the cache, so no cache entry exists afterwards.
+func TestDefaultAcquirerRefusesLocalGitTransport(t *testing.T) {
+	remote := createRemoteGitFixture(t)
+	commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")
+	local := filepath.ToSlash(remote.path)
+	for _, repoURL := range []string{
+		"file://" + local,
+		"FILE://" + local,
+		"file://localhost" + local,
+		"file:" + local,
+		"file::" + local,
+	} {
+		t.Run(repoURL, func(t *testing.T) {
+			cacheDir := t.TempDir()
+			_, err := DefaultAcquirer{}.Acquire(context.Background(), Request{
+				Kind:     RequestGitRepo,
+				RepoURL:  repoURL,
+				Revision: "HEAD",
+			}, Options{CacheDir: cacheDir})
+			if err == nil || !strings.Contains(err.Error(), "uses the local file transport") {
+				t.Fatalf("Acquire() error = %v, want local file transport refusal", err)
+			}
+			entries, readErr := os.ReadDir(cacheDir)
+			if readErr != nil {
+				t.Fatalf("ReadDir() error = %v", readErr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("cache dir holds %d entries, want none", len(entries))
+			}
+		})
 	}
 }
