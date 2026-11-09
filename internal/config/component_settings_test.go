@@ -131,6 +131,20 @@ func TestParseComponentArgs(t *testing.T) {
 			args:      []string{"/usr/local/bin/argocd-application-controller", "--kubeconfig", "--application-namespaces", "-n", "argocd"},
 		},
 		{
+			name:      "tini runs the program",
+			component: RepoServerComponent,
+			command:   []string{"/usr/bin/tini", "--", "/usr/local/bin/argocd-repo-server"},
+			args:      []string{"--allow-oob-symlinks"},
+			want:      []ComponentFlag{{Flag: "allow-oob-symlinks", Value: "true"}},
+		},
+		{
+			name:      "tini with options runs the program",
+			component: RepoServerComponent,
+			command:   []string{"tini", "-g", "-p", "SIGTERM", "/usr/local/bin/argocd-repo-server"},
+			args:      []string{"--include-hidden-directories"},
+			want:      []ComponentFlag{{Flag: "include-hidden-directories", Value: "true"}},
+		},
+		{
 			name:      "another program is not read",
 			component: RepoServerComponent,
 			command:   []string{"sh", "-c"},
@@ -190,6 +204,26 @@ func TestParseComponentArgsReadsEveryBooleanFlagAsBoolean(t *testing.T) {
 					t.Fatalf("ParseComponentArgs(%q) = %#v, %q, want the setting flag after the boolean flag", args, got, notes)
 				}
 			})
+		}
+	}
+}
+
+// ComponentRunsProgram skips a leading tini, with its options up to --.
+func TestComponentRunsProgram(t *testing.T) {
+	for _, tc := range []struct {
+		command, args []string
+		want          bool
+	}{
+		{args: []string{"/usr/local/bin/argocd-repo-server"}, want: true},
+		{command: []string{"/usr/bin/tini", "--"}, args: []string{"/usr/local/bin/argocd-repo-server"}, want: true},
+		{command: []string{"tini", "-s", "-e", "143", "--", "argocd-repo-server"}, want: true},
+		{command: []string{"tini", "--", "sh", "-c"}, args: []string{"exec argocd-repo-server"}},
+		{command: []string{"sh", "-c"}, args: []string{"exec /usr/local/bin/argocd-repo-server --allow-oob-symlinks"}},
+		{command: []string{"/var/run/argocd/argocd-cmp-server"}},
+		{},
+	} {
+		if got := ComponentRunsProgram(RepoServerComponent, tc.command, tc.args); got != tc.want {
+			t.Errorf("ComponentRunsProgram(%q, %q) = %v, want %v", tc.command, tc.args, got, tc.want)
 		}
 	}
 }

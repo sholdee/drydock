@@ -93,13 +93,18 @@ func applyComponentWorkloadSettings(root string, collected workloadCandidates, s
 		workloads := collected.byKind[componentWorkloadKinds[component]]
 		var chosen []componentValue
 		chosenRendered := false
+		var withoutProgram []repoServerCandidate
 		for _, item := range workloads {
 			rendered := item.candidate.Tier != discovery.SourceTierStatic
+			if !rendered && committedKustomizePatch(root, item.candidate.Path) {
+				// A listed Kustomize patch holds only part of the env list.
+				continue
+			}
 			container := componentContainer(item.candidate.Object, component)
-			if container == nil || (!rendered && committedKustomizePatch(root, item.candidate.Path)) {
-				// Not a complete workload of the program: a CMP sidecar,
-				// a patch without the program, or a listed Kustomize
-				// patch, which holds only part of the env list.
+			if container == nil {
+				// No container runs the program: a CMP sidecar, a patch
+				// without the program, or a shell wrapper.
+				withoutProgram = append(withoutProgram, item)
 				continue
 			}
 			name := repoServerDisplayName(item)
@@ -125,6 +130,32 @@ func applyComponentWorkloadSettings(root string, collected workloadCandidates, s
 				config.ApplyComponentSetting(settings, value.setting.Key, value.value)
 			}
 		}
+		if chosen == nil {
+			diags = append(diags, withoutProgramDiagnostics(component, withoutProgram)...)
+		}
+	}
+	return diags
+}
+
+// withoutProgramDiagnostics warns about each workload that counts but has
+// no container whose command line runs the program, when no other workload
+// of the program does, with the notes about its command lines. drydock
+// then keeps the argocd-cmd-params-cm values.
+func withoutProgramDiagnostics(component config.ArgoCDComponent, items []repoServerCandidate) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+	for _, item := range items {
+		message := fmt.Sprintf("the Argo CD %s %s has no container whose command line runs %s, for example because a shell starts it; drydock does not read its env or flags and keeps the argocd-cmd-params-cm values", component, repoServerDisplayName(item), component)
+		var notes []string
+		containers, _, _ := unstructured.NestedSlice(item.candidate.Object.Object, "spec", "template", "spec", "containers")
+		for _, entry := range containers {
+			if container, ok := entry.(map[string]any); ok {
+				notes = append(notes, componentArgsNotes(container)...)
+			}
+		}
+		if len(notes) > 0 {
+			message += ": " + strings.Join(notes, "; ")
+		}
+		diags = append(diags, repoServerWarning(diagnostic.Provenance{Path: filepath.ToSlash(item.candidate.Path)}, message))
 	}
 	return diags
 }

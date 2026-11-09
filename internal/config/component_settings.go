@@ -190,12 +190,42 @@ func ComponentSettingEnv(component ArgoCDComponent, name string) bool {
 
 // ComponentRunsProgram reports whether the command line of a container,
 // command and then args, runs the program of component: its first item
-// names the program, such as /usr/local/bin/argocd-repo-server. A container
-// without a command line, such as one in a Kustomize patch, or one that
-// runs another program, such as a CMP sidecar, does not.
+// names the program, such as /usr/local/bin/argocd-repo-server, or tini
+// runs it (componentProgramIndex). A container without a command line,
+// such as one in a Kustomize patch, or one that runs another program, such
+// as a CMP sidecar or a shell, does not.
 func ComponentRunsProgram(component ArgoCDComponent, command, args []string) bool {
-	line := append(append([]string(nil), command...), args...)
-	return len(line) > 0 && path.Base(line[0]) == string(component)
+	return componentProgramIndex(component, componentCommandLine(command, args)) >= 0
+}
+
+func componentCommandLine(command, args []string) []string {
+	return append(append([]string(nil), command...), args...)
+}
+
+// componentProgramIndex returns the index of the program of component in
+// line, or -1. The Argo CD image starts the program through tini (its
+// ENTRYPOINT is /usr/bin/tini --), so a line that names tini first runs
+// the program after the options of tini, up to "--". The -p and -e options
+// of tini take a value.
+func componentProgramIndex(component ArgoCDComponent, line []string) int {
+	index := 0
+	if len(line) > 0 && path.Base(line[0]) == "tini" {
+		index = 1
+		for index < len(line) && strings.HasPrefix(line[index], "-") {
+			option := line[index]
+			index++
+			if option == "--" {
+				break
+			}
+			if option == "-p" || option == "-e" {
+				index++
+			}
+		}
+	}
+	if index < len(line) && path.Base(line[index]) == string(component) {
+		return index
+	}
+	return -1
 }
 
 // ComponentFlag is the value of a setting flag on the command line of a
@@ -221,18 +251,19 @@ type ComponentFlag struct {
 // flag reads each value as one CSV line and adds its fields to those of
 // the earlier ones. "--" ends the flags.
 func ParseComponentArgs(component ArgoCDComponent, command, args []string) ([]ComponentFlag, []string) {
-	line := append(append([]string(nil), command...), args...)
+	line := componentCommandLine(command, args)
 	if len(line) == 0 {
 		return nil, nil
 	}
-	if program := path.Base(line[0]); program != string(component) {
+	program := componentProgramIndex(component, line)
+	if program < 0 {
 		if hasSettingFlagText(component, line) {
 			return nil, []string{fmt.Sprintf("the container runs %q, not %s, so drydock does not read its flags", line[0], component)}
 		}
 		return nil, nil
 	}
 	parser := componentArgsParser{component: component, values: map[string]*componentFlagValue{}}
-	parser.parse(line[1:])
+	parser.parse(line[program+1:])
 	var flags []ComponentFlag
 	for _, setting := range componentSettings[component] {
 		if value, ok := parser.values[setting.Flag]; ok && setting.Flag != "" {

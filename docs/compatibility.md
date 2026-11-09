@@ -1776,8 +1776,15 @@ Supported:
   repo-server for the Helm namespace: it comes from the same install as an
   `argocd-cm`, or it runs in the Argo CD controller namespace. It must also
   have a container whose command line runs the program, and drydock reads
-  only that container. So a CMP sidecar or a Kustomize patch without the
-  program does not count. A committed file that a kustomization in its
+  only that container. The first item of the command line names the
+  program, or `tini` runs it after its options and `--`, as the
+  `/usr/bin/tini --` entrypoint of the Argo CD image does. So a CMP sidecar
+  or a Kustomize patch without the program does not count. When no
+  workload of a program counts for that reason, drydock keeps the
+  `argocd-cmd-params-cm` values and warns for each workload, with the notes
+  about its command line. A shell that starts the program, such as
+  `sh -c "exec argocd-repo-server ..."`, gives that warning, because drydock
+  does not parse a shell line. A committed file that a kustomization in its
   directory or in a directory above it lists under `patches`,
   `patchesStrategicMerge`, or `patchesJson6902` does not count either,
   because kustomize merges it into a workload and it holds only part of the

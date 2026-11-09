@@ -795,3 +795,65 @@ func TestOrchestratorDiffAppsServerSideDiffFromControllerWorkload(t *testing.T) 
 		})
 	}
 }
+
+const wrapperRepoServerEnv = `          env:
+            - name: ARGOCD_REPO_SERVER_ALLOW_OUT_OF_BOUNDS_SYMLINKS
+              valueFrom:
+                configMapKeyRef:
+                  name: argocd-cmd-params-cm
+                  key: reposerver.allow.oob.symlinks
+                  optional: true
+`
+
+// A committed repo-server that runs the program through tini is read. One
+// that runs it through a shell is not: drydock cannot parse the shell
+// line, so it keeps the argocd-cmd-params-cm value and warns, with the
+// notes about the command line. A sidecar-only file that no kustomization
+// lists as a patch, next to nothing else, warns too.
+func TestComponentSettingsWrappedPrograms(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		container string
+		want      string
+		warnings  []string
+	}{
+		{
+			name:      "tini",
+			container: "        - name: argocd-repo-server\n          command: [/usr/bin/tini, --, /usr/local/bin/argocd-repo-server]\n          args: [--allow-oob-symlinks]\n" + wrapperRepoServerEnv,
+			want:      "true",
+		},
+		{
+			name:      "shell",
+			container: "        - name: argocd-repo-server\n          command: [sh, -c]\n          args: [\"exec /usr/local/bin/argocd-repo-server --allow-oob-symlinks\"]\n" + wrapperRepoServerEnv,
+			want:      "false",
+			warnings:  []string{"has no container whose command line runs argocd-repo-server", `the container runs "sh", not argocd-repo-server`},
+		},
+		{
+			name:      "unlisted sidecar only",
+			container: "        - name: avp\n          command: [/var/run/argocd/argocd-cmp-server]\n          env:\n            - name: ARGOCD_REPO_SERVER_ALLOW_OUT_OF_BOUNDS_SYMLINKS\n              value: \"true\"\n",
+			want:      "false",
+			warnings:  []string{"has no container whose command line runs argocd-repo-server"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, filepath.Join(root, "bootstrap", "argocd", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: argocd\nresources:\n  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/install.yaml\n  - argocd-cmd-params-cm.yaml\n  - repo-server.yaml\n")
+			writeTestFile(t, filepath.Join(root, "bootstrap", "argocd", "argocd-cmd-params-cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argocd-cmd-params-cm\ndata:\n  reposerver.allow.oob.symlinks: \"false\"\n")
+			writeTestFile(t, filepath.Join(root, "bootstrap", "argocd", "repo-server.yaml"), "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: argocd-repo-server\nspec:\n  template:\n    spec:\n      containers:\n"+tc.container)
+			writeDiffApplication(t, root, "other", "other", "same")
+			result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+			if got := result.Settings.AllowOutOfBoundsSymlinks.Value; got != tc.want {
+				t.Errorf("AllowOutOfBoundsSymlinks = %q, want %q", got, tc.want)
+			}
+			all := workloadWarnings(result.Diagnostics, "Argo CD argocd-repo-server")
+			for _, text := range tc.warnings {
+				if got := workloadWarnings(all, text); len(got) != 1 {
+					t.Errorf("warnings with %q = %#v, want one in %#v", text, got, all)
+				}
+			}
+			if len(tc.warnings) == 0 && len(all) != 0 {
+				t.Errorf("warnings = %#v, want none", all)
+			}
+		})
+	}
+}
