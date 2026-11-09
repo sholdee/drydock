@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	git "github.com/go-git/go-git/v5"
+	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/sholdee/drydock/internal/gittree/submoduletest"
 )
@@ -53,6 +54,7 @@ func TestCheckURLAuthority(t *testing.T) {
 		"https://a.test?",
 		`https://a.test\@b.test/org/repo.git`,
 		"ssh://git@a.test#x/org/repo.git",
+		"https://ci:p?ss@github.com/org/repo.git",
 	} {
 		if err := CheckURLAuthority(raw); err == nil {
 			t.Errorf("CheckURLAuthority(%q) = nil, want an error", raw)
@@ -61,6 +63,7 @@ func TestCheckURLAuthority(t *testing.T) {
 	for _, raw := range []string{
 		"https://github.com/org/repo.git",
 		"https://user:secret@github.com/org/repo.git",
+		"https://ci:p%3Fss%23@github.com/org/repo.git",
 		"https://github.com/org/repo.git?ref=main#frag",
 		"http://127.0.0.1:8080/repo.git",
 		"ssh://git@github.com/org/repo.git",
@@ -101,5 +104,38 @@ func TestOpenSubmoduleStoreRefusesAStoreOfAnotherRepository(t *testing.T) {
 	}
 	if !hasCommit(repo, commit) {
 		t.Fatal("the store lacks the commit of the request")
+	}
+}
+
+// TestOriginMatchesNeedsEveryOriginURL checks that OriginMatches accepts
+// an entry only when every URL of its origin remote names the repository,
+// and refuses an entry without an origin remote or without origin URLs.
+func TestOriginMatchesNeedsEveryOriginURL(t *testing.T) {
+	const want = "https://git.example.test/org/repo.git"
+	same := func(origin string) bool { return origin == want }
+	for _, tc := range []struct {
+		name string
+		urls []string
+		ok   bool
+	}{
+		{name: "one matching URL", urls: []string{want}, ok: true},
+		{name: "matching URL first", urls: []string{want, "https://other.example.test/org/repo.git"}},
+		{name: "matching URL last", urls: []string{"https://other.example.test/org/repo.git", want}},
+		{name: "no origin remote"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, err := git.PlainInit(t.TempDir(), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tc.urls) > 0 {
+				if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: tc.urls}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := OriginMatches(repo, same); got != tc.ok {
+				t.Fatalf("OriginMatches() = %t, want %t", got, tc.ok)
+			}
+		})
 	}
 }

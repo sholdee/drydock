@@ -2,13 +2,18 @@ package source
 
 import (
 	"context"
+	"encoding/base64"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	git "github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
+	gitclient "github.com/go-git/go-git/v5/plumbing/transport/client"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	cachepkg "github.com/sholdee/drydock/internal/cache"
 	"github.com/sholdee/drydock/internal/gittree/submoduletest"
@@ -184,11 +189,11 @@ func TestDefaultGitAcquirerRefusesACacheEntryOfAnotherRepository(t *testing.T) {
 	}
 }
 
-// setCacheEntryOrigin sets the origin URL of the cache entry at path to
-// originURL, as drydock writes it when it clones originURL. Tests that
+// setCacheEntryOrigin sets the origin URLs of the cache entry at path to
+// originURLs. One URL is what drydock writes when it clones that URL. Tests that
 // build an entry from a local clone use it, because drydock does not use
 // an entry whose origin names another repository.
-func setCacheEntryOrigin(t *testing.T, path, originURL string) {
+func setCacheEntryOrigin(t *testing.T, path string, originURLs ...string) {
 	t.Helper()
 	repo, err := git.PlainOpen(path)
 	if err != nil {
@@ -197,7 +202,101 @@ func setCacheEntryOrigin(t *testing.T, path, originURL string) {
 	if err := repo.DeleteRemote("origin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{originURL}}); err != nil {
+	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: originURLs}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestDefaultGitAcquirerRefusesAnEntryWithOneForeignOriginURL checks a
+// cache entry whose origin remote has two URLs: the listed URL and another
+// host. drydock uses the entry only when every origin URL names the
+// repository of the request. Offline, the request is a cache miss and the
+// other content is never served. Online, drydock clones the listed URL into
+// the entry again and does not contact the other host. A check that
+// accepts the entry when any one URL matches fails this test.
+func TestDefaultGitAcquirerRefusesAnEntryWithOneForeignOriginURL(t *testing.T) {
+	listed, listedURL, attacker, _ := listedAndAttackerHosts(t)
+	cacheDir := t.TempDir()
+	poisonCacheEntry(t, cacheDir, listedURL, "main", attacker.URL+"/repo.git")
+	setCacheEntryOrigin(t, cachepkg.GitEntryPath(cacheDir, GitCacheKey(listedURL, "main")), listedURL, attacker.URL+"/repo.git")
+	before := len(attacker.Requests())
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), GitRequest{URL: listedURL, Revision: "main"}, GitOptions{CacheDir: cacheDir}); err == nil || !strings.Contains(err.Error(), "clone of another repository") {
+		t.Fatalf("offline Acquire() error = %v, want a cache miss for the other repository", err)
+	}
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: listedURL, Revision: "main"}, GitOptions{
+		AllowNetwork: true,
+		CacheDir:     cacheDir,
+		Credentials:  GitCredentials{BearerToken: gitHostTestToken, Hosts: []string{listed.URL}},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	requireListedContent(t, result)
+	if got := attacker.Requests()[before:]; len(got) != 0 {
+		t.Fatalf("the other host received %d requests, want none", len(got))
+	}
+}
+
+// userinfoRecorder is the HTTP transport of go-git in a test. It records
+// whether a request URL held userinfo. go-git builds each request URL from
+// the URL that it fetches, so a fetch of a URL with userinfo shows up
+// here, while the server never sees it.
+type userinfoRecorder struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (recorder *userinfoRecorder) RoundTrip(request *http.Request) (*http.Response, error) {
+	recorder.mu.Lock()
+	if request.URL.User != nil {
+		recorder.seen = append(recorder.seen, request.Method+" "+request.URL.Path)
+	}
+	recorder.mu.Unlock()
+	return http.DefaultTransport.RoundTrip(request)
+}
+
+func (recorder *userinfoRecorder) withUserinfo() []string {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	return append([]string(nil), recorder.seen...)
+}
+
+// recordGoGitHTTPUserinfo installs a userinfoRecorder as the go-git http
+// client until the test ends. No test of this package runs in parallel.
+func recordGoGitHTTPUserinfo(t *testing.T) *userinfoRecorder {
+	t.Helper()
+	recorder := &userinfoRecorder{}
+	gitclient.InstallProtocol("http", githttp.NewClient(&http.Client{Transport: recorder}))
+	t.Cleanup(func() { gitclient.InstallProtocol("http", githttp.DefaultClient) })
+	return recorder
+}
+
+// TestDefaultGitAcquirerFetchesTheURLWithoutUserinfo checks that the
+// clone, and the fetch of the existing entry with --refresh-git, go to the
+// repository URL without its userinfo. The userinfo becomes the auth
+// method instead. A fetch of the raw request URL puts the user and
+// password back into the URL that go-git requests.
+func TestDefaultGitAcquirerFetchesTheURLWithoutUserinfo(t *testing.T) {
+	recorder := recordGoGitHTTPUserinfo(t)
+	listed, listedURL, _, _ := listedAndAttackerHosts(t)
+	withUserinfo := strings.Replace(listedURL, "http://", "http://ci-user:url-secret@", 1)
+	cacheDir := t.TempDir()
+	for _, refresh := range []bool{false, true} {
+		result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: withUserinfo, Revision: "main"}, GitOptions{
+			AllowNetwork: true,
+			CacheDir:     cacheDir,
+			Refresh:      refresh,
+		})
+		if err != nil {
+			t.Fatalf("Acquire(refresh %t) error = %v", refresh, err)
+		}
+		requireListedContent(t, result)
+	}
+	if got := recorder.withUserinfo(); len(got) != 0 {
+		t.Fatalf("go-git requested URLs with userinfo: %q", got)
+	}
+	if len(listed.Requests()) < 2 {
+		t.Fatalf("listed host requests = %d, want the clone and the refresh fetch", len(listed.Requests()))
+	}
+	requireAuthOnEveryRequest(t, listed, "Basic "+base64.StdEncoding.EncodeToString([]byte("ci-user:url-secret")))
 }

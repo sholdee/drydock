@@ -128,11 +128,11 @@ func TestDefaultAcquirerRefusesARemoteCacheEntryOfAnotherRepository(t *testing.T
 	}
 }
 
-// setCacheEntryOrigin sets the origin URL of the cache entry at path to
-// originURL, as drydock writes it when it clones originURL. Tests that
+// setCacheEntryOrigin sets the origin URLs of the cache entry at path to
+// originURLs. One URL is what drydock writes when it clones that URL. Tests that
 // build an entry from a local clone use it, because drydock does not use
 // an entry whose origin names another repository.
-func setCacheEntryOrigin(t *testing.T, path, originURL string) {
+func setCacheEntryOrigin(t *testing.T, path string, originURLs ...string) {
 	t.Helper()
 	repo, err := git.PlainOpen(path)
 	if err != nil {
@@ -141,7 +141,7 @@ func setCacheEntryOrigin(t *testing.T, path, originURL string) {
 	if err := repo.DeleteRemote("origin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{originURL}}); err != nil {
+	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: originURLs}); err != nil {
 		t.Fatal(err)
 	}
 }
