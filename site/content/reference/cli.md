@@ -87,7 +87,10 @@ does not touch it. Plain `diag` uses static discovery and does not render the
 install. With `--offline`, the chart must be in
 the chart cache. If drydock cannot render the install, it reports a
 `settings.install-render-failed` warning and reads the values files of the
-install on their own. `--strict` fails on this warning.
+install on their own. `--strict` fails on this warning. If an install counts
+only without the settings that it renders, so the settings never settle,
+drydock keeps the settings of that install and reports a
+`settings.installs-unsettled` warning. `--strict` fails on this warning too.
 
 A `--discover-kustomize` path also counts as the Argo CD install of this
 cluster. If its render holds `argocd-cm`, `argocd-cmd-params-cm`, or

@@ -226,10 +226,10 @@ Supported:
   the same controller namespace for `sourceNamespaces`. When nothing names
   one, project validation uses the namespace of the AppProject, as earlier
   releases did, while instance names and the namespace gate use `argocd`.
-  drydock does not read the controller
-  Deployments, so it does not see a list that the Argo CD Helm chart sets
-  only through `controller.extraArgs`, `applicationSet.extraArgs`, or extra
-  environment variables.
+  drydock also reads the lists from the controller workloads of the
+  install, so it sees a list that the Argo CD Helm chart sets through
+  `controller.extraArgs`, `applicationSet.extraArgs`, `controller.env`, or
+  `applicationSet.extraEnv` (see "Settings from the Argo CD workloads").
 - The Argo CD controller namespace. Argo CD learns this namespace from its
   own pod, not from the repository. The controller uses it for the
   instance name of an Application (`controller/state.go:402` and `:797`).
@@ -1710,24 +1710,24 @@ Supported:
   repository installs Argo CD from the argo-cd Helm chart, that includes the
   `argocd-cmd-params-cm` that the chart makes from `configs.params` (see
   "Discovery of Argo CD settings"). Otherwise drydock uses `10M`. drydock
-  does not read the repo-server Deployment. So drydock does not see a limit
-  that the chart sets only through `repoServer.extraArgs`
-  (`--max-combined-directory-manifests-size`) or as a literal value in
-  `repoServer.env`. An empty value means `10M`, and a value that is not a Kubernetes quantity,
+  also reads the repo-server Deployment of the install, so it sees a limit
+  that the chart sets through `repoServer.extraArgs`
+  (`--max-combined-directory-manifests-size`) or `repoServer.env` (see
+  "Settings from the Argo CD workloads"). An empty value in
+  `argocd-cmd-params-cm` or in the environment means `10M`, and a value that is not a Kubernetes quantity,
   spaces around it included, fails the build, as it stops the repo-server at
   startup. Earlier drydock releases had no limit.
 - drydock reads `applicationsetcontroller.enable.progressive.syncs` the same
-  way: from a discovered or rendered `argocd-cmd-params-cm` only. It does not
-  read the ApplicationSet controller Deployment. The chart's
-  `configs.params` sets the key in `argocd-cmd-params-cm`, which drydock
-  reads. The chart can also set the flag on the Deployment, through
-  `applicationSet.extraArgs` (`--enable-progressive-syncs`). It can set it
-  through `applicationSet.extraEnv` too
-  (`ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS`). drydock does
-  not see a value set on the Deployment, and treats progressive syncs as off.
+  way: from a discovered or rendered `argocd-cmd-params-cm`, and from the
+  ApplicationSet controller Deployment of the install. The chart's
+  `configs.params` sets the key in `argocd-cmd-params-cm`. The chart can
+  also set the flag on the Deployment, through `applicationSet.extraArgs`
+  (`--enable-progressive-syncs`), or through `applicationSet.extraEnv`
+  (`ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS`). See
+  "Settings from the Argo CD workloads".
 - drydock reads `applicationsetcontroller.enable.new.git.file.globbing` and
   `reposerver.include.hidden.directories` the same way, from a discovered or
-  rendered `argocd-cmd-params-cm` only, as Argo CD parses them: `true` or
+  rendered `argocd-cmd-params-cm` and the workloads, as Argo CD parses them: `true` or
   `false` in any case, and `false` for any other value. The first chooses
   how the Git files generator matches its patterns. The second adds hidden
   directories to the Git and OCI directory generators. Earlier drydock
@@ -1740,6 +1740,87 @@ Supported:
   generator sees it. Earlier drydock releases read the first key as
   metadata only and never fetched submodule content. See
   [Git Submodules and Git LFS](#git-submodules-and-git-lfs).
+- Settings from the Argo CD workloads. Argo CD v3.6.1 reads each
+  `argocd-cmd-params-cm` key only from an environment variable of the
+  program that uses it. The install maps the key to the variable with a
+  `configMapKeyRef`. A command-line flag, where one exists, wins over the
+  variable, because the program reads the variable only as the default of
+  the flag (`util/env/env.go:155-195`). drydock reads these keys this way:
+
+  | Key | Program | Variable | Flag |
+  | --- | --- | --- | --- |
+  | `reposerver.max.combined.directory.manifests.size` | repo-server | `ARGOCD_REPO_SERVER_MAX_COMBINED_DIRECTORY_MANIFESTS_SIZE` | `--max-combined-directory-manifests-size` |
+  | `reposerver.allow.oob.symlinks` | repo-server | `ARGOCD_REPO_SERVER_ALLOW_OUT_OF_BOUNDS_SYMLINKS` | `--allow-oob-symlinks` |
+  | `reposerver.include.hidden.directories` | repo-server | `ARGOCD_REPO_SERVER_INCLUDE_HIDDEN_DIRECTORIES` | `--include-hidden-directories` |
+  | `reposerver.enable.git.submodule` | repo-server | `ARGOCD_GIT_MODULES_ENABLED` | none |
+  | `application.namespaces` | application controller | `ARGOCD_APPLICATION_NAMESPACES` | `--application-namespaces` |
+  | `controller.ignore.normalizer.jq.timeout` | application controller | `ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT` | `--ignore-normalizer-jq-execution-timeout-seconds` |
+  | `applicationsetcontroller.namespaces` | ApplicationSet controller | `ARGOCD_APPLICATIONSET_CONTROLLER_NAMESPACES` | `--applicationset-namespaces` |
+  | `applicationsetcontroller.enable.progressive.syncs` | ApplicationSet controller | `ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS` | `--enable-progressive-syncs` |
+  | `applicationsetcontroller.enable.new.git.file.globbing` | ApplicationSet controller | `ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_NEW_GIT_FILE_GLOBBING` | `--enable-new-git-file-globbing` |
+  | `applicationsetcontroller.enable.git.submodule` | ApplicationSet controller | `ARGOCD_GIT_MODULES_ENABLED` | none |
+
+  The flags and variables are in
+  `cmd/argocd-repo-server/commands/argocd_repo_server.go:50`, `:264`,
+  `:266`, and `:274`,
+  `cmd/argocd-application-controller/commands/argocd_application_controller.go:286`
+  and `:300`, and
+  `cmd/argocd-applicationset-controller/commands/applicationset_controller.go:55`,
+  `:316`, `:327`, and `:329`. drydock reads the workload of each program:
+  the repo-server Deployment, the application controller StatefulSet or
+  Deployment, and the ApplicationSet controller Deployment. It finds them
+  by the upstream names, such as `argocd-repo-server`, or by the
+  `app.kubernetes.io/component` and `app.kubernetes.io/part-of: argocd`
+  labels of the argo-cd chart. A workload counts by the rules of the
+  repo-server for the Helm namespace: it comes from the same install as an
+  `argocd-cm`, or it runs in the Argo CD controller namespace. A render of
+  an install keeps these workloads, also when drydock renders it for its
+  settings only. Without a workload, drydock reads the keys from
+  `argocd-cmd-params-cm`, as earlier releases did.
+
+  drydock reads the program container of the workload as the kubelet and
+  the program do:
+  - The command line is `command` and then `args`. Its first item must run
+    the program, such as `/usr/local/bin/argocd-repo-server`. drydock parses
+    the flags as pflag does. A boolean flag is true without a value, takes
+    a value only after `=`, and reads it with `strconv.ParseBool`. Any other
+    flag takes the text after `=` or the next argument. `--` ends the
+    flags. A namespace flag adds the fields of each value, read as one CSV
+    line. The last value of any other flag wins. drydock never keeps the
+    command line itself, only the values of these flags.
+  - The kubelet reads `envFrom` first and then `env` in order, and a later
+    entry with the same name wins. A `configMapKeyRef` with
+    `optional: true` whose key is missing sets nothing
+    (`makeEnvironmentVariables`, `pkg/kubelet/kubelet_pods.go:795-987` at
+    Kubernetes v1.37.0). So the order of the chart template decides which
+    value wins. In the argo-cd chart 10.14.0, `repoServer.env` and
+    `applicationSet.extraEnv` come before the references to
+    `argocd-cmd-params-cm`. So a literal value there wins only when
+    `argocd-cmd-params-cm` does not have the key. In the application
+    controller StatefulSet, `controller.env` comes after the references, so
+    it wins. The chart puts `extraArgs` after its own arguments.
+  - A `configMapKeyRef` to `argocd-cmd-params-cm` reads the key from the
+    `argocd-cmd-params-cm` that drydock uses. A `configMapKeyRef` to
+    another ConfigMap reads the key from that ConfigMap when the same
+    render holds it.
+  - An empty value is the default of the program, as for
+    `argocd-cmd-params-cm`.
+
+  drydock warns, and reads the variable as if the entry were not there,
+  when it cannot know a value offline: a `secretKeyRef` (drydock never
+  reads a Secret value), `envFrom`, a value with a `$(VAR)` reference, a
+  `configMapKeyRef` to a ConfigMap that drydock does not find, or a
+  reference that is not optional to a key that is missing. It also warns
+  when the command line does not run the program, or when a flag value
+  stops the program at startup, such as `--enable-progressive-syncs=yes`.
+  When `argocd-cmd-params-cm` sets a key but the workload does not pass it
+  to the program, Argo CD ignores the key. drydock then uses the default
+  and warns. When two workloads count and give a key different values,
+  drydock uses the first, in the order of the repo-server rules, and warns.
+  It does not compare a committed workload with a rendered one that comes
+  first, because the committed file is often a Kustomize patch of it that
+  holds only part of the env list. drydock reads only the application
+  controller for `application.namespaces`, not the API server.
 - An `argocd-cmd-params-cm` from a rendered Application can set the flag
   late, after drydock expanded the ApplicationSets with the earlier value.
   Then drydock runs discovery a second time with the final value, but only
@@ -2710,15 +2791,36 @@ Supported:
   `directory` or `plugin` type is not a Helm install. A remote value file
   has no local file. drydock finds these files before it renders, with the
   resolution helpers of the renderer. It does not record the files during
-  the render. One gap is known: a `helmCharts` entry inside a component
-  that `spec.source.kustomize.components` adds is not read for values files
-  or for the chart name.
+  the render. A `helmCharts` entry inside a component that
+  `spec.source.kustomize.components` adds counts too, for the values files
+  and for the chart name. With `ignoreMissingComponents`, only the first
+  valid component counts, as only it renders. Earlier drydock releases did
+  not read such a component, so they did not render that install for its
+  settings and gave no warning.
+
+  The settings that the installs render can change which Applications are
+  installs. drydock renders the installs for their settings in rounds. Each
+  round starts from the settings without the earlier settings-only renders
+  and renders the installs that count with the settings of that round. So
+  an install that counted in an earlier round, but not with the settings
+  that settle, leaves no settings behind. For example, the discovery
+  frontier can find a cluster Secret that moves the destination of the
+  install to another cluster. Earlier drydock releases kept the settings of
+  such an install and gave no warning. The rounds can also come back to
+  the settings of an earlier round, so the settings never settle. For
+  example, the install renders an `argocd-cm` that turns off the in-cluster
+  destination of the install itself. Then drydock keeps the settings of
+  every install that counted in a round, because the cluster holds them
+  once the install ran. It reports a `settings.installs-unsettled` warning
+  for each install that counted in some rounds and not in others.
+  `--strict` fails on this warning.
 
   The discovery frontier already renders an install whose source path can
   hold Argo CD objects, such as a local chart whose templates name
   `argocd-cm`. drydock keeps every object of that render, as before. drydock
   renders every other install for its settings only, and keeps only the
-  three ConfigMaps from that render. The final render renders each install
+  three ConfigMaps and the Argo CD workloads (see "Settings from the Argo
+  CD workloads") from that render. The final render renders each install
   again as a normal Application.
 
   A local Helm values file of the render is then not a settings source of
