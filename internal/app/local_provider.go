@@ -120,14 +120,14 @@ type localProvider struct {
 	// submodules describes the submodules of the tree at repoRoot, for the
 	// warnings of submoduleRenderDiagnostics.
 	submodules *rootSubmodules
-	// lfsRepositories holds the URL keys of the repository Secrets that set
-	// enableLfs (lfsRepositoryKeys).
-	lfsRepositories map[string]bool
+	// lfsRepositories maps the URL keys of the repository Secrets that set
+	// enableLfs to their URLs (lfsRepositoryKeys).
+	lfsRepositories map[string]string
 	// rootLFS is the Git LFS state of the tree at repoRoot when its
 	// repository sets enableLfs (prepareRootLFS), else nil.
 	rootLFS *rootLFSState
 	// lfsFetched holds, per acquired path of a fetched Git source whose
-	// repository sets enableLfs, the pointer files of its commit.
+	// repository sets enableLfs, the lfsMissing of its checkout.
 	lfsFetched *sync.Map
 	// rootDirtyPaths is the sorted complete dirty-path enumeration for the
 	// repo root when rootInputMode is dirty; empty otherwise. Per-path-set

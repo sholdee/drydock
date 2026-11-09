@@ -129,8 +129,8 @@ func (p localProvider) acquireGitSource(ctx context.Context, source render.Resol
 		Offline:           p.offline,
 		Refresh:           p.refreshGit,
 	}))
-	if len(acquired.LFSPointers) > 0 && p.lfsFetched != nil {
-		p.lfsFetched.Store(filepath.Clean(acquired.Path), acquired.LFSPointers)
+	if len(acquired.LFSMissing) > 0 && p.lfsFetched != nil {
+		p.lfsFetched.Store(filepath.Clean(acquired.Path), lfsMissing{paths: acquired.LFSMissing, reasons: acquired.LFSReasons})
 	}
 	p.recordAcquisition(cacheevent.AcquisitionRecord{
 		Kind:              cacheevent.AcquisitionGit,
@@ -141,6 +141,7 @@ func (p localProvider) acquireGitSource(ctx context.Context, source render.Resol
 		Kind:             sourceIdentityKindGit,
 		Locator:          sourcepkg.NormalizeURL(source.RepoURL),
 		Revision:         acquired.Revision,
+		Digest:           fetchedLFSDigest(acquired),
 		LsRemoteRevision: acquired.LsRemoteRevision,
 	}, nil
 }

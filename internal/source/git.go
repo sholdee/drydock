@@ -45,10 +45,12 @@ type GitOptions struct {
 	// file URL, which the Argo CD repo-server's git refuses. Only tests set
 	// it.
 	AllowFileSubmoduleTransport bool
-	// LFS lists the Git LFS pointer files of the commit in
-	// GitResult.LFSPointers: the repository's Secret sets enableLfs, so the
-	// Argo CD repo-server replaces them with their content. drydock does
-	// not download Git LFS objects.
+	// LFS fills the Git LFS pointer files of the commit outside
+	// submodules with their content, and lists them in
+	// GitResult.LFSPointers: the repository's Secret sets enableLfs, so
+	// the Argo CD repo-server runs `git lfs fetch` and `git lfs checkout`
+	// (FillLFS). With AllowNetwork off, only the drydock Git LFS cache is
+	// read.
 	LFS bool
 }
 
@@ -77,9 +79,13 @@ type GitResult struct {
 	FromCache        bool
 	Network          bool
 	// LFSPointers are the Git LFS pointer files of the checked-out commit
-	// when GitOptions.LFS is set, outside submodules. The checkout holds
-	// them as pointers.
+	// when GitOptions.LFS is set, outside submodules.
 	LFSPointers []gittree.LFSPointer
+	// LFSMissing are the paths of the pointers that the checkout still
+	// holds as pointers, because drydock could not get their objects, and
+	// LFSReasons say why.
+	LFSMissing []string
+	LFSReasons []string
 }
 
 type GitAcquirer interface {
@@ -156,14 +162,14 @@ func acquireOnlineGitRepository(ctx context.Context, cachePath, key string, requ
 		return GitResult{}, err
 	}
 
-	pointers, err := lfsPointersOf(ctx, repo, revision, opts)
+	pointers, lfs, err := checkoutLFS(ctx, repo, cachePath, revision, cloneURL, opts)
 	if err != nil {
-		return GitResult{}, err
+		return GitResult{}, fmt.Errorf("check out Git LFS content of repository %s: %w", RedactURL(request.URL), err)
 	}
 
-	network := cloned || refreshed || fetched || submoduleNetwork
+	network := cloned || refreshed || fetched || submoduleNetwork || lfs.Downloaded > 0
 	writeGitMetadata(cachePath, key, request, revision)
-	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: !network, Network: network, LFSPointers: pointers}, nil
+	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: !network, Network: network, LFSPointers: pointers, LFSMissing: lfs.Missing, LFSReasons: lfs.Reasons}, nil
 }
 
 func acquireCachedGitRepository(ctx context.Context, cachePath, key string, request GitRequest, opts GitOptions) (GitResult, error) {
@@ -188,12 +194,13 @@ func acquireCachedGitRepository(ctx context.Context, cachePath, key string, requ
 	if _, err := syncCacheSubmodules(ctx, repo, cachePath, revision, request, opts); err != nil {
 		return GitResult{}, err
 	}
-	pointers, err := lfsPointersOf(ctx, repo, revision, opts)
+	cloneURL, _ := cloneURLAndCredentials(request.URL, opts.Credentials)
+	pointers, lfs, err := checkoutLFS(ctx, repo, cachePath, revision, cloneURL, opts)
 	if err != nil {
-		return GitResult{}, err
+		return GitResult{}, fmt.Errorf("check out Git LFS content of repository %s: %w", RedactURL(request.URL), err)
 	}
 	writeGitMetadata(cachePath, key, request, revision)
-	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: true, Network: false, LFSPointers: pointers}, nil
+	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: true, Network: false, LFSPointers: pointers, LFSMissing: lfs.Missing, LFSReasons: lfs.Reasons}, nil
 }
 
 func gitCacheDir(configured string) (string, error) {

@@ -227,3 +227,49 @@ func lfsObjectMatches(object, oid string) bool {
 	}
 	return hex.EncodeToString(sum.Sum(nil)) == oid
 }
+
+// ReadLFSConfig returns the .lfsconfig file at the top of tree, or nil when
+// tree has no regular file of that name or the file is larger than
+// maxSize.
+func ReadLFSConfig(tree *object.Tree, maxSize int64) []byte {
+	file, err := tree.File(".lfsconfig")
+	if err != nil || !file.Mode.IsFile() || file.Size > maxSize {
+		return nil
+	}
+	contents, err := file.Contents()
+	if err != nil {
+		return nil
+	}
+	return []byte(contents)
+}
+
+// RestoreLFSPointer writes the pointer blob of tree at the pointer's path
+// below root, unless the file there already holds that pointer. A cache
+// checkout that an earlier run filled holds the content, and a pointer
+// that this run cannot fill must not keep it. It never writes through a
+// symlink or outside root.
+func RestoreLFSPointer(root string, tree *object.Tree, pointer LFSPointer) error {
+	if !ValidRelPath(pointer.Path) {
+		return fmt.Errorf("unsafe Git LFS pointer path %q", pointer.Path)
+	}
+	target := filepath.Join(root, filepath.FromSlash(pointer.Path))
+	if onDisk, ok := ReadLFSPointerFile(target); ok && onDisk == withPath(pointer, onDisk.Path) {
+		return nil
+	}
+	if err := validateWriteParent(root, filepath.Dir(target)); err != nil {
+		return err
+	}
+	file, err := tree.File(pointer.Path)
+	if err != nil {
+		return err
+	}
+	if current, err := os.Lstat(target); err == nil && !current.Mode().IsRegular() {
+		return fmt.Errorf("git LFS pointer %q is not a regular file", pointer.Path)
+	}
+	return WriteFile(target, file)
+}
+
+func withPath(pointer LFSPointer, path string) LFSPointer {
+	pointer.Path = path
+	return pointer
+}
