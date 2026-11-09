@@ -145,7 +145,16 @@ With the flag, drydock also skips `argocd-cm`, `argocd-cmd-params-cm`,
 another namespace, because Argo CD reads them only in its own namespace. Each
 skipped object gets a `discovery.outside-controller-namespace` warning.
 drydock never skips an object without a namespace. Without the flag, drydock
-skips none of these objects. See
+skips none of these objects, with one exception from earlier releases. The
+settings ConfigMaps that an Argo CD install on this cluster renders count
+only in the controller namespace. A ConfigMap of the install without a
+namespace lands in the destination namespace of the install. An install
+that does not reconcile the Application that installs it is another Argo
+CD, such as a tenant one. None of its settings count, and its
+`argocd-cmd-params-cm` names no namespace.
+
+If a rendered install names the namespace only after other Applications
+rendered, drydock runs discovery once more with that namespace. See
 [compatibility](/compatibility/) for the full rule.
 
 For repositories that also commit non-deployable YAML, such as unrendered
