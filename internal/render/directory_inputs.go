@@ -55,8 +55,7 @@ func DirectoryInputDigestPaths(ctx context.Context, source ResolvedSource, opts 
 	for _, rel := range DirectorySymlinkInputPaths(source.RepoRoot, trees) {
 		paths = append(paths, gitref.PathDigestPath{Path: rel, Optional: true})
 	}
-	code := JsonnetCodeValues(opts.Jsonnet, opts.ArgoEnv)
-	imports, err := DirectoryJsonnetImportPaths(ctx, source.RepoRoot, source.Path, opts.Jsonnet.Libs, code)
+	imports, err := DirectoryJsonnetImportPaths(ctx, source.RepoRoot, source.Path, opts.Jsonnet, opts.ArgoEnv)
 	if err != nil {
 		return nil, err
 	}

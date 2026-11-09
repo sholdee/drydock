@@ -109,20 +109,37 @@ func (p *jsonnetVarPasses) next() argoappv1.ApplicationSourceJsonnet {
 	return p.current
 }
 
-// JsonnetCodeValues returns the TLA and extVar values of sourceJsonnet that
+// JsonnetCodeValuePasses returns, for each of the first passes Jsonnet
+// files that the render evaluates, the TLA and extVar values that
 // makeJsonnetVM passes to the VM as Jsonnet code (code: true), after the
-// same env substitution, in the same order: TLAs first, then extVars. A
-// value with code: false is a plain string, so it is left out.
-func JsonnetCodeValues(sourceJsonnet argoappv1.ApplicationSourceJsonnet, env argoappv1.Env) []string {
+// env substitution of that pass (jsonnetVarPasses), in the same order:
+// TLAs first, then extVars. A value with code: false is a plain string, so
+// it is left out. It stops early at a pass that is the same as the pass
+// before: every later pass is the same too. So the result has at least one
+// pass when passes is positive, and a missing pass is the same as the last.
+func JsonnetCodeValuePasses(sourceJsonnet argoappv1.ApplicationSourceJsonnet, env argoappv1.Env, passes int) [][]string {
+	vars := newJsonnetVarPasses(sourceJsonnet, env)
+	var out [][]string
+	for range passes {
+		code := jsonnetCodeValues(vars.next())
+		if len(out) > 0 && slices.Equal(out[len(out)-1], code) {
+			break
+		}
+		out = append(out, code)
+	}
+	return out
+}
+
+func jsonnetCodeValues(sourceJsonnet argoappv1.ApplicationSourceJsonnet) []string {
 	var out []string
 	for _, arg := range sourceJsonnet.TLAs {
 		if arg.Code {
-			out = append(out, env.Envsubst(arg.Value))
+			out = append(out, arg.Value)
 		}
 	}
 	for _, extVar := range sourceJsonnet.ExtVars {
 		if extVar.Code {
-			out = append(out, env.Envsubst(extVar.Value))
+			out = append(out, extVar.Value)
 		}
 	}
 	return out

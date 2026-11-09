@@ -82,7 +82,7 @@ func withSelectionOnlyPathsIn(ctx context.Context, root string, repoMaps []sourc
 	symlinkMemo := map[string]symlinkSelection{}
 	symlinkInputs := func(application argoappv1.Application, source argoappv1.ApplicationSource) symlinkSelection {
 		jsonnet := directoryJsonnetSelectionFor(application, source, tree.controllerNamespace)
-		key := fmt.Sprintf("%q %q %q %t", source.Path, jsonnet.libs, jsonnet.code, jsonnet.codeImportsReadRevision)
+		key := jsonnet.memoKey(source.Path)
 		selection, ok := symlinkMemo[key]
 		if !ok {
 			selection = directorySelectionInputs(ctx, root, source.Path, jsonnet, gates)
@@ -151,31 +151,22 @@ type symlinkSelection struct {
 // directoryJsonnetSelection is what decides the Jsonnet inputs of a
 // directory source for changed-only selection.
 type directoryJsonnetSelection struct {
-	libs []string
-	// code holds the extVar and TLA values that the render evaluates as
-	// Jsonnet code, after env substitution (render.JsonnetCodeValues).
-	code []string
-	// codeImportsReadRevision reports that an import path in that code
-	// names an ARGOCD_APP_REVISION variable. Selection does not know the
-	// revision of the render, so it does not know those imports.
-	codeImportsReadRevision bool
+	jsonnet argoappv1.ApplicationSourceJsonnet
+	// env is the build environment of the render (argoRenderEnv). It holds
+	// the spec revision, not the revision that the render resolves.
+	env argoappv1.Env
 }
 
 // revisionProbes are two revisions that differ in every byte, also in the
-// two short forms, for directoryJsonnetSelectionFor.
+// two short forms, for codeImportsReadRevision.
 var revisionProbes = [2]string{
 	"0000000000000000000000000000000000000000",
 	"1111111111111111111111111111111111111111",
 }
 
 // directoryJsonnetSelectionFor returns the Jsonnet inputs of source, a
-// source of application, as the render gets them. The code values are
-// substituted with the build environment of the render (argoRenderEnv) in
-// controllerNamespace. That environment holds the spec revision, not the
-// revision that the render resolves. So the code is substituted with two
-// different revisions too, and when its import paths differ, they read the
-// revision. A revision in any other place of the code does not change its
-// imports.
+// source of application, as the render gets them: its Jsonnet spec and the
+// build environment of the render (argoRenderEnv) in controllerNamespace.
 func directoryJsonnetSelectionFor(application argoappv1.Application, source argoappv1.ApplicationSource, controllerNamespace string) directoryJsonnetSelection {
 	if source.Directory == nil {
 		return directoryJsonnetSelection{}
@@ -183,24 +174,86 @@ func directoryJsonnetSelectionFor(application argoappv1.Application, source argo
 	if controllerNamespace == "" {
 		controllerNamespace = defaultArgoCDControllerNamespace
 	}
-	sourceJsonnet := source.Directory.Jsonnet
-	env := argoRenderEnv(application, source, controllerNamespace)
-	selection := directoryJsonnetSelection{
-		libs: sourceJsonnet.Libs,
-		code: render.JsonnetCodeValues(sourceJsonnet, env),
+	return directoryJsonnetSelection{
+		jsonnet: source.Directory.Jsonnet,
+		env:     argoRenderEnv(application, source, controllerNamespace),
 	}
-	first := render.JsonnetCodeValues(sourceJsonnet, withArgoAppRevision(env, revisionProbes[0]))
-	second := render.JsonnetCodeValues(sourceJsonnet, withArgoAppRevision(env, revisionProbes[1]))
+}
+
+// substitutes reports whether env substitution can change a code value.
+// Envsubst changes only a value with a "$".
+func (s directoryJsonnetSelection) substitutes() bool {
+	for _, value := range append(append([]argoappv1.JsonnetVar(nil), s.jsonnet.TLAs...), s.jsonnet.ExtVars...) {
+		if value.Code && strings.Contains(value.Value, "$") {
+			return true
+		}
+	}
+	return false
+}
+
+// memoKey identifies one selection scan of the source at sourcePath. The
+// build environment counts only when it can change a code value.
+func (s directoryJsonnetSelection) memoKey(sourcePath string) string {
+	var code, env []string
+	for _, value := range append(append([]argoappv1.JsonnetVar(nil), s.jsonnet.TLAs...), s.jsonnet.ExtVars...) {
+		if value.Code {
+			code = append(code, value.Value)
+		}
+	}
+	if s.substitutes() {
+		for _, entry := range s.env {
+			if entry != nil {
+				env = append(env, entry.Name+"="+entry.Value)
+			}
+		}
+	}
+	return fmt.Sprintf("%q %q %q %q", sourcePath, s.jsonnet.Libs, code, env)
+}
+
+// codeImportsReadRevision reports whether an import path in the extVar or
+// TLA code of the source at sourcePath names an ARGOCD_APP_REVISION
+// variable, in any env substitution pass (render.JsonnetCodeValuePasses).
+// Selection does not know the revision of the render, so it does not know
+// those imports. It substitutes the code with two different revisions, and
+// the imports read the revision when their paths differ. A revision in any
+// other place of the code does not change its imports. A source without a
+// Jsonnet file never evaluates the code, so it has no passes.
+func (s directoryJsonnetSelection) codeImportsReadRevision(root, sourcePath string) bool {
+	if !s.substitutes() {
+		return false
+	}
+	passes, err := render.DirectoryJsonnetFileCount(root, sourcePath)
+	if err != nil {
+		return true
+	}
+	first := render.JsonnetCodeValuePasses(s.jsonnet, withArgoAppRevision(s.env, revisionProbes[0]), passes)
+	second := render.JsonnetCodeValuePasses(s.jsonnet, withArgoAppRevision(s.env, revisionProbes[1]), passes)
+	for index := range max(len(first), len(second)) {
+		if codeImportsDiffer(codePassAt(first, index), codePassAt(second, index)) {
+			return true
+		}
+	}
+	return false
+}
+
+// codePassAt returns pass index of passes. render.JsonnetCodeValuePasses
+// stops at the first pass that repeats, so a missing pass is the last one.
+func codePassAt(passes [][]string, index int) []string {
+	return passes[min(index, len(passes)-1)]
+}
+
+// codeImportsDiffer reports whether two substitutions of the same code
+// values import different paths.
+func codeImportsDiffer(first, second []string) bool {
 	for index := range first {
 		if first[index] == second[index] {
 			continue
 		}
 		if !slices.Equal(render.JsonnetCodeImportLiterals(first[index]), render.JsonnetCodeImportLiterals(second[index])) {
-			selection.codeImportsReadRevision = true
-			break
+			return true
 		}
 	}
-	return selection
+	return false
 }
 
 // directorySelectionInputs returns the paths that a directory source at
@@ -217,7 +270,7 @@ func directorySelectionInputs(ctx context.Context, root, sourcePath string, json
 	// The symlinks under the source path and under each library that
 	// resolves, as the renderer resolves it, and the library paths and
 	// symlinks that decide where a library is.
-	libDirs, libLinks, libErr := render.DirectoryJsonnetLibInputs(root, sourcePath, jsonnet.libs)
+	libDirs, libLinks, libErr := render.DirectoryJsonnetLibInputs(root, sourcePath, jsonnet.jsonnet.Libs)
 	dirs := []string{sourcePath}
 	for _, dir := range libDirs {
 		// A library at the repository root would cover every path, so it
@@ -231,10 +284,9 @@ func directorySelectionInputs(ctx context.Context, root, sourcePath string, json
 	selection.paths = append(selection.paths, libLinks...)
 	// A scan that ran out of budget or failed, such as on an unreadable
 	// directory, leaves the imports unknown. So does code whose import
-	// paths read the revision. The scan returns nothing for a source
-	// without a Jsonnet file, which never evaluates the code.
-	imports, err := render.DirectoryJsonnetImportPaths(ctx, root, sourcePath, jsonnet.libs, jsonnet.code)
-	selection.unknown = err != nil || libErr != nil || (jsonnet.codeImportsReadRevision && render.DirectoryHasJsonnetFile(root, sourcePath))
+	// paths read the revision.
+	imports, err := render.DirectoryJsonnetImportPaths(ctx, root, sourcePath, jsonnet.jsonnet, jsonnet.env)
+	selection.unknown = err != nil || libErr != nil || jsonnet.codeImportsReadRevision(root, sourcePath)
 	selection.paths = append(selection.paths, imports...)
 	return selection
 }

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/google/go-jsonnet"
 	"github.com/google/go-jsonnet/ast"
 	"github.com/google/go-jsonnet/toolutils"
@@ -27,9 +28,12 @@ import (
 // path's target. It reads every .jsonnet file under the source path, also
 // one that recurse or a filter leaves out, so the result is conservative.
 // It also follows the imports in code, the extVar and TLA values that the
-// renderer evaluates as Jsonnet code (JsonnetCodeValues). Such a value has
-// no file, so its relative imports resolve against the source path and the
-// libraries only (visitCode). An import that the renderer refuses, and a file or a code
+// renderer evaluates as Jsonnet code, after the env substitution with env
+// of every pass (JsonnetCodeValuePasses). The renderer substitutes the
+// values once more for each Jsonnet file that it evaluates, so the scan
+// takes one pass for each .jsonnet file under the source path, which is at
+// least as many. Such a value has no file, so its relative imports resolve
+// against the source path and the libraries only (visitCode). An import that the renderer refuses, and a file or a code
 // value that does not parse, add nothing. The scan has a budget of files
 // and bytes; when it runs out, the result is ErrJsonnetImportScanBudget. It
 // reads a file only after the
@@ -37,7 +41,7 @@ import (
 // file inside the repository, outside .git. It reads at most
 // maxJsonnetImportScanBytes of a file, and does not parse a larger one. The
 // result is sorted, with forward slashes.
-func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath string, libs, code []string) ([]string, error) {
+func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath string, sourceJsonnet argoappv1.ApplicationSourceJsonnet, env argoappv1.Env) ([]string, error) {
 	absRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
 		return nil, err
@@ -57,7 +61,7 @@ func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath strin
 		return nil, nil
 	}
 	jpaths := []string{appPath}
-	for _, lib := range libs {
+	for _, lib := range sourceJsonnet.Libs {
 		resolved, err := resolveJsonnetLib(absRoot, lib)
 		if err != nil {
 			return nil, err
@@ -84,9 +88,7 @@ func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath strin
 	for _, entry := range entries {
 		collector.visit(entry)
 	}
-	for _, value := range code {
-		collector.visitCode(value)
-	}
+	collector.visitCodePasses(JsonnetCodeValuePasses(sourceJsonnet, env, len(entries)))
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -167,16 +169,18 @@ func appendJsonnetLibLinks(links []string, absRoot, realRoot, lib string) []stri
 	return links
 }
 
-// DirectoryHasJsonnetFile reports whether the directory source at
-// sourcePath has a .jsonnet file, so that the renderer evaluates Jsonnet.
-// It reports true when the walk fails: then the inputs are not known.
-func DirectoryHasJsonnetFile(repoRoot, sourcePath string) bool {
+// DirectoryJsonnetFileCount returns how many .jsonnet files are under the
+// directory source at sourcePath, also files that recurse or a filter
+// leaves out. It is at least the number of Jsonnet files that the renderer
+// evaluates, and so the number of env substitution passes
+// (JsonnetCodeValuePasses) that a scan must take.
+func DirectoryJsonnetFileCount(repoRoot, sourcePath string) (int, error) {
 	appPath, err := sourceRoot(ResolvedSource{RepoRoot: repoRoot, Path: sourcePath})
 	if err != nil {
-		return true
+		return 0, err
 	}
 	entries, err := directoryJsonnetEntryFiles(appPath)
-	return err != nil || len(entries) > 0
+	return len(entries), err
 }
 
 // repoRelative returns path relative to root with forward slashes, and
@@ -272,6 +276,19 @@ func (c *jsonnetImportCollector) visit(path string) {
 		return
 	}
 	c.follow(path, node)
+}
+
+// visitCodePasses visits each code value of every pass once.
+func (c *jsonnetImportCollector) visitCodePasses(passes [][]string) {
+	seen := map[string]bool{}
+	for _, pass := range passes {
+		for _, value := range pass {
+			if !seen[value] {
+				seen[value] = true
+				c.visitCode(value)
+			}
+		}
+	}
 }
 
 // visitCode parses one code value of an extVar or TLA and follows its
