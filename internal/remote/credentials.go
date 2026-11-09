@@ -14,9 +14,10 @@ import (
 // net/http, which the credential redirect policy keeps.
 const maxCredentialRedirects = 10
 
-// errMissingCredentialHosts names the flag that a user must add. It never
-// holds a credential value.
-var errMissingCredentialHosts = errors.New("--remote-username, --remote-password, and --remote-bearer-token need --remote-auth-host: give it once for each host[:port] that receives the remote credentials")
+// errMissingCredentialHosts names the flag that a CLI user must add, and
+// the field that a pkg/drydock caller must set. It never holds a
+// credential value.
+var errMissingCredentialHosts = errors.New("--remote-username, --remote-password, and --remote-bearer-token need --remote-auth-host (RemoteResourceCredentials.Hosts in pkg/drydock): give it once for each host[:port] that receives the remote credentials")
 
 // credentialHost is one host that receives the remote credentials: a
 // scheme, a lower-case host name, and a port. A host entry without a scheme
