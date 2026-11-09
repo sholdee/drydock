@@ -29,6 +29,9 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 }
 
 func (acquirer DefaultAcquirer) acquireHTTPFile(ctx context.Context, request Request, opts Options) (Result, error) {
+	if err := opts.Credentials.Validate(); err != nil {
+		return Result{}, err
+	}
 	normalized, err := normalizeHTTPFileURL(request.URL, request.AnyFileType)
 	if err != nil {
 		return Result{}, err
@@ -89,7 +92,10 @@ func (acquirer DefaultAcquirer) fetch(ctx context.Context, normalizedURL string,
 	if err != nil {
 		return nil, fmt.Errorf("create remote resource request %s: %w", RedactURL(normalizedURL), err)
 	}
-	applyHTTPAuth(req, credentials)
+	if credentials.authorizes(req.URL) {
+		applyHTTPAuth(req, credentials)
+		client = withCredentialRedirectPolicy(client)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch remote resource %s: %s", RedactURL(normalizedURL), redactFetchError(err, normalizedURL, credentials))

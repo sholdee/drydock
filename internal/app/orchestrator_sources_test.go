@@ -1092,6 +1092,7 @@ metadata:
 		Username:    "remote-user",
 		Password:    "remote-pass",
 		BearerToken: "remote-token",
+		Hosts:       []string{"raw.githubusercontent.com"},
 	}
 	remoteGitCredentials := remote.GitCredentials{
 		Username:          "git-user",
@@ -1116,7 +1117,7 @@ metadata:
 	if len(acquirer.options) != 1 {
 		t.Fatalf("remote options = %d, want 1", len(acquirer.options))
 	}
-	if got := acquirer.options[0].Credentials; got != remoteCredentials {
+	if got := acquirer.options[0].Credentials; !reflect.DeepEqual(got, remoteCredentials) {
 		t.Fatalf("remote credentials = %#v, want %#v", got, remoteCredentials)
 	}
 	if got := acquirer.options[0].GitCredentials; got != remoteGitCredentials {

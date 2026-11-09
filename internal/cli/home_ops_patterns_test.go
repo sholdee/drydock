@@ -142,6 +142,7 @@ func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
 		"--offline",
 		"--remote-cache-dir", filepath.Join(t.TempDir(), "remote-cache"),
 		"--remote-bearer-token", "fixture-token",
+		"--remote-auth-host", "raw.githubusercontent.com",
 		"--exit-code=false",
 	)
 	assertStdoutContainsAll(t, result,
@@ -167,6 +168,11 @@ func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
 	}
 	if !recordedHTTPRemoteCredential(requests, options, "https://raw.githubusercontent.com/example/remote/resource.yaml", "fixture-token") {
 		t.Fatalf("remote HTTP credential was not passed to fake acquirer: requests=%#v options=%#v", requests, options)
+	}
+	for _, opts := range options {
+		if got := opts.Credentials.Hosts; len(got) != 1 || got[0] != "raw.githubusercontent.com" {
+			t.Fatalf("remote credential hosts = %q, want [raw.githubusercontent.com]", got)
+		}
 	}
 }
 

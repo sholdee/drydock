@@ -146,11 +146,21 @@ type RemoteResourceRequest struct {
 	Revision string
 }
 
-// RemoteResourceCredentials supplies credentials for remote Kustomize HTTP resources.
+// RemoteResourceCredentials supplies credentials for remote HTTP(S) files:
+// remote Kustomize resources, Helm value files, and Helm file parameters.
+// Hosts lists the hosts that receive them, like the --remote-auth-host
+// flag: host[:port] or https://host[:port] for HTTPS, and
+// http://host[:port] to allow plain HTTP. The default remote acquirer sends
+// the credentials only to a request whose scheme, host, and port match an
+// entry, and removes them on a redirect that leaves that scheme, host, and
+// port. A run with a credential and no Hosts entry fails before it fetches
+// anything. A custom RemoteResourceAcquirer receives Hosts and must apply
+// the same rule itself.
 type RemoteResourceCredentials struct {
 	Username    string
 	Password    string
 	BearerToken string
+	Hosts       []string
 }
 
 // OCICredentials supplies auth and TLS material for first-class OCI artifact
@@ -257,6 +267,7 @@ func remoteResourceCredentialsToInternal(credentials RemoteResourceCredentials) 
 		Username:    credentials.Username,
 		Password:    credentials.Password,
 		BearerToken: credentials.BearerToken,
+		Hosts:       append([]string(nil), credentials.Hosts...),
 	}
 }
 
@@ -265,6 +276,7 @@ func remoteResourceCredentialsFromInternal(credentials remote.Credentials) Remot
 		Username:    credentials.Username,
 		Password:    credentials.Password,
 		BearerToken: credentials.BearerToken,
+		Hosts:       append([]string(nil), credentials.Hosts...),
 	}
 }
 

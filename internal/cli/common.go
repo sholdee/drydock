@@ -60,6 +60,7 @@ type commonFlags struct {
 	remoteUsername           string
 	remotePassword           string
 	remoteBearerToken        string
+	remoteAuthHosts          []string
 	enableAVPCompat          bool
 	enableKSOPSCompat        bool
 	enablePlugins            bool
@@ -193,6 +194,7 @@ func bindAuthFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.remoteUsername, "remote-username", flags.remoteUsername, "username for authenticated remote Kustomize HTTP resources")
 	cmd.Flags().StringVar(&flags.remotePassword, "remote-password", flags.remotePassword, "password for authenticated remote Kustomize HTTP resources")
 	cmd.Flags().StringVar(&flags.remoteBearerToken, "remote-bearer-token", flags.remoteBearerToken, "bearer token for authenticated remote Kustomize HTTP resources")
+	cmd.Flags().StringArrayVar(&flags.remoteAuthHosts, "remote-auth-host", flags.remoteAuthHosts, "host[:port] that receives the --remote-* credentials, over HTTPS only unless written http://host[:port] (repeatable; required with --remote-username, --remote-password, or --remote-bearer-token)")
 }
 
 func bindRemoteAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
@@ -334,6 +336,7 @@ func (flags commonFlags) remoteCredentials() remote.Credentials {
 		Username:    flags.remoteUsername,
 		Password:    flags.remotePassword,
 		BearerToken: flags.remoteBearerToken,
+		Hosts:       append([]string(nil), flags.remoteAuthHosts...),
 	}
 }
 

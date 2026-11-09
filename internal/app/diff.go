@@ -87,6 +87,9 @@ type ImageDiffResult struct {
 }
 
 func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (result DiffResult, err error) {
+	if err := request.validateRemoteResourceCredentials(); err != nil {
+		return DiffResult{}, err
+	}
 	request, cleanup, err := resolveDiffRequestPaths(ctx, request, true)
 	if err != nil {
 		return DiffResult{}, err
@@ -142,8 +145,8 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (result
 
 func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (result DiffResult, err error) {
 	name := strings.TrimSpace(request.Name)
-	if name == "" {
-		return DiffResult{}, fmt.Errorf("application name is required")
+	if err := validateDiffAppStart(name, request.DiffRequest); err != nil {
+		return DiffResult{}, err
 	}
 	diffRequest, cleanup, err := resolveDiffRequestPaths(ctx, request.DiffRequest, false)
 	if err != nil {
@@ -248,7 +251,19 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (resu
 	return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, nil
 }
 
+// validateDiffAppStart runs the checks of DiffApp that come before any
+// work: the Application name, and the hosts of the remote credentials.
+func validateDiffAppStart(name string, request DiffRequest) error {
+	if name == "" {
+		return fmt.Errorf("application name is required")
+	}
+	return request.validateRemoteResourceCredentials()
+}
+
 func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (result ImageDiffResult, err error) {
+	if err := request.validateRemoteResourceCredentials(); err != nil {
+		return ImageDiffResult{}, err
+	}
 	request, cleanup, err := resolveDiffRequestPaths(ctx, request, true)
 	if err != nil {
 		return ImageDiffResult{}, err

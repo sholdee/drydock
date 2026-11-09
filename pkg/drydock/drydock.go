@@ -129,8 +129,8 @@ type Config struct {
 	// RemoteResourceForbiddenRoots rejects remote-resource cache locations under
 	// protected roots.
 	RemoteResourceForbiddenRoots []string
-	// RemoteResourceCredentials supplies credentials for remote Kustomize HTTP
-	// resources.
+	// RemoteResourceCredentials supplies credentials for remote HTTP(S)
+	// files and the hosts that receive them (RemoteResourceCredentials.Hosts).
 	RemoteResourceCredentials RemoteResourceCredentials
 	// OCICacheDir overrides the OCI artifact source cache root.
 	OCICacheDir string

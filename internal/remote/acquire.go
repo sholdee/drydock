@@ -42,10 +42,18 @@ type Request struct {
 	Submodules bool
 }
 
+// Credentials are the --remote-* credentials for remote HTTP(S) files:
+// remote Kustomize resources, Helm value files, and Helm file parameters.
 type Credentials struct {
 	Username    string
 	Password    string
 	BearerToken string
+	// Hosts lists the hosts that receive the credentials, one
+	// --remote-auth-host entry each: host[:port] or https://host[:port]
+	// for HTTPS, and http://host[:port] to allow plain HTTP. A request
+	// receives the credentials only when its scheme, host, and port match
+	// an entry. Validate fails when a credential is set and Hosts is empty.
+	Hosts []string
 }
 
 type GitCredentials struct {

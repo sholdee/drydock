@@ -329,6 +329,9 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 	if err := request.validateKubeVersion(); err != nil {
 		return BuildResult{}, err
 	}
+	if err := request.validateRemoteResourceCredentials(); err != nil {
+		return BuildResult{}, err
+	}
 	request = resolveBuildRequestRoot(request)
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {
@@ -496,6 +499,9 @@ func applicationSetOptionsForRequest(request BuildRequest) (appset.Options, []di
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (result BuildResult, err error) {
+	if err := request.validateRemoteResourceCredentials(); err != nil {
+		return BuildResult{}, err
+	}
 	request = resolveBuildRequestRoot(request)
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {
