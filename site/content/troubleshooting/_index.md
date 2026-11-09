@@ -295,12 +295,51 @@ drydock skips it. It also skips what the object would create:
 warning discovery.namespace-not-enabled: Application team-b/app is skipped: namespace "team-b" is not enabled for Argo CD, so Argo CD never reconciles it; add the namespace to argocd-cmd-params-cm application.namespaces to enable it (Argo CD namespace argocd)
 ```
 
-drydock applies the lists only when the `argocd-cmd-params-cm` that it reads
-names its `metadata.namespace`, which is the Argo CD namespace. To enable a
+drydock applies the lists only when it reads an `argocd-cmd-params-cm` and
+knows the Argo CD namespace: `--argocd-namespace` names it, or an
+`argocd-cmd-params-cm` names it in its `metadata.namespace`. If the Argo CD
+namespace in the message is wrong, pass `--argocd-namespace`. To enable a
 namespace, add it to the list in `argocd-cmd-params-cm`. Each
 entry is a glob, or a regular expression when slashes wrap it, for example
 `/^team-[a-z]+$/`. The AppProject must also list the namespace in
 `sourceNamespaces`. `--strict` does not fail on the warning.
+
+## Symptom: `settings.controller-namespace-ambiguous` Or `settings.controller-namespace-unconfirmed`
+
+The `argocd-cmd-params-cm` ConfigMaps that reach this cluster name more than
+one namespace, or none of them names the namespace that drydock uses. drydock
+uses that namespace for Application instance names (`ARGOCD_APP_NAME`,
+`.argocd-source-<app>.yaml`, and resource tracking) and for the namespace
+gate:
+
+```text
+warning settings.controller-namespace-ambiguous: argocd-cmd-params-cm ConfigMaps name several Argo CD namespaces (argocd, team-a); drydock uses "argocd" because it is the default; pass --argocd-namespace to name another namespace where Argo CD runs
+```
+
+A hub Argo CD in `argocd` next to tenant installs gives this warning.
+`--strict` does not fail on it. If Argo CD runs in another namespace, pass
+`--argocd-namespace` with that namespace.
+
+```text
+warning settings.controller-namespace-unconfirmed: --argocd-namespace names "platform", but the argocd-cmd-params-cm ConfigMaps name only argocd, gitops; check that --argocd-namespace names the namespace where Argo CD runs
+```
+
+This warning means that the namespace that drydock uses is not one that the
+ConfigMaps name. It appears when `--argocd-namespace` names another
+namespace, or when the ConfigMaps name several namespaces and none of them
+is `argocd`. `--strict` fails on it. Make sure that `--argocd-namespace`
+names the namespace where Argo CD runs, or pass it if it is not set.
+
+## Symptom: `discovery.outside-controller-namespace`
+
+`--argocd-namespace` is set, and an `argocd-cm`, `argocd-cmd-params-cm`,
+`argocd-cmp-cm`, repository Secret, cluster Secret, or AppProject is in
+another namespace. Argo CD reads these objects only in its own namespace, so
+drydock skips the object. An Application that names a skipped AppProject
+gets `project.missing`. drydock never skips an object without a namespace.
+`--strict` does not fail on the warning. If the object belongs to the Argo
+CD that you emulate, make sure that `--argocd-namespace` names its
+namespace.
 
 ## Symptom: A Kustomize Directory Renders As A Helm Chart
 
