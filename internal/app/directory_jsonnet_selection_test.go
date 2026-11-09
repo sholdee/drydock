@@ -26,6 +26,40 @@ func TestWithSelectionOnlyPathsJsonnetCodeUsesTheControllerNamespace(t *testing.
 	}
 }
 
+// TestWithSelectionOnlyPathsJsonnetCodeEnvPerApplication pins that the
+// selection memo keeps the build environment apart for each Application.
+// Two Applications share a source path and extVar code, but the code
+// imports a file named after ARGOCD_APP_NAME, so each owns its own file.
+func TestWithSelectionOnlyPathsJsonnetCodeEnvPerApplication(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "app", "main.jsonnet"), "std.extVar('cfg')\n")
+	writeTestFile(t, filepath.Join(root, "shared", "alpha.libsonnet"), "{}\n")
+	writeTestFile(t, filepath.Join(root, "shared", "beta.libsonnet"), "{}\n")
+	inputs := []ApplicationSelectionInput{}
+	for _, name := range []string{"alpha", "beta"} {
+		inputs = append(inputs, ApplicationSelectionInput{Application: argoappv1.Application{
+			Name:      name,
+			Namespace: "argocd",
+			Spec: argoappv1.ApplicationSpec{
+				Source: &argoappv1.ApplicationSource{
+					RepoURL: "https://git.example.test/org/repo.git", Path: "app", TargetRevision: "main",
+					Directory: &argoappv1.ApplicationSourceDirectory{Jsonnet: argoappv1.ApplicationSourceJsonnet{
+						ExtVars: []argoappv1.JsonnetVar{{Name: "cfg", Value: "import '../shared/${ARGOCD_APP_NAME}.libsonnet'", Code: true}},
+					}},
+				},
+				Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+			},
+		}})
+	}
+	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, sourceTypeGates{}, inputs)
+	for _, name := range []string{"alpha", "beta"} {
+		selected, _ := SelectChangedApplicationInputs(side.inputs, []string{"shared/" + name + ".libsonnet"})
+		if len(selected) != 1 || selected[0].Name != name {
+			t.Errorf("change to shared/%s.libsonnet selected %v, want only %s (paths %v, %v)", name, selected, name, side.inputs[0].Paths, side.inputs[1].Paths)
+		}
+	}
+}
+
 // TestWithSelectionOnlyPathsJsonnetCodeWithoutJsonnetFile pins that a
 // source without a Jsonnet file is not unknown when its extVar code names
 // a revision in an import path: the render never evaluates the code.
