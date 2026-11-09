@@ -2617,10 +2617,17 @@ ensure_namespace() {
 # The value must equal application.namespaces in
 # repo/settings/argocd-cmd-params-cm.yaml, which drydock reads. The patch
 # also removes controller.diff.server.side, which a failed run with
-# --keep-cluster can leave. The restart below applies both.
+# --keep-cluster can leave. The restart below applies both. Such a run can
+# also leave the Applications of the live diff phase and of the
+# controller-level server-side diff phase in the argocd namespace, which
+# would fail assert_application_inventory. The deletes remove them by the
+# names in their fixture manifests. The Applications have no resources
+# finalizer, so their resources stay.
 configure_application_namespaces() {
   kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
     -p "{\"data\":{\"application.namespaces\":\"${TENANT_NAMESPACE},${DIRECTORY_DECODE_NAMESPACE},project-policy-tenant\",\"${CONTROLLER_SSD_KEY}\":null}}" >/dev/null
+  kubectl --request-timeout=30s -n argocd delete -f "${LIVE_DIFF_FIXTURE_PATH}/repo/applications" --ignore-not-found >/dev/null
+  kubectl --request-timeout=30s -n argocd delete -f "${CONTROLLER_SSD_FIXTURE_PATH}/repo/applications" --ignore-not-found >/dev/null
   kubectl -n argocd rollout restart deployment/argocd-server >/dev/null
   kubectl -n argocd rollout restart statefulset/argocd-application-controller >/dev/null
   kubectl -n argocd rollout status deployment/argocd-server --timeout=300s

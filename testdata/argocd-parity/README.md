@@ -2005,8 +2005,9 @@ steps:
 5. It deletes the Applications, removes the key, and restarts the
    application controller again. On an existing cluster, the exit trap does
    the same when the phase fails, unless `--keep-cluster` is set. The
-   install step also removes the key, in case an earlier run with
-   `--keep-cluster` left it.
+   install step also removes the key and deletes the Applications of this
+   phase and of the live diff phase, in case an earlier run with
+   `--keep-cluster` left them.
 
 The results go to `live-diff-controller-ssd/` in the smoke output
 directory. Earlier drydock releases read the key as metadata only. They
