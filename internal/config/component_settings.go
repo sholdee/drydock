@@ -129,6 +129,16 @@ func ComponentSettingEnv(component ArgoCDComponent, name string) bool {
 	return false
 }
 
+// ComponentRunsProgram reports whether the command line of a container,
+// command and then args, runs the program of component: its first item
+// names the program, such as /usr/local/bin/argocd-repo-server. A container
+// without a command line, such as one in a Kustomize patch, or one that
+// runs another program, such as a CMP sidecar, does not.
+func ComponentRunsProgram(component ArgoCDComponent, command, args []string) bool {
+	line := append(append([]string(nil), command...), args...)
+	return len(line) > 0 && path.Base(line[0]) == string(component)
+}
+
 // ComponentFlag is the value of a setting flag on the command line of a
 // component: the value text that drydock applies as the setting, as the
 // program reads it.

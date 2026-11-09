@@ -2,6 +2,8 @@ package app
 
 import (
 	"fmt"
+	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -10,7 +12,36 @@ import (
 	"github.com/sholdee/drydock/internal/discovery"
 	"github.com/sholdee/drydock/internal/render"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	sigsyaml "sigs.k8s.io/yaml"
 )
+
+// kustomizationPatches holds the patch refs of a kustomization.
+type kustomizationPatches struct {
+	Patches []struct {
+		Path string `json:"path"`
+	} `json:"patches"`
+	PatchesStrategicMerge []string `json:"patchesStrategicMerge"`
+	PatchesJSON6902       []struct {
+		Path string `json:"path"`
+	} `json:"patchesJson6902"`
+}
+
+// readKustomizationPatches reads the patch refs of the kustomization in
+// dir.
+func readKustomizationPatches(root, dir string) (kustomizationPatches, bool) {
+	for _, name := range render.KustomizationFileNames {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(dir), name))
+		if err != nil {
+			continue
+		}
+		var kustomization kustomizationPatches
+		if err := sigsyaml.Unmarshal(data, &kustomization); err != nil {
+			return kustomizationPatches{}, false
+		}
+		return kustomization, true
+	}
+	return kustomizationPatches{}, false
+}
 
 // componentWorkloadKinds maps each Argo CD program to the candidate kind of
 // its workload.
@@ -70,7 +101,10 @@ func applyComponentWorkloadSettings(root string, discovered discovery.Result, se
 		for _, item := range workloads {
 			rendered := item.candidate.Tier != discovery.SourceTierStatic
 			container := componentContainer(item.candidate.Object, component)
-			if container == nil {
+			if container == nil || (!rendered && committedKustomizePatch(root, item.candidate.Path)) {
+				// Not a complete workload of the program: a CMP sidecar,
+				// a patch without the program, or a listed Kustomize
+				// patch, which holds only part of the env list.
 				continue
 			}
 			name := repoServerDisplayName(item)
@@ -100,15 +134,17 @@ func applyComponentWorkloadSettings(root string, discovered discovery.Result, se
 	return diags
 }
 
-// componentContainer returns the container of a sanitized workload that
-// runs component: the one named after the program or with the chart
-// container name, else the first.
+// componentContainer returns the container of a sanitized workload whose
+// command line runs component (config.ComponentRunsProgramKey): the one
+// named after the program or with the chart container name first, else the
+// first one that runs it. It returns nil when no container runs the
+// program: drydock does not guess which container would.
 func componentContainer(obj *unstructured.Unstructured, component config.ArgoCDComponent) map[string]any {
 	containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
 	var first map[string]any
 	for _, item := range containers {
 		container, ok := item.(map[string]any)
-		if !ok {
+		if !ok || container[config.ComponentRunsProgramKey] != true {
 			continue
 		}
 		if first == nil {
@@ -119,6 +155,43 @@ func componentContainer(obj *unstructured.Unstructured, component config.ArgoCDC
 		}
 	}
 	return first
+}
+
+// committedKustomizePatch reports whether a kustomization in the directory
+// of the committed file, or in a directory above it, lists the file as a
+// patch: a patches path, a patchesStrategicMerge entry, or a
+// patchesJson6902 path. kustomize merges such a file into a workload, so it
+// is not a workload of its own. drydock does not search other directories.
+func committedKustomizePatch(root, file string) bool {
+	file = path.Clean(filepath.ToSlash(file))
+	for dir := path.Dir(file); ; dir = path.Dir(dir) {
+		if kustomizationListsPatch(root, dir, file) {
+			return true
+		}
+		if dir == "." || dir == "/" {
+			return false
+		}
+	}
+}
+
+func kustomizationListsPatch(root, dir, file string) bool {
+	kustomization, ok := readKustomizationPatches(root, dir)
+	if !ok {
+		return false
+	}
+	refs := append([]string(nil), kustomization.PatchesStrategicMerge...)
+	for _, patch := range kustomization.Patches {
+		refs = append(refs, patch.Path)
+	}
+	for _, patch := range kustomization.PatchesJSON6902 {
+		refs = append(refs, patch.Path)
+	}
+	for _, ref := range refs {
+		if ref != "" && !strings.Contains(ref, "\n") && path.Clean(path.Join(dir, ref)) == file {
+			return true
+		}
+	}
+	return false
 }
 
 func componentArgsNotes(container map[string]any) []string {

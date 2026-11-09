@@ -450,3 +450,184 @@ spec:
 		t.Fatalf("warnings = %#v, want one", got)
 	}
 }
+
+const partialWorkloadParams = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  application.namespaces: team-a
+  reposerver.include.hidden.directories: "true"
+  reposerver.max.combined.directory.manifests.size: 50M
+`
+
+// vendoredArgoCDWorkloads is a committed install whose workloads pass the
+// argocd-cmd-params-cm keys to their programs, as install.yaml does.
+const vendoredArgoCDWorkloads = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: argocd-repo-server
+          args:
+            - /usr/local/bin/argocd-repo-server
+          env:
+            - name: ARGOCD_REPO_SERVER_INCLUDE_HIDDEN_DIRECTORIES
+              valueFrom:
+                configMapKeyRef:
+                  name: argocd-cmd-params-cm
+                  key: reposerver.include.hidden.directories
+                  optional: true
+            - name: ARGOCD_REPO_SERVER_MAX_COMBINED_DIRECTORY_MANIFESTS_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: argocd-cmd-params-cm
+                  key: reposerver.max.combined.directory.manifests.size
+                  optional: true
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: argocd-application-controller
+spec:
+  template:
+    spec:
+      containers:
+        - name: argocd-application-controller
+          args:
+            - /usr/local/bin/argocd-application-controller
+          env:
+            - name: ARGOCD_APPLICATION_NAMESPACES
+              valueFrom:
+                configMapKeyRef:
+                  name: argocd-cmd-params-cm
+                  key: application.namespaces
+                  optional: true
+`
+
+// A committed workload that is only part of one, such as a Kustomize patch
+// or a CMP sidecar, does not run the program or is a listed patch. It does
+// not count, so drydock keeps the argocd-cmd-params-cm values and gives no
+// warning. In these shapes no Application renders the install folder: a
+// bootstrap kustomization reads a remote install.yaml.
+func TestComponentSettingsIgnorePartialCommittedWorkloads(t *testing.T) {
+	const kustomizationHead = "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: argocd\nresources:\n  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/install.yaml\n  - argocd-cmd-params-cm.yaml\n"
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{
+			name: "CMP sidecar patch of the repo-server",
+			files: map[string]string{
+				"kustomization.yaml": kustomizationHead + "patches:\n  - path: repo-server-patch.yaml\n",
+				"repo-server-patch.yaml": `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: avp
+          command: [/var/run/argocd/argocd-cmp-server]
+          image: quay.io/argoproj/argocd:v3.6.1
+`,
+			},
+		},
+		{
+			name: "env patches of the controller StatefulSet and the repo-server without the program",
+			files: map[string]string{
+				"kustomization.yaml": kustomizationHead + "patches:\n  - path: controller-patch.yaml\n  - path: repo-server-patch.yaml\n",
+				"controller-patch.yaml": `apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: argocd-application-controller
+spec:
+  template:
+    spec:
+      containers:
+        - name: argocd-application-controller
+          resources:
+            limits:
+              memory: 2Gi
+          env:
+            - name: ARGOCD_CONTROLLER_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: argocd-cmd-params-cm
+                  key: controller.log.level
+                  optional: true
+`,
+				"repo-server-patch.yaml": `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: argocd-repo-server
+          resources:
+            limits:
+              memory: 2Gi
+          env:
+            - name: ARGOCD_REPO_SERVER_INCLUDE_HIDDEN_DIRECTORIES
+              value: "false"
+`,
+			},
+		},
+		{
+			name: "listed patch that runs the program and sorts before a vendored install",
+			files: map[string]string{
+				"kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: argocd\nresources:\n  - install.yaml\n  - argocd-cmd-params-cm.yaml\npatchesStrategicMerge:\n  - a-repo-server-patch.yaml\n",
+				"install.yaml":       vendoredArgoCDWorkloads,
+				"a-repo-server-patch.yaml": `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: argocd-repo-server
+          args:
+            - /usr/local/bin/argocd-repo-server
+            - --loglevel=debug
+          env:
+            - name: ARGOCD_REPO_SERVER_LOGFORMAT
+              valueFrom:
+                configMapKeyRef:
+                  name: argocd-cmd-params-cm
+                  key: reposerver.log.format
+                  optional: true
+`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, filepath.Join(root, "bootstrap", "argocd", "argocd-cmd-params-cm.yaml"), partialWorkloadParams)
+			for name, data := range tc.files {
+				writeTestFile(t, filepath.Join(root, "bootstrap", "argocd", name), data)
+			}
+			writeDiffApplication(t, root, "other", "other", "same")
+			result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+			settings := result.Settings
+			for _, check := range []struct{ key, got, want string }{
+				{"application.namespaces", settings.ApplicationNamespaces.Value, "team-a"},
+				{"reposerver.include.hidden.directories", settings.IncludeHiddenDirectories.Value, "true"},
+				{"reposerver.max.combined.directory.manifests.size", settings.MaxCombinedDirectoryManifestsSize.Value, "50M"},
+			} {
+				if check.got != check.want {
+					t.Errorf("%s = %q, want %q from argocd-cmd-params-cm", check.key, check.got, check.want)
+				}
+			}
+			if diags := workloadWarnings(result.Diagnostics, "Argo CD argocd-"); len(diags) != 0 {
+				t.Errorf("workload warnings = %#v, want none", diags)
+			}
+		})
+	}
+}

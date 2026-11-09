@@ -38,6 +38,9 @@ const (
 	// what drydock cannot know about it (ParseComponentArgs).
 	ComponentFlagsKey     = "drydockFlags"
 	ComponentArgsNotesKey = "drydockArgsNotes"
+	// ComponentRunsProgramKey marks, on a sanitized container, that its
+	// command line runs the program of the workload (ComponentRunsProgram).
+	ComponentRunsProgramKey = "drydockRunsProgram"
 	// RepoServerTokenFileKey and RepoServerNamespaceFileKey mark, on a
 	// sanitized volume, whether the volume holds a file named token and a
 	// file named namespace (discovery.sanitizedRepoServerVolumes).

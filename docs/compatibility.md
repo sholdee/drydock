@@ -1773,7 +1773,15 @@ Supported:
   `app.kubernetes.io/component` and `app.kubernetes.io/part-of: argocd`
   labels of the argo-cd chart. A workload counts by the rules of the
   repo-server for the Helm namespace: it comes from the same install as an
-  `argocd-cm`, or it runs in the Argo CD controller namespace. A render of
+  `argocd-cm`, or it runs in the Argo CD controller namespace. It must also
+  have a container whose command line runs the program, and drydock reads
+  only that container. So a CMP sidecar or a Kustomize patch without the
+  program does not count. A committed file that a kustomization in its
+  directory or in a directory above it lists under `patches`,
+  `patchesStrategicMerge`, or `patchesJson6902` does not count either,
+  because kustomize merges it into a workload and it holds only part of the
+  env list. For such files drydock keeps the `argocd-cmd-params-cm` values
+  and does not warn. A render of
   an install keeps these workloads, also when drydock renders it for its
   settings only. Without a workload, drydock reads the keys from
   `argocd-cmd-params-cm`, as earlier releases did.

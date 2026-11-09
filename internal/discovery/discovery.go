@@ -767,7 +767,19 @@ func sanitizedWorkloadContainer(container map[string]any, component config.ArgoC
 	if len(mounts) > 0 {
 		kept["volumeMounts"] = mounts
 	}
-	flags, notes := config.ParseComponentArgs(component, stringList(container["command"]), stringList(container["args"]))
+	keepComponentCommandLine(kept, container, component)
+	return kept
+}
+
+// keepComponentCommandLine records on kept whether the command line of
+// container runs the program of component, the setting flags that it
+// sets, and the notes about what drydock cannot know about it.
+func keepComponentCommandLine(kept, container map[string]any, component config.ArgoCDComponent) {
+	command, args := stringList(container["command"]), stringList(container["args"])
+	if config.ComponentRunsProgram(component, command, args) {
+		kept[config.ComponentRunsProgramKey] = true
+	}
+	flags, notes := config.ParseComponentArgs(component, command, args)
 	if len(flags) > 0 {
 		list := make([]any, 0, len(flags))
 		for _, flag := range flags {
@@ -782,7 +794,6 @@ func sanitizedWorkloadContainer(container map[string]any, component config.ArgoC
 		}
 		kept[config.ComponentArgsNotesKey] = list
 	}
-	return kept
 }
 
 func stringList(value any) []string {
