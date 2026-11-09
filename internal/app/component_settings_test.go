@@ -260,8 +260,8 @@ applicationSet:
 	if got := settings.AllowOutOfBoundsSymlinks.Provenance.Pointer; !strings.Contains(got, "--allow-oob-symlinks") {
 		t.Errorf("AllowOutOfBoundsSymlinks pointer = %q, want the flag", got)
 	}
-	if diags := workloadWarnings(result.Diagnostics, "Argo CD argocd-"); len(diags) != 0 {
-		t.Fatalf("workload warnings = %#v, want none", diags)
+	if diags := workloadWarnings(result.Diagnostics, "Argo CD argocd-"); len(diags) != 1 || !strings.Contains(diags[0].Message, "sets application.namespaces to") {
+		t.Fatalf("workload warnings = %#v, want only the application.namespaces warning", diags)
 	}
 }
 
@@ -305,8 +305,15 @@ applicationSet:
 	if got := settings.IncludeHiddenDirectories.Provenance.Path; !strings.Contains(got, "argocd-cmd-params-cm") && !strings.HasPrefix(got, "rendered/") {
 		t.Errorf("IncludeHiddenDirectories provenance = %q, want the rendered argocd-cmd-params-cm", got)
 	}
-	if diags := workloadWarnings(result.Diagnostics, "Argo CD argocd-"); len(diags) != 0 {
-		t.Fatalf("workload warnings = %#v, want none", diags)
+	// The controller namespace and the install checks read
+	// application.namespaces from argocd-cmd-params-cm, so drydock says
+	// that the controller sets another value.
+	namespaceWarnings := workloadWarnings(result.Diagnostics, `sets application.namespaces to "team-z"`)
+	if len(namespaceWarnings) != 1 || !strings.Contains(namespaceWarnings[0].Message, `"team-a"`) {
+		t.Errorf("application.namespaces warnings = %#v, want one that names both values", namespaceWarnings)
+	}
+	if diags := workloadWarnings(result.Diagnostics, "Argo CD argocd-"); len(diags) != len(namespaceWarnings) {
+		t.Fatalf("workload warnings = %#v, want only the application.namespaces warning", diags)
 	}
 }
 

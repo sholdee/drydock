@@ -1828,7 +1828,13 @@ Supported:
   It does not compare a committed workload with a rendered one that comes
   first, because the committed file is often a Kustomize patch of it that
   holds only part of the env list. drydock reads only the application
-  controller for `application.namespaces`, not the API server.
+  controller for `application.namespaces`, not the API server. The
+  namespace gate uses the value of the controller. But drydock decides
+  which `argocd-cmd-params-cm` counts for the controller namespace, and
+  whether an install reconciles its own Application, before it knows the
+  workloads. These checks read the `application.namespaces` of each
+  `argocd-cmd-params-cm`. When the controller sets another value with a
+  flag or an env entry, drydock warns that the two can disagree.
 - An `argocd-cmd-params-cm` from a rendered Application can set the flag
   late, after drydock expanded the ApplicationSets with the earlier value.
   Then drydock runs discovery a second time with the final value, but only

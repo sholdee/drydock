@@ -227,8 +227,16 @@ func (v componentValue) diagnostics(component config.ArgoCDComponent, name strin
 	for _, unknown := range v.unknown {
 		diags = append(diags, repoServerWarning(provenance, fmt.Sprintf("cannot tell %s of the Argo CD %s %s offline: %s %s; drydock uses %s", v.setting.Key, component, name, v.setting.Env, unknown, used)))
 	}
-	if declared := config.ComponentSettingValue(params, v.setting.Key); v.source == "" && declared.Provenance.Path != "" && len(v.unknown) == 0 {
+	declared := config.ComponentSettingValue(params, v.setting.Key)
+	if v.source == "" && declared.Provenance.Path != "" && len(v.unknown) == 0 {
 		diags = append(diags, repoServerWarning(declared.Provenance, fmt.Sprintf("argocd-cmd-params-cm sets %s, but the Argo CD %s %s does not pass it to the program as %s, so Argo CD ignores it; drydock uses the default", v.setting.Key, component, name, v.setting.Env)))
+	}
+	if v.setting.Key == applicationNamespacesSetting && (v.source == "flag" || v.source == "env") && v.value.Value != declared.Value {
+		// commandParametersReach and installReconciles decide, before
+		// drydock knows the workloads, which argocd-cmd-params-cm counts
+		// and which install reconciles its own Application. They read the
+		// list of each ConfigMap, so they can disagree with the gate.
+		diags = append(diags, repoServerWarning(provenance, fmt.Sprintf("the Argo CD %s %s sets application.namespaces to %q, and drydock uses it for the namespace gate, but it decides which argocd-cmd-params-cm counts and whether an Argo CD install reconciles its own Application with the argocd-cmd-params-cm value %q", component, name, v.value.Value, declared.Value)))
 	}
 	return diags
 }
@@ -308,6 +316,10 @@ func (v componentValue) withEnvEntry(entry map[string]any, params config.ArgoSet
 }
 
 const commandParametersConfigMapName = "argocd-cmd-params-cm"
+
+// applicationNamespacesSetting is the argocd-cmd-params-cm key that the
+// application controller reads as --application-namespaces.
+const applicationNamespacesSetting = "application.namespaces"
 
 // commandParameterByKey returns the value of an argocd-cmd-params-cm key
 // that drydock reads, and false for a key that drydock does not read.
