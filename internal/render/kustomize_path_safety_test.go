@@ -908,6 +908,7 @@ func TestKustomizeRendererRejectsRemoteRefs(t *testing.T) {
 	for _, tt := range []struct {
 		name          string
 		kustomization string
+		want          string
 	}{
 		{
 			name: "remote file component",
@@ -917,6 +918,7 @@ kind: Kustomization
 components:
   - https://raw.githubusercontent.com/example/repo/main/component.yaml
 `,
+			want: "remote",
 		},
 		{
 			name: "file URL resource",
@@ -926,10 +928,11 @@ kind: Kustomization
 resources:
   - file:///tmp/repo//base
 `,
+			want: "uses the local file transport",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			assertKustomizeRenderErrorContains(t, tt.kustomization, "remote")
+			assertKustomizeRenderErrorContains(t, tt.kustomization, tt.want)
 		})
 	}
 }

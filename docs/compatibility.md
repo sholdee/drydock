@@ -906,6 +906,20 @@ Important boundaries:
   extraction directory, skips other entry types, and extracts absolute names
   relative to that directory. Charts built with `helm package` rarely contain
   such entries.
+- Recorded divergence from Argo CD v3.6.1: drydock refuses a Kustomize
+  remote ref that names the file transport, such as
+  `file:///srv/repo.git//base` or `git::file:///srv/repo.git//base`, in any
+  letter case. The `file:` and `file::` forms fail the same way. The error
+  says that the ref "uses the local file transport". kustomize v5.8.3, which
+  Argo CD v3.6.1 runs in the repo-server, accepts a `file://` ref
+  (`api/internal/git/repospec.go:269,322`) and clones it with
+  `git fetch --depth=1` from the file system of the repo-server
+  (`api/internal/git/cloner.go:16-35`). drydock runs on a workstation or a
+  CI runner. Without the refusal, a repository could make drydock copy any
+  Git repository on that machine into a render. The Git client for remote
+  bases also refuses every URL that it would read from the local file
+  system. The kind parity smoke pins this divergence with the
+  `parity-decode-kustomize-file-remote-base` case.
 - Ambient Git credential helpers, ambient Helm registry config, and secret
   credential fields from discovered repository Secrets are not read. SSH
   identities are the exception: without `--git-ssh-key-file`, the agent and

@@ -568,6 +568,11 @@ acquisition and Helm Go rendering. Remote Kustomize HTTP(S) file refs and Git
 refs use drydock's remote resource cache and the same credentials as the
 corresponding source type, including Git SSH identity resolution.
 
+Refuse a remote ref that uses the local file transport (`file://`,
+`git::file://`, `file:`, or `file::`, in any letter case), even though
+kustomize in Argo CD clones it. Do not let the remote Git client read a Git
+repository from the local file system.
+
 Helm rendering must use Go libraries by default. Preserve Argo CD semantics
 such as release name defaulting to Application name, passing destination
 namespace to Helm, and `valuesObject` overriding `values`.

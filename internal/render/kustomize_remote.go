@@ -55,6 +55,9 @@ func parseKustomizeGitRemoteRef(ref string) (kustomizeRemoteRef, bool, error) {
 		return kustomizeRemoteRef{}, false, nil
 	}
 
+	if isFileTransportKustomizeRef(trimmed) {
+		return kustomizeRemoteRef{}, true, fmt.Errorf("kustomize remote ref %q uses the local file transport; %s", redactKustomizeRemoteRef(trimmed), fileTransportRefusal)
+	}
 	withoutPrefix := strings.TrimPrefix(trimmed, "git::")
 	if strings.Contains(withoutPrefix, "://") {
 		return parseKustomizeGitURLRef(trimmed, withoutPrefix)
@@ -68,7 +71,6 @@ func parseKustomizeGitRemoteRef(ref string) (kustomizeRemoteRef, bool, error) {
 	return kustomizeRemoteRef{}, false, nil
 }
 
-//nolint:gocyclo // URL remote parsing validates scheme, auth, query, repo path, and subpath together.
 func parseKustomizeGitURLRef(original, raw string) (kustomizeRemoteRef, bool, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -77,7 +79,7 @@ func parseKustomizeGitURLRef(original, raw string) (kustomizeRemoteRef, bool, er
 	if parsed.Scheme != "http" && parsed.Scheme != "https" && parsed.Scheme != "ssh" {
 		return kustomizeRemoteRef{}, false, nil
 	}
-	if parsed.Host == "" && parsed.Scheme != "file" {
+	if parsed.Host == "" {
 		return kustomizeRemoteRef{}, false, nil
 	}
 	if parsed.User != nil && (parsed.Scheme == "http" || parsed.Scheme == "https" || hasURLPassword(parsed.User)) {
@@ -117,6 +119,22 @@ func parseKustomizeGitURLRef(original, raw string) (kustomizeRemoteRef, bool, er
 		Subpath:    path.Clean(subpath),
 		Submodules: submodules,
 	}, true, nil
+}
+
+// fileTransportRefusal ends the error for a Kustomize ref that names the
+// file transport.
+const fileTransportRefusal = "drydock does not clone Git repositories from the local file system"
+
+// isFileTransportKustomizeRef reports whether ref names the file
+// transport, with or without the git:: prefix and in any case. kustomize
+// clones a file:// ref from the local file system (internal/git/repospec.go
+// extractScheme and extractHost), so a repository could make drydock read
+// any Git repository on the machine. file: and file:: forms are refused
+// too, so that no file form reaches the Git client.
+func isFileTransportKustomizeRef(ref string) bool {
+	lower := strings.ToLower(strings.TrimSpace(ref))
+	lower = strings.TrimPrefix(lower, "git::")
+	return strings.HasPrefix(lower, "file:")
 }
 
 func inferKustomizeGitURLPath(host, rawPath string) (string, string, bool) {

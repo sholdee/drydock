@@ -292,6 +292,15 @@ cases:
   # with a message that names no file, and Argo CD reports a
   # ComparisonError.
   #
+  # kustomize clones a file:// remote base with git from the file system
+  # of the repo-server (internal/git/cloner.go ClonerUsingGitExec), so Argo
+  # CD accepts the ref and fails only because no Git repository is at the
+  # path. drydock refuses the file transport before it fetches anything.
+  # This is a recorded divergence (docs/compatibility.md).
+  - name: parity-decode-kustomize-file-remote-base
+    source: render
+    argocdMessage: "fatal: '/parity-file-remote-base/repo.git' does not appear to be a git repository"
+    drydockMessage: 'kustomize resources "file:///parity-file-remote-base/repo.git//base" uses the local file transport; drydock does not clone Git repositories from the local file system'
   # kustomize rejects a release name that helm would read as a flag
   # (HelmChartInflationGeneratorPlugin.validateArgs).
   - name: parity-decode-kustomize-helm-release-name-dash

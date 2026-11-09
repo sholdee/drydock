@@ -487,6 +487,13 @@ Ambiguous non-file HTTP(S) URLs are rejected unless they use known Git host
 shorthand, a `.git` repository path, or explicit Git syntax such as `git::`,
 `ssh://`, or SCP-style `git@host:org/repo.git`.
 
+drydock refuses a remote ref that uses the local file transport, such as
+`file:///srv/repo.git//base` or `git::file:///srv/repo.git//base`. kustomize
+in Argo CD clones such a ref from the file system of the repo-server. drydock
+runs on your workstation or CI runner, so it does not read Git repositories
+from that file system. The error says that the ref "uses the local file
+transport".
+
 The renderer copies acquired content into a temporary workspace under generated
 `.drydock` paths. It does not write generated manifests into the source tree.
 
