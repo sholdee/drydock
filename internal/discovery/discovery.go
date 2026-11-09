@@ -310,6 +310,12 @@ func scanDocument(rel string, documentIndex int, obj *unstructured.Unstructured,
 	return nil
 }
 
+// SettingsCandidateKind returns the settings candidate kind of obj, and
+// whether it is a settings candidate.
+func SettingsCandidateKind(obj *unstructured.Unstructured) (string, bool) {
+	return settingsCandidateKind(obj)
+}
+
 func settingsCandidateKind(obj *unstructured.Unstructured) (string, bool) {
 	switch {
 	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cm":
@@ -324,10 +330,22 @@ func settingsCandidateKind(obj *unstructured.Unstructured) (string, bool) {
 		return "cluster-secret", true
 	case isArgoHelmValuesSettings(obj):
 		return "argocd-values", true
+	default:
+		return workloadCandidateKind(obj)
+	}
+}
+
+// workloadCandidateKind returns the candidate kind of an Argo CD workload.
+func workloadCandidateKind(obj *unstructured.Unstructured) (string, bool) {
+	switch {
 	case IsRepoServerObject(obj, "apps", "Deployment"):
 		return RepoServerDeploymentKind, true
 	case IsRepoServerObject(obj, "", "ServiceAccount"):
 		return RepoServerServiceAccountKind, true
+	case isArgoCDComponentObject(obj, config.ApplicationControllerComponent, "application-controller", "StatefulSet", "Deployment"):
+		return ApplicationControllerKind, true
+	case isArgoCDComponentObject(obj, config.ApplicationSetControllerComponent, "applicationset-controller", "Deployment"):
+		return ApplicationSetControllerKind, true
 	default:
 		return "", false
 	}
@@ -344,6 +362,59 @@ const (
 // IsRepoServerKind reports whether kind is a repo-server candidate kind.
 func IsRepoServerKind(kind string) bool {
 	return kind == RepoServerDeploymentKind || kind == RepoServerServiceAccountKind
+}
+
+// The candidate kinds of the Argo CD application controller StatefulSet or
+// Deployment and of the ApplicationSet controller Deployment. Their
+// environment and flags set argocd-cmd-params-cm keys that drydock reads
+// (config.ComponentSettings).
+const (
+	ApplicationControllerKind    = "argocd-application-controller"
+	ApplicationSetControllerKind = "argocd-applicationset-controller"
+)
+
+// IsArgoCDWorkloadKind reports whether kind is the candidate kind of an
+// object of an Argo CD install other than a settings ConfigMap: the
+// repo-server Deployment and ServiceAccount, and the controllers.
+func IsArgoCDWorkloadKind(kind string) bool {
+	return IsRepoServerKind(kind) || kind == ApplicationControllerKind || kind == ApplicationSetControllerKind
+}
+
+// WorkloadComponent returns the Argo CD program of a workload candidate
+// kind.
+func WorkloadComponent(kind string) (config.ArgoCDComponent, bool) {
+	switch kind {
+	case RepoServerDeploymentKind:
+		return config.RepoServerComponent, true
+	case ApplicationControllerKind:
+		return config.ApplicationControllerComponent, true
+	case ApplicationSetControllerKind:
+		return config.ApplicationSetControllerComponent, true
+	default:
+		return "", false
+	}
+}
+
+// isArgoCDComponentObject reports whether obj is an apps/v1 object of one
+// of kinds for component: the upstream install names it after the
+// component, and the argo-cd Helm chart labels it with the component label.
+func isArgoCDComponentObject(obj *unstructured.Unstructured, component config.ArgoCDComponent, label string, kinds ...string) bool {
+	for _, kind := range kinds {
+		if !matchesGVK(obj, "apps", kind) {
+			continue
+		}
+		if obj.GetName() == string(component) {
+			return true
+		}
+		labels := obj.GetLabels()
+		return labels["app.kubernetes.io/component"] == label && labels["app.kubernetes.io/part-of"] == "argocd"
+	}
+	return false
+}
+
+func matchesGVK(obj *unstructured.Unstructured, group, kind string) bool {
+	gvk := obj.GroupVersionKind()
+	return gvk.Group == group && gvk.Version == "v1" && gvk.Kind == kind
 }
 
 // IsRepoServerObject reports whether obj is the Argo CD repo-server object
@@ -376,7 +447,7 @@ func settingsCandidate(rel string, documentIndex int, kind string, obj *unstruct
 	candidate.Name = obj.GetName()
 	// A repo-server object is kept also from a committed file: drydock has
 	// no loader that reads it back by path, and the sanitized copy is small.
-	if includeObject || IsRepoServerKind(kind) {
+	if includeObject || IsArgoCDWorkloadKind(kind) {
 		candidate.Object = settingsCandidateObject(kind, obj)
 	}
 	return candidate
@@ -389,7 +460,11 @@ func settingsCandidateObject(kind string, obj *unstructured.Unstructured) *unstr
 	case "cluster-secret":
 		return sanitizedSecretObject(obj, []string{"name", "server", "namespaces", "clusterResources", "project"})
 	case RepoServerDeploymentKind:
-		return sanitizedRepoServerDeployment(obj)
+		return sanitizedRepoServerDeployment(obj, config.RepoServerComponent)
+	case ApplicationControllerKind:
+		return sanitizedRepoServerDeployment(obj, config.ApplicationControllerComponent)
+	case ApplicationSetControllerKind:
+		return sanitizedRepoServerDeployment(obj, config.ApplicationSetControllerComponent)
 	case RepoServerServiceAccountKind:
 		return sanitizedRepoServerServiceAccount(obj)
 	default:
@@ -619,13 +694,16 @@ var repoServerNamespaceEnv = map[string]struct{}{
 	"KUBECONFIG":       {},
 }
 
-// sanitizedRepoServerDeployment keeps only the fields of a repo-server
-// Deployment that decide the namespace helm uses, so no other environment
-// value of the install is kept: the metadata, the pod
-// automountServiceAccountToken and serviceAccountName, and per container
-// its name, the volume mount paths, and the env entries in
-// repoServerNamespaceEnv.
-func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured.Unstructured {
+// sanitizedRepoServerDeployment keeps only the fields of an Argo CD
+// workload that decide the namespace helm uses or an argocd-cmd-params-cm
+// key that component reads, so no other environment value of the install
+// is kept: the metadata, the pod automountServiceAccountToken and
+// serviceAccountName, and per container its name, the volume mount paths,
+// the env entries in repoServerNamespaceEnv and the setting variables of
+// component (sanitizedSettingEnv), in their order, and the setting flags of
+// its command line (config.ParseComponentArgs). The command line itself is
+// not kept: it can hold any value.
+func sanitizedRepoServerDeployment(obj *unstructured.Unstructured, component config.ArgoCDComponent) *unstructured.Unstructured {
 	out := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": obj.GetAPIVersion(),
 		"kind":       obj.GetKind(),
@@ -647,36 +725,7 @@ func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured
 		if !ok {
 			continue
 		}
-		kept := map[string]any{"name": container["name"]}
-		var env []any
-		envItems, _ := container["env"].([]any)
-		for _, envItem := range envItems {
-			entry, ok := envItem.(map[string]any)
-			if !ok {
-				continue
-			}
-			name, _ := entry["name"].(string)
-			if _, ok := repoServerNamespaceEnv[name]; ok {
-				env = append(env, sanitizedRepoServerEnv(name, entry))
-			}
-		}
-		if len(env) > 0 {
-			kept["env"] = env
-		}
-		if envFrom, ok := container["envFrom"].([]any); ok && len(envFrom) > 0 {
-			kept[config.RepoServerEnvFromKey] = true
-		}
-		var mounts []any
-		mountItems, _ := container["volumeMounts"].([]any)
-		for _, mountItem := range mountItems {
-			if mount, ok := mountItem.(map[string]any); ok {
-				mounts = append(mounts, map[string]any{"name": mount["name"], "mountPath": mount["mountPath"]})
-			}
-		}
-		if len(mounts) > 0 {
-			kept["volumeMounts"] = mounts
-		}
-		keptContainers = append(keptContainers, kept)
+		keptContainers = append(keptContainers, sanitizedWorkloadContainer(container, component))
 	}
 	keptSpec["containers"] = keptContainers
 	if volumes := sanitizedRepoServerVolumes(podSpec); len(volumes) > 0 {
@@ -684,6 +733,105 @@ func sanitizedRepoServerDeployment(obj *unstructured.Unstructured) *unstructured
 	}
 	_ = unstructured.SetNestedMap(out.Object, map[string]any{"spec": keptSpec}, "spec", "template")
 	return out
+}
+
+func sanitizedWorkloadContainer(container map[string]any, component config.ArgoCDComponent) map[string]any {
+	kept := map[string]any{"name": container["name"]}
+	var env []any
+	envItems, _ := container["env"].([]any)
+	for _, envItem := range envItems {
+		entry, ok := envItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := entry["name"].(string)
+		if _, ok := repoServerNamespaceEnv[name]; ok {
+			env = append(env, sanitizedRepoServerEnv(name, entry))
+		} else if config.ComponentSettingEnv(component, name) {
+			env = append(env, sanitizedSettingEnv(name, entry))
+		}
+	}
+	if len(env) > 0 {
+		kept["env"] = env
+	}
+	if envFrom, ok := container["envFrom"].([]any); ok && len(envFrom) > 0 {
+		kept[config.RepoServerEnvFromKey] = true
+	}
+	var mounts []any
+	mountItems, _ := container["volumeMounts"].([]any)
+	for _, mountItem := range mountItems {
+		if mount, ok := mountItem.(map[string]any); ok {
+			mounts = append(mounts, map[string]any{"name": mount["name"], "mountPath": mount["mountPath"]})
+		}
+	}
+	if len(mounts) > 0 {
+		kept["volumeMounts"] = mounts
+	}
+	flags, notes := config.ParseComponentArgs(component, stringList(container["command"]), stringList(container["args"]))
+	if len(flags) > 0 {
+		list := make([]any, 0, len(flags))
+		for _, flag := range flags {
+			list = append(list, map[string]any{"flag": flag.Flag, "value": flag.Value})
+		}
+		kept[config.ComponentFlagsKey] = list
+	}
+	if len(notes) > 0 {
+		list := make([]any, 0, len(notes))
+		for _, note := range notes {
+			list = append(list, note)
+		}
+		kept[config.ComponentArgsNotesKey] = list
+	}
+	return kept
+}
+
+func stringList(value any) []string {
+	items, _ := value.([]any)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		text, _ := item.(string)
+		out = append(out, text)
+	}
+	return out
+}
+
+// sanitizedSettingEnv keeps a setting variable when drydock can know its
+// value: a literal value without a $(VAR) reference, or a configMapKeyRef,
+// with the name, key, and optional flag of the reference. For a
+// configMapKeyRef that the render resolved (resolveWorkloadConfigMapRefs in
+// the app package), the entry is already a literal. For any other source,
+// such as a secretKeyRef, it keeps only the kind of the source
+// (config.RepoServerUnknownSourceKey), never the value or the name of the
+// object that holds it.
+func sanitizedSettingEnv(name string, entry map[string]any) map[string]any {
+	if value, ok := entry["value"].(string); ok && value != "" {
+		if strings.Contains(value, "$(") {
+			return map[string]any{"name": name, config.RepoServerUnknownSourceKey: "a $(VAR) reference"}
+		}
+		return map[string]any{"name": name, "value": value}
+	}
+	if unknown, ok := entry[config.RepoServerUnknownSourceKey].(string); ok {
+		return map[string]any{"name": name, config.RepoServerUnknownSourceKey: unknown}
+	}
+	valueFrom, ok := entry["valueFrom"].(map[string]any)
+	if !ok {
+		return map[string]any{"name": name, "value": ""}
+	}
+	if ref, ok := valueFrom["configMapKeyRef"].(map[string]any); ok {
+		kept := map[string]any{"name": ref["name"], "key": ref["key"]}
+		if optional, ok := ref["optional"].(bool); ok {
+			kept["optional"] = optional
+		}
+		return map[string]any{"name": name, "valueFrom": map[string]any{"configMapKeyRef": kept}}
+	}
+	source := "valueFrom"
+	for _, kind := range []string{"secretKeyRef", "fieldRef", "resourceFieldRef", "fileKeyRef"} {
+		if _, ok := valueFrom[kind]; ok {
+			source = "valueFrom " + kind
+			break
+		}
+	}
+	return map[string]any{"name": name, config.RepoServerUnknownSourceKey: source}
 }
 
 // sanitizedRepoServerVolumes keeps, for each volume of the pod, only its

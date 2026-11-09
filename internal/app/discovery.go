@@ -410,7 +410,7 @@ func (o Orchestrator) discoverRenderedKustomize(ctx context.Context, root string
 		if err != nil {
 			return out, allDiags, recorder.Events(), fmt.Errorf("discover kustomize %q: %w", displayPath, err)
 		}
-		next, err := discovery.ScanObjects(displayPath, manifestObjects(manifests))
+		next, err := discovery.ScanObjects(displayPath, manifestObjects(resolveWorkloadConfigMapRefs(manifests)))
 		if err != nil {
 			return out, allDiags, recorder.Events(), fmt.Errorf("discover kustomize %q: %w", displayPath, err)
 		}

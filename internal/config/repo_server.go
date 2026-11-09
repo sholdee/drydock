@@ -33,6 +33,11 @@ func (s ArgoSettings) HelmNamespace() string {
 const (
 	RepoServerUnknownSourceKey = "drydockUnknownSource"
 	RepoServerEnvFromKey       = "drydockEnvFrom"
+	// ComponentFlagsKey and ComponentArgsNotesKey hold, on a sanitized
+	// container, the setting flags of its command line and the notes about
+	// what drydock cannot know about it (ParseComponentArgs).
+	ComponentFlagsKey     = "drydockFlags"
+	ComponentArgsNotesKey = "drydockArgsNotes"
 	// RepoServerTokenFileKey and RepoServerNamespaceFileKey mark, on a
 	// sanitized volume, whether the volume holds a file named token and a
 	// file named namespace (discovery.sanitizedRepoServerVolumes).

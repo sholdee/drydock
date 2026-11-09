@@ -123,7 +123,7 @@ func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]dis
 	if inputs := renderedSettingsInputs(overlay); !inputs.empty() {
 		kept := make([]discovery.SettingsCandidate, 0, len(base))
 		for _, candidate := range base {
-			if (discovery.IsSettingsConfigMapKind(candidate.Kind) || discovery.IsRepoServerKind(candidate.Kind)) && supersededBySettingsRender(candidate, inputs) {
+			if (discovery.IsSettingsConfigMapKind(candidate.Kind) || discovery.IsArgoCDWorkloadKind(candidate.Kind)) && supersededBySettingsRender(candidate, inputs) {
 				continue
 			}
 			kept = append(kept, candidate)

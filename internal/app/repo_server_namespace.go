@@ -53,7 +53,7 @@ type repoServerCandidate struct {
 // path and document index. Another one that gives a different namespace
 // adds a warning.
 func repoServerHelmNamespace(root string, discovered discovery.Result, settings config.ArgoSettings) (*config.Value[string], []diagnostic.Diagnostic) {
-	deployments, serviceAccounts, diags := collectRepoServerCandidates(root, discovered, settings)
+	deployments, serviceAccounts, diags := collectRepoServerCandidates(root, discovered, settings, discovery.RepoServerDeploymentKind)
 	sortRepoServerCandidates(deployments)
 	var out *config.Value[string]
 	for _, item := range deployments {
@@ -83,10 +83,10 @@ func repoServerHelmNamespace(root string, discovered discovery.Result, settings 
 	return out, diags
 }
 
-// collectRepoServerCandidates returns the repo-server Deployments that
-// count (see repoServerHelmNamespace) and the ServiceAccounts, each with
-// its pod namespace and install.
-func collectRepoServerCandidates(root string, discovered discovery.Result, settings config.ArgoSettings) ([]repoServerCandidate, []repoServerCandidate, []diagnostic.Diagnostic) {
+// collectRepoServerCandidates returns the workloads of kind that count (see
+// repoServerHelmNamespace), such as the repo-server Deployments, and the
+// repo-server ServiceAccounts, each with its pod namespace and install.
+func collectRepoServerCandidates(root string, discovered discovery.Result, settings config.ArgoSettings, kind string) ([]repoServerCandidate, []repoServerCandidate, []diagnostic.Diagnostic) {
 	inputs := renderedSettingsInputs(discovered.SettingsCandidates)
 	controllerNamespace := settings.ControllerNamespace("")
 	settingsGroups := map[string]bool{}
@@ -98,7 +98,7 @@ func collectRepoServerCandidates(root string, discovered discovery.Result, setti
 	var diags []diagnostic.Diagnostic
 	var deployments, serviceAccounts []repoServerCandidate
 	for _, candidate := range discovered.SettingsCandidates {
-		if !discovery.IsRepoServerKind(candidate.Kind) || candidate.Object == nil || supersededBySettingsRender(candidate, inputs) {
+		if !collectsWorkloadCandidate(candidate, kind) || supersededBySettingsRender(candidate, inputs) {
 			continue
 		}
 		item := repoServerCandidate{candidate: candidate, group: repoServerGroup(candidate)}
@@ -131,6 +131,16 @@ func collectRepoServerCandidates(root string, discovered discovery.Result, setti
 		}
 	}
 	return deployments, serviceAccounts, diags
+}
+
+// collectsWorkloadCandidate reports whether collectRepoServerCandidates
+// reads candidate for kind: a workload of kind, or a repo-server
+// ServiceAccount for the repo-server Deployment.
+func collectsWorkloadCandidate(candidate discovery.SettingsCandidate, kind string) bool {
+	if candidate.Object == nil {
+		return false
+	}
+	return candidate.Kind == kind || (kind == discovery.RepoServerDeploymentKind && candidate.Kind == discovery.RepoServerServiceAccountKind)
 }
 
 // sortRepoServerCandidates orders the repo-servers that count: from the

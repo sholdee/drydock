@@ -68,6 +68,7 @@ func loadSettingsWithLanding(root string, scope controllerNamespaceScope, discov
 	namespace, namespaceDiags := repoServerHelmNamespace(root, inNamespace, merged)
 	merged.RepoServerHelmNamespace = namespace
 	diags = append(diags, namespaceDiags...)
+	diags = append(diags, applyComponentWorkloadSettings(root, inNamespace, &merged)...)
 	return merged, landing, diags, nil
 }
 
