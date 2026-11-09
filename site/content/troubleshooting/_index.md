@@ -307,7 +307,8 @@ entry is a glob, or a regular expression when slashes wrap it, for example
 ## Symptom: `settings.controller-namespace-ambiguous` Or `settings.controller-namespace-unconfirmed`
 
 The `argocd-cmd-params-cm` ConfigMaps that reach this cluster name more than
-one namespace, or none of them names the namespace that drydock uses. drydock
+one namespace, none of them names the namespace that drydock uses, or
+another Argo CD install exists, also when it is the only one. drydock
 uses that namespace for Application instance names (`ARGOCD_APP_NAME`,
 `.argocd-source-<app>.yaml`, and resource tracking) and for the namespace
 gate:

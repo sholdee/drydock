@@ -247,13 +247,17 @@ Supported:
      `metadata.namespace`, drydock uses that namespace.
   3. Else, drydock uses `argocd`.
 
-  An `argocd-cmd-params-cm` counts when it carries a `metadata.namespace`
-  and reaches this cluster. drydock reads the namespace as written in a
-  committed file, and after the render for a rendered object. A rendered
-  object counts unless only Applications on other clusters render it. A
-  committed file counts unless only Applications on other clusters render
-  it, and a committed file that no Application renders counts. The rule is
-  a set test, so the order of files does not change the result.
+  An `argocd-cmd-params-cm` counts when it has a namespace and reaches
+  this cluster. A rendered object has the namespace that the render gives
+  it. A committed file has the namespace where it lands: when Applications
+  on this cluster render it and all put it in one namespace, that is the
+  outermost kustomization namespace on the way, else its own
+  `metadata.namespace`. When no Application renders the file, or the
+  Applications disagree, drydock uses its own `metadata.namespace`. A
+  rendered object counts unless only Applications on other clusters render
+  it. A committed file counts unless only Applications on other clusters
+  render it, and a committed file that no Application renders counts. The
+  rule is a set test, so the order of files does not change the result.
 
   Each `argocd-cmd-params-cm` must also pass one test: the Argo CD that
   it configures must reconcile at least one Application on this cluster
@@ -267,8 +271,9 @@ Supported:
   else the destination namespace of the Application. An Application
   without a namespace lives in the destination namespace of the
   Application that renders it (`controller/state.go:588-590`), its parent
-  or the Applications that render its committed file. A committed
-  `argocd-cmd-params-cm` that no Application renders passes.
+  or the Applications that render its committed file. A kustomization
+  namespace on the way to that file wins over the destination namespace. A
+  committed `argocd-cmd-params-cm` that no Application renders passes.
 
   If the test fails for every Application that puts it there, the
   ConfigMap belongs to another Argo CD, such as a tenant one. It names no
@@ -292,8 +297,12 @@ Supported:
   fail on. The second run starts with the ApplicationSet generation values
   of the first run. With `--argocd-namespace`, or when every render used
   the final namespace, there is no second run. A repository whose Argo CD
-  runs in `argocd`, and an Argo CD install at the top level of the
-  repository, never need one.
+  runs in `argocd` never needs one. A top-level Helm install in another
+  namespace that drydock renders only for its settings does not need one
+  either. A top-level install that discovery renders with the other
+  Applications, such as a local chart whose templates name the settings
+  ConfigMaps, can need one, because the Applications next to it rendered
+  before the install named the namespace.
 
   If the counting ConfigMaps name more than one namespace, drydock warns
   once. The warning lists the namespaces and names `--argocd-namespace`.
@@ -304,15 +313,18 @@ Supported:
   the warning is `settings.controller-namespace-unconfirmed`, and
   `--strict` fails on it. This happens when `--argocd-namespace` names a
   namespace that no ConfigMap names, or when the ConfigMaps name several
-  namespaces and none of them is `argocd`. Without ConfigMaps that name a
-  namespace, drydock does not warn.
+  namespaces and none of them is `argocd`. When other installs exist (see
+  above), drydock warns with `settings.controller-namespace-ambiguous` and
+  names them, also when they are the only ConfigMaps that name a
+  namespace. Without either, drydock does not warn.
 
   Argo CD reads its `argocd-cm`, `argocd-cmd-params-cm`, and
   `argocd-cmp-cm` ConfigMaps, its repository and cluster Secrets, and its
   AppProjects only in its own namespace (`util/settings`, `util/db`, and
   `GetAppProject` at v3.6.1). drydock skips these objects in another
-  namespace only when `--argocd-namespace` is set. drydock reads the
-  namespace that the object carries, after the render or as written. It
+  namespace only when `--argocd-namespace` is set. A rendered object is in
+  the namespace that the render gives it, and a committed object in the
+  namespace where it lands, as for an `argocd-cmd-params-cm` above. drydock
   never skips an object without a namespace. drydock reports each skipped
   object with the `discovery.outside-controller-namespace` warning, and
   `--strict` does not fail on it. A skipped AppProject is still declared in
