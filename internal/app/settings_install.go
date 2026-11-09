@@ -84,7 +84,7 @@ func settingsInstallProbe(root string, request BuildRequest, controllerNamespace
 // reads only local files and never acquires a source. Results are kept in
 // request.settingsInstallMemo for one discovery run.
 func applicationSettingsInstall(ctx context.Context, request BuildRequest, provider localProvider, application argoappv1.Application) settingsInstall {
-	key, keyOK := settingsInstallMemoKey(application, provider.overrideInstanceName(application))
+	key, keyOK := settingsInstallMemoKey(application, settingsInstallInstanceKey(provider, application))
 	if keyOK && request.settingsInstallMemo != nil {
 		if cached, ok := request.settingsInstallMemo.Load(key); ok {
 			if install, ok := cached.(settingsInstall); ok {
@@ -99,13 +99,39 @@ func applicationSettingsInstall(ctx context.Context, request BuildRequest, provi
 	return install
 }
 
+// settingsInstallInstanceKey is the instance name of application when
+// computeSettingsInstall reads it: the Application names ARGOCD_APP_NAME,
+// a .argocd-source-<app>.yaml file for that name exists in the path of a
+// source, or a source path is not in this tree. Otherwise it is "", so a
+// new controller namespace does not compute the same install again.
+func settingsInstallInstanceKey(provider localProvider, application argoappv1.Application) string {
+	instance := provider.overrideInstanceName(application)
+	if data, err := json.Marshal(application.Spec); err != nil || strings.Contains(string(data), "ARGOCD_APP_NAME") {
+		return instance
+	}
+	for _, source := range applicationSources(application) {
+		if source.Path == "" {
+			continue
+		}
+		sourcePath, err := cleanLocalSourcePath(source.Path)
+		if err != nil || !provider.sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {
+			return instance
+		}
+		if _, err := os.Lstat(filepath.Join(provider.repoRoot, sourcePath, fmt.Sprintf(appSourceFile, instance))); !os.IsNotExist(err) {
+			return instance
+		}
+	}
+	return ""
+}
+
 // settingsInstallMemoKey covers every input of computeSettingsInstall that
 // comes from the Application: the name, namespace, and project, which the
 // build environment and the .argocd-source-<app>.yaml file name read, the
 // destination, which the build environment reads, and the sources, with the
 // source hydrator, whose sync source replaces them. instanceName is the
-// instance name in the controller namespace of the provider, which the
-// build environment and the override file name read too.
+// instance name in the controller namespace of the provider when the
+// build environment or an override file name reads it
+// (settingsInstallInstanceKey).
 func settingsInstallMemoKey(application argoappv1.Application, instanceName string) (string, bool) {
 	data, err := json.Marshal(struct {
 		Name         string                           `json:"name"`
@@ -559,47 +585,88 @@ func markSettingsRenderInputs(result *discovery.Result, install settingsInstall)
 	}
 }
 
-// markArgoCDInstallSettings marks the settings ConfigMaps of result as
-// rendered by an Argo CD install on this cluster, which application
-// installs, with the namespace where each lands. When the install would not
-// reconcile application (installReconciles), they are another install.
+// markArgoCDInstallSettings records, on the settings ConfigMaps of result,
+// which application installs on this cluster, the namespace where each
+// lands: its own, or else the destination namespace of the install.
 func markArgoCDInstallSettings(result *discovery.Result, application argoappv1.Application) {
 	destinationNamespace := application.Spec.Destination.Namespace
-	other := !installReconciles(*result, application)
 	for i := range result.SettingsCandidates {
 		candidate := &result.SettingsCandidates[i]
 		if discovery.IsSettingsConfigMapKind(candidate.Kind) {
 			candidate.InstallNamespace = settingsCandidateNamespace(*candidate, destinationNamespace)
-			candidate.OtherInstall = other
 		}
 	}
 }
 
-// installReconciles reports whether the Argo CD that result installs would
-// reconcile application, the Application that installs it. Argo CD
-// reconciles an Application in its own namespace, or in a namespace that
-// its application.namespaces enables (isAppNamespaceAllowed,
-// controller/appcontroller.go:2852-2854). This is a check of the install
-// against itself: an install without an argocd-cmd-params-cm, or an
-// Application without a namespace, passes.
-func installReconciles(result discovery.Result, application argoappv1.Application) bool {
-	destinationNamespace := application.Spec.Destination.Namespace
+// markOtherInstallSettings marks the settings ConfigMaps of result as
+// those of another Argo CD install.
+func markOtherInstallSettings(result *discovery.Result) {
+	for i := range result.SettingsCandidates {
+		if discovery.IsSettingsConfigMapKind(result.SettingsCandidates[i].Kind) {
+			result.SettingsCandidates[i].OtherInstall = true
+		}
+	}
+}
+
+// installReconciles reports whether the Argo CD that the
+// argocd-cmd-params-cm of result configures would reconcile the
+// Application that renders it, which lives in one of applicationNamespaces
+// (committedFileWalker.applicationNamespaces). Argo CD reconciles an
+// Application in its own namespace, or in a namespace that its
+// application.namespaces enables (isAppNamespaceAllowed,
+// controller/appcontroller.go:2852-2854). This is a check of the render
+// against itself: a render without an argocd-cmd-params-cm, or an
+// Application whose namespace drydock cannot tell (""), passes. A ConfigMap
+// without a namespace lands in destinationNamespace.
+func installReconciles(result discovery.Result, applicationNamespaces []string, destinationNamespace string) bool {
 	found := false
 	for _, candidate := range result.SettingsCandidates {
 		if candidate.Kind != commandParametersCandidateKind || candidate.Object == nil {
 			continue
 		}
-		installNamespace := settingsCandidateNamespace(candidate, destinationNamespace)
-		if installNamespace == "" || application.Namespace == "" {
-			return true
-		}
 		found = true
 		enabled, _, _ := unstructured.NestedString(candidate.Object.Object, "data", "application.namespaces")
-		if security.IsNamespaceEnabled(application.Namespace, installNamespace, config.ParseNamespaceList(enabled)) {
+		if namespaceReconciled(applicationNamespaces, settingsCandidateNamespace(candidate, destinationNamespace), enabled) {
 			return true
 		}
 	}
 	return !found
+}
+
+// namespaceReconciled reports whether an Argo CD in installNamespace with
+// application.namespaces enabled reconciles an Application in one of
+// applicationNamespaces. An empty namespace is one that drydock cannot
+// tell, and it passes.
+func namespaceReconciled(applicationNamespaces []string, installNamespace, enabled string) bool {
+	if installNamespace == "" {
+		return true
+	}
+	list := config.ParseNamespaceList(enabled)
+	for _, namespace := range applicationNamespaces {
+		if namespace == "" || security.IsNamespaceEnabled(namespace, installNamespace, list) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCommandParametersCandidate(result discovery.Result) bool {
+	for _, candidate := range result.SettingsCandidates {
+		if candidate.Kind == commandParametersCandidateKind {
+			return true
+		}
+	}
+	return false
+}
+
+// applicationDestinations maps the key of each Application to its
+// destination namespace.
+func applicationDestinations(applications []discovery.ApplicationFile) map[string]string {
+	out := make(map[string]string, len(applications))
+	for _, appFile := range applications {
+		out[applicationKey(appFile.Application)] = appFile.Application.Spec.Destination.Namespace
+	}
+	return out
 }
 
 // markRemoteSettingsCandidates marks the settings candidates of result as

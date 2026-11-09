@@ -20,6 +20,9 @@ func (o Orchestrator) loadBuildSideDiscovery(ctx context.Context, root string, r
 }
 
 func loadBuildSideSettings(root string, request BuildRequest, discovered discovery.Result, result *BuildResult) ([]diagnostic.Diagnostic, error) {
+	// When the namespace did not settle, the settings keep the namespace
+	// that discovery used (discoverWithControllerNamespace).
+	request.controllerNamespaceHint = discovered.ControllerNamespaceHint
 	settings, settingsDiags, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
 	if err != nil {
 		return nil, err

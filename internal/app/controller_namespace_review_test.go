@@ -199,8 +199,9 @@ func TestNamespaceLessInstallConfigMapLandsInTheDestination(t *testing.T) {
 }
 
 // drydock asks which Applications render a committed argocd-cmd-params-cm
-// only when the answer can change the namespaces, and only once for each
-// Application and file in a discovery run.
+// once for each Application and file in a build side. It asks first the
+// Applications that the file's Argo CD reconciles and whose source path
+// holds the file, so a match stops early.
 func TestCommittedCommandParametersRenderCheckIsMemoized(t *testing.T) {
 	var calls atomic.Int64
 	original := committedFileReader
@@ -213,6 +214,9 @@ func TestCommittedCommandParametersRenderCheckIsMemoized(t *testing.T) {
 	write := func(t *testing.T, remote bool) string {
 		root := t.TempDir()
 		writeTestFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), commandParametersConfigMapYAML(controllerNamespaceTestNamespace, "  server.insecure: \"true\"\n"))
+		if !remote {
+			writeTestFile(t, filepath.Join(root, "apps", "settings.yaml"), kustomizeApplicationYAML("settings", controllerNamespaceTestNamespace, "settings", controllerNamespaceTestNamespace))
+		}
 		for _, name := range []string{"a", "b", "c"} {
 			app := kustomizeApplicationYAML(name, controllerNamespaceTestNamespace, "workloads/"+name, name)
 			if remote {
@@ -224,22 +228,27 @@ func TestCommittedCommandParametersRenderCheckIsMemoized(t *testing.T) {
 		return root
 	}
 
-	if _, err := (Orchestrator{}).ListApplications(context.Background(), BuildRequest{Path: write(t, false), Parallelism: 1}); err != nil {
-		t.Fatalf("ListApplications() error = %v", err)
-	}
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("render checks = %d without an Application on another cluster, want 0", got)
-	}
-	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: write(t, true), Parallelism: 1})
-	if err != nil {
-		t.Fatalf("ListApplications() error = %v", err)
-	}
-	if got := result.Settings.ControllerNamespace(""); got != controllerNamespaceTestNamespace {
-		t.Fatalf("ControllerNamespace = %q, want gitops from the file that no Application renders", got)
-	}
-	// Three Applications, one file: one check each for the whole run.
-	if got := calls.Load(); got != 3 {
-		t.Fatalf("render checks = %d, want 3", got)
+	for _, tc := range []struct {
+		name   string
+		remote bool
+		calls  int64
+	}{
+		{name: "rendered by an Application in its namespace", calls: 1},
+		{name: "Applications on another cluster only", remote: true, calls: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls.Store(0)
+			result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: write(t, tc.remote), Parallelism: 1})
+			if err != nil {
+				t.Fatalf("ListApplications() error = %v", err)
+			}
+			if got := result.Settings.ControllerNamespace(""); got != controllerNamespaceTestNamespace {
+				t.Fatalf("ControllerNamespace = %q, want gitops", got)
+			}
+			if got := calls.Load(); got != tc.calls {
+				t.Fatalf("render checks = %d, want %d for the whole run", got, tc.calls)
+			}
+		})
 	}
 }
 

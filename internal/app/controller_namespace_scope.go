@@ -92,7 +92,8 @@ func (o Orchestrator) discoverWithControllerNamespace(ctx context.Context, root 
 	if err != nil || request.ArgoCDNamespace != "" {
 		return discovered, diags, events, renderCache, renderSig, err
 	}
-	final, err := finalControllerNamespace(root, request, discovered)
+	settings, err := finalSettings(root, request, discovered)
+	final := settings.ControllerNamespace("")
 	if err != nil || recorder.onlyUsed(final) {
 		return discovered, diags, events, renderCache, renderSig, err
 	}
@@ -100,27 +101,32 @@ func (o Orchestrator) discoverWithControllerNamespace(ctx context.Context, root 
 	restartRequest.controllerNamespaceHint = final
 	restartRequest.renderCache = renderCache
 	restartRequest.renderNamespaces = nil
+	// The ApplicationSet expansions of the first run settled on these
+	// values (discoverRepositoryWithOCI), so the second run starts with
+	// them and does not restart for them once more.
+	generation := appsetGenerationSettingsFrom(settings)
+	restartRequest.appsetGeneration = &generation
 	restarted, restartDiags, restartEvents, renderCache, renderSig, err := o.discoverRepositoryWithOCI(ctx, root, restartRequest, ociFetcher)
 	events = append(events, restartEvents...)
 	if err != nil {
 		return restarted, restartDiags, events, renderCache, renderSig, err
 	}
-	again, err := finalControllerNamespace(root, request, restarted)
-	if err == nil && again != final {
-		restartDiags = append(restartDiags, unsettledControllerNamespaceDiagnostic(final, again))
+	again, err := finalSettings(root, request, restarted)
+	if err == nil && again.ControllerNamespace("") != final {
+		// Keep the namespace that the second run used, also for the
+		// settings of the result (loadBuildSideSettings).
+		restarted.ControllerNamespaceHint = final
+		restartDiags = append(restartDiags, unsettledControllerNamespaceDiagnostic(final, again.ControllerNamespace("")))
 	}
 	return restarted, restartDiags, events, renderCache, renderSig, err
 }
 
-// finalControllerNamespace is the controller namespace that the settings
-// of discovered give, without a restart hint.
-func finalControllerNamespace(root string, request BuildRequest, discovered discovery.Result) (string, error) {
+// finalSettings are the settings that discovered gives, without a restart
+// hint.
+func finalSettings(root string, request BuildRequest, discovered discovery.Result) (config.ArgoSettings, error) {
 	request.controllerNamespaceHint = ""
 	settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
-	if err != nil {
-		return "", err
-	}
-	return settings.ControllerNamespace(""), nil
+	return settings, err
 }
 
 func unsettledControllerNamespaceDiagnostic(used, final string) diagnostic.Diagnostic {
@@ -128,7 +134,7 @@ func unsettledControllerNamespaceDiagnostic(used, final string) diagnostic.Diagn
 		Code:     controllerNamespaceUnsettledCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "settings",
-		Message: fmt.Sprintf("the Argo CD controller namespace does not settle: discovery ran again with %q, and its settings then give %q; drydock keeps the run with %q; pass --argocd-namespace to name the namespace where Argo CD runs",
+		Message: fmt.Sprintf("the Argo CD controller namespace does not settle: discovery ran again with %q, and its settings then give %q; drydock keeps %q for discovery and rendering; pass --argocd-namespace to name the namespace where Argo CD runs",
 			used, final, used),
 	}
 }

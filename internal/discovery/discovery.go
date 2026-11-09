@@ -136,6 +136,11 @@ type Result struct {
 	ApplicationSets    []ApplicationSetFile
 	SettingsCandidates []SettingsCandidate
 	Projects           []ProjectFile
+	// ControllerNamespaceHint is the Argo CD controller namespace that the
+	// last discovery run used, when its settings do not settle on it. The
+	// settings of the result then use it too, so discovery and the final
+	// render agree. It is empty otherwise.
+	ControllerNamespaceHint string
 }
 
 func Scan(root string, opts Options) (Result, error) {

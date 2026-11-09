@@ -1,20 +1,16 @@
 package app
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
-	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
-	"github.com/sholdee/drydock/internal/project"
 )
 
 const (
@@ -39,65 +35,6 @@ const (
 // argocd-cmd-params-cm ConfigMap.
 const commandParametersCandidateKind = "argocd-cmd-params-cm"
 
-// namedNamespaces is what the argocd-cmd-params-cm candidates say about
-// the controller namespace: the namespaces that the counting candidates
-// name, and the namespaces of other Argo CD installs, each with the sorted
-// paths of its candidates.
-type namedNamespaces struct {
-	named  map[string][]string
-	others map[string][]string
-}
-
-// commandParametersNamespaces returns the namespaces that the
-// argocd-cmd-params-cm candidates name. A candidate counts when it carries
-// a namespace, as written in a committed file or after the render for a
-// rendered one, and reaches this cluster: a rendered candidate unless only
-// Applications on other clusters render it (SettingsCandidate.RemoteOnly),
-// and a committed file unless only such Applications render it
-// (committedFileRemoteOnly). A committed file that no Application renders
-// counts. A rendered candidate of another Argo CD install
-// (SettingsCandidate.OtherInstall) never counts. The result is a set, so
-// the order of the candidates does not matter.
-func commandParametersNamespaces(root string, candidates []discovery.SettingsCandidate, applications []discovery.ApplicationFile, settings config.ArgoSettings, memo *sync.Map) namedNamespaces {
-	out := namedNamespaces{named: map[string][]string{}, others: map[string][]string{}}
-	var committed []discovery.SettingsCandidate
-	for _, candidate := range candidates {
-		if candidate.Kind != commandParametersCandidateKind {
-			continue
-		}
-		switch {
-		case candidate.OtherInstall:
-			addNamespacePath(out.others, candidate.InstallNamespace, candidate)
-		case candidateNamespace(candidate) == "":
-		case candidate.Tier == discovery.SourceTierStatic:
-			committed = append(committed, candidate)
-		case !candidate.RemoteOnly:
-			addNamespacePath(out.named, candidateNamespace(candidate), candidate)
-		}
-	}
-	remote := len(committed) > 0 && hasRemoteApplication(applications, settings)
-	for _, candidate := range committed {
-		namespace := candidateNamespace(candidate)
-		// Only a committed file that would add a namespace needs the
-		// question which Applications render it.
-		if _, named := out.named[namespace]; named || !remote || !committedFileRemoteOnly(root, filepath.ToSlash(candidate.Path), applications, settings, memo) {
-			addNamespacePath(out.named, namespace, candidate)
-		}
-	}
-	return out
-}
-
-func addNamespacePath(namespaces map[string][]string, namespace string, candidate discovery.SettingsCandidate) {
-	if namespace == "" {
-		return
-	}
-	path := filepath.ToSlash(candidate.Path)
-	if !slices.Contains(namespaces[namespace], path) {
-		namespaces[namespace] = append(namespaces[namespace], path)
-		sort.Strings(namespaces[namespace])
-	}
-}
-
 // candidateNamespace is the namespace that a settings candidate carries:
 // the namespace of the rendered or decoded object, else the one of the
 // committed document. It is empty when the object has none.
@@ -106,71 +43,6 @@ func candidateNamespace(candidate discovery.SettingsCandidate) string {
 		return strings.TrimSpace(candidate.Object.GetNamespace())
 	}
 	return strings.TrimSpace(candidate.Namespace)
-}
-
-// hasRemoteApplication reports whether a discovered Application deploys to
-// another cluster. Only then can a committed file reach other clusters
-// only, so drydock asks which Applications render it.
-func hasRemoteApplication(applications []discovery.ApplicationFile, settings config.ArgoSettings) bool {
-	for _, appFile := range applications {
-		if applicationOnOtherCluster(appFile.Application, settings) {
-			return true
-		}
-	}
-	return false
-}
-
-func applicationOnOtherCluster(application argoappv1.Application, settings config.ArgoSettings) bool {
-	server, ok := project.ResolveDestinationServer(application.Spec.Destination, settings)
-	return ok && server != argoappv1.KubernetesInternalAPIServerAddr
-}
-
-// committedFileReader is sourceRendersCommittedFile. Tests replace it to
-// count how often drydock asks whether a source renders a committed file.
-var committedFileReader = sourceRendersCommittedFile
-
-// committedFileRemoteOnly reports whether only Applications on other
-// clusters render the committed file, as staticFileRenders tells it. memo
-// keeps, for one build side, whether an Application renders the file.
-func committedFileRemoteOnly(root, file string, applications []discovery.ApplicationFile, settings config.ArgoSettings, memo *sync.Map) bool {
-	gates := sourceTypeGatesFromSettings(settings)
-	remote := false
-	for _, appFile := range applications {
-		if appFile.Tier == discovery.SourceTierExternalManifest || !applicationRendersCommittedFile(root, file, appFile.Application, gates, memo) {
-			continue
-		}
-		if !applicationOnOtherCluster(appFile.Application, settings) {
-			return false
-		}
-		remote = true
-	}
-	return remote
-}
-
-func applicationRendersCommittedFile(root, file string, application argoappv1.Application, gates sourceTypeGates, memo *sync.Map) bool {
-	sources := applicationSources(application)
-	key := ""
-	if memo != nil {
-		if data, err := json.Marshal(sources); err == nil {
-			key = fmt.Sprintf("%s\x00%s\x00%s\x00%+v\x00%s", root, file, applicationKey(application), gates, data)
-			if cached, ok := memo.Load(key); ok {
-				if reads, ok := cached.(bool); ok {
-					return reads
-				}
-			}
-		}
-	}
-	reads := false
-	for _, source := range sources {
-		if ok, _ := committedFileReader(root, source, file, gates); ok {
-			reads = true
-			break
-		}
-	}
-	if key != "" {
-		memo.Store(key, reads)
-	}
-	return reads
 }
 
 // controllerNamespaceDiagnostics warns when the argocd-cmd-params-cm
@@ -220,7 +92,7 @@ func otherInstallsNote(found namedNamespaces) string {
 	if len(found.others) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("; drydock ignores the settings of the other Argo CD installs in %s, because their own argocd-cmd-params-cm does not reconcile the Application that installs them", namespaceList(found.others))
+	return fmt.Sprintf("; drydock ignores the settings ConfigMaps of the other Argo CD installs in %s, because their own argocd-cmd-params-cm does not reconcile the Application that puts it there", namespaceList(found.others))
 }
 
 func namespaceList(namespaces map[string][]string) string {

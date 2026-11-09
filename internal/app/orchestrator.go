@@ -73,7 +73,7 @@ type BuildRequest struct {
 	appsetGenerationMemo *sync.Map
 	settingsInstallMemo  *sync.Map
 	// committedRenderMemo keeps, for one build side, which Applications
-	// render a committed settings file (committedFileRemoteOnly).
+	// render a committed settings file (commandParametersNamespaces).
 	committedRenderMemo *sync.Map
 	// controllerNamespaceHint is the controller namespace of a restarted
 	// discovery run (discoverWithControllerNamespace).

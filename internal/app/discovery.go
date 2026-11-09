@@ -525,6 +525,15 @@ func (o Orchestrator) settleSettingsInstalls(ctx context.Context, root string, r
 	var allDiags []diagnostic.Diagnostic
 	var allEvents []cacheevent.Event
 	previous := ""
+	// Only the namespace of the last round counts as used
+	// (discoverWithControllerNamespace): a later round renders the installs
+	// again with the namespace that an earlier round found.
+	used := ""
+	defer func() {
+		if used != "" {
+			request.renderNamespaces.record(used)
+		}
+	}()
 	for round := range maxSettingsInstallRounds {
 		settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), current)
 		if err != nil {
@@ -543,6 +552,9 @@ func (o Orchestrator) settleSettingsInstalls(ctx context.Context, root string, r
 		}
 		previous = settled
 		rendered, rendersInstalls, diags, events, err := o.renderSettingsInstalls(ctx, root, request, current, settings, installSig, renderCache)
+		if rendersInstalls {
+			used = settings.ControllerNamespace("")
+		}
 		allDiags = append(allDiags, diags...)
 		allEvents = append(allEvents, events...)
 		if err != nil || !rendersInstalls {
@@ -612,15 +624,15 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 	}
 	defer cleanup()
 
-	request.renderNamespaces.record(settings.ControllerNamespace(""))
 	inputs := applicationInputsByKey(discovered)
 	renderSettings := discoveryRenderSettings{
 		signature: "settings-install\x00" + installSig,
 		// Only the controller namespace of the tracking options counts:
 		// the instance name reaches the build environment and the
 		// override file name, as in the final render.
-		tracking: TrackingOptions{ControllerNamespace: settings.ControllerNamespace("")},
-		settings: settings,
+		tracking:     TrackingOptions{ControllerNamespace: settings.ControllerNamespace("")},
+		settings:     settings,
+		applications: discovered.Applications,
 	}
 	var out discovery.Result
 	var allDiags []diagnostic.Diagnostic

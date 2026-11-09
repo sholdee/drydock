@@ -141,15 +141,16 @@ func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]dis
 }
 
 // keepSettingsReach keeps the marks of a merged candidate independent of
-// which copy the merge keeps. It is RemoteOnly or OtherInstall only when
-// every base and overlay candidate with its identity is: an object that an
-// Application on this cluster, or an install that reconciles its own
-// Application, renders too counts. Its InstallNamespace is the first one
-// that a copy sets.
+// which copy the merge keeps. It is RemoteOnly only when every copy with
+// its identity is: an object that an Application on this cluster renders
+// too counts. It is OtherInstall when a render produced it and every
+// rendered copy is another install's. A committed copy does not change
+// that, because only a render knows its install. Its InstallNamespace is
+// the first one that a copy sets.
 func keepSettingsReach(out, base, overlay []discovery.SettingsCandidate) []discovery.SettingsCandidate {
 	type marks struct {
-		local, own       bool
-		installNamespace string
+		local, rendered, own bool
+		installNamespace     string
 	}
 	byKey := map[string]marks{}
 	marked := false
@@ -157,7 +158,10 @@ func keepSettingsReach(out, base, overlay []discovery.SettingsCandidate) []disco
 		key := settingsDiscoveryKey(item)
 		entry := byKey[key]
 		entry.local = entry.local || !item.RemoteOnly
-		entry.own = entry.own || !item.OtherInstall
+		if item.Tier != discovery.SourceTierStatic {
+			entry.rendered = true
+			entry.own = entry.own || !item.OtherInstall
+		}
 		if entry.installNamespace == "" {
 			entry.installNamespace = item.InstallNamespace
 		}
@@ -170,7 +174,7 @@ func keepSettingsReach(out, base, overlay []discovery.SettingsCandidate) []disco
 	for i := range out {
 		entry := byKey[settingsDiscoveryKey(out[i])]
 		out[i].RemoteOnly = !entry.local
-		out[i].OtherInstall = !entry.own
+		out[i].OtherInstall = entry.rendered && !entry.own
 		out[i].InstallNamespace = entry.installNamespace
 	}
 	return out

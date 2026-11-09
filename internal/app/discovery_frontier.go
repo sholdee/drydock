@@ -25,7 +25,7 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 	defer cleanup()
 
 	inputs := applicationInputsByKey(discovered)
-	renderSettings := discoveryRenderSettings{signature: settingsSig, tracking: trackingOptionsFromSettings(settings), settings: settings}
+	renderSettings := discoveryRenderSettings{signature: settingsSig, tracking: trackingOptionsFromSettings(settings), settings: settings, applications: discovered.Applications}
 	if len(discovered.Applications) > 0 {
 		request.renderNamespaces.record(renderSettings.tracking.ControllerNamespace)
 	}
@@ -62,6 +62,9 @@ type discoveryRenderSettings struct {
 	// settings resolves Application destinations
 	// (settingsInstallInCluster).
 	settings config.ArgoSettings
+	// applications are the discovered Applications, which tell where an
+	// Application without a namespace lives (applicationNamespaces).
+	applications []discovery.ApplicationFile
 }
 
 type indexedDiscoveryRenderResult struct {
@@ -234,6 +237,7 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 	if !hasSettingsConfigMapCandidate(result) || !inCluster {
 		return result, diags, nil
 	}
+	markOtherInstallRender(request, provider, renderSettings, appFile, &result)
 	install := applicationSettingsInstall(ctx, request, provider, application)
 	if !settingsOnly && !install.installsArgoCD() {
 		// Not an Argo CD install: its settings ConfigMaps stay candidates
@@ -252,6 +256,21 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 		markSettingsRenderInputs(&result, install)
 	}
 	return result, diags, nil
+}
+
+// markOtherInstallRender marks the settings ConfigMaps of result as those of
+// another Argo CD install when result holds an argocd-cmd-params-cm whose
+// Argo CD would not reconcile the Application of appFile, which renders it
+// on this cluster (installReconciles). Any render that holds that ConfigMap
+// configures an Argo CD, not only a Helm install.
+func markOtherInstallRender(request BuildRequest, provider localProvider, renderSettings discoveryRenderSettings, appFile discovery.ApplicationFile, result *discovery.Result) {
+	if !hasCommandParametersCandidate(*result) {
+		return
+	}
+	walker := newCommittedFileWalker(provider.repoRoot, renderSettings.applications, renderSettings.settings, request.committedRenderMemo)
+	if !installReconciles(*result, walker.applicationNamespaces(appFile), appFile.Application.Spec.Destination.Namespace) {
+		markOtherInstallSettings(result)
+	}
 }
 
 func skippedRenderedDiscovery() (discovery.Result, []diagnostic.Diagnostic, error) {

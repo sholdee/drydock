@@ -38,6 +38,9 @@ func loadSettingsFromDiscovery(root string, scope controllerNamespaceScope, disc
 	merged, mergeDiags := mergeLoadedSettings(loaded, scope, nil)
 	found := commandParametersNamespaces(root, active, discovered.Applications, merged, scope.renders)
 	other := otherInstallSettings(scoped, settingsWithNamedNamespaces(merged, found).ControllerNamespace(""))
+	for key := range found.other {
+		other[key] = struct{}{}
+	}
 	if len(other) > 0 {
 		merged, mergeDiags = mergeLoadedSettings(loaded, scope, other)
 	}
@@ -113,18 +116,18 @@ func settingsWithNamedNamespaces(settings config.ArgoSettings, found namedNamesp
 }
 
 // otherInstallSettings returns the load keys of the settings ConfigMaps
-// of an Argo CD install on this cluster that are not settings of the
-// controller namespace: those of another install
-// (SettingsCandidate.OtherInstall), and those that land in another
-// namespace than controllerNamespace (SettingsCandidate.InstallNamespace).
-// Such an install runs another Argo CD.
+// of an Argo CD install on this cluster that land in another namespace
+// than controllerNamespace (SettingsCandidate.InstallNamespace). Such an
+// install runs another Argo CD. commandParametersNamespaces finds the
+// settings ConfigMaps of the installs that do not reconcile the
+// Application that renders them.
 func otherInstallSettings(candidates []discovery.SettingsCandidate, controllerNamespace string) map[string]struct{} {
 	other := map[string]struct{}{}
 	for _, candidate := range candidates {
 		if !discovery.IsSettingsConfigMapKind(candidate.Kind) || candidate.InstallNamespace == "" {
 			continue
 		}
-		if candidate.OtherInstall || candidate.InstallNamespace != controllerNamespace {
+		if candidate.InstallNamespace != controllerNamespace {
 			other[settingsCandidateLoadKey(candidate)] = struct{}{}
 		}
 	}
