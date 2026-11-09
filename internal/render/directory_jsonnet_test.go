@@ -515,3 +515,40 @@ func TestDirectoryRendererSubstitutesJsonnetVarsOncePerEvaluatedFile(t *testing.
 		t.Fatalf("Render() changed the spec to %#v, want %#v", sourceJsonnet, *spec)
 	}
 }
+
+// TestDirectoryRendererJsonnetPassesSkipOtherFiles pins that only a
+// Jsonnet file is a substitution pass. b.yaml sits between a.jsonnet and
+// c.jsonnet in walk order, and c.jsonnet still gets two passes.
+func TestDirectoryRendererJsonnetPassesSkipOtherFiles(t *testing.T) {
+	root := t.TempDir()
+	body := func(name string) string {
+		return `{
+  apiVersion: 'v1',
+  kind: 'ConfigMap',
+  metadata: { name: '` + name + `' },
+  data: { deep: std.extVar('deep') },
+}`
+	}
+	writeFile(t, filepath.Join(root, "apps", "a.jsonnet"), body("a"))
+	writeFile(t, filepath.Join(root, "apps", "b.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b\n")
+	writeFile(t, filepath.Join(root, "apps", "c.jsonnet"), body("c"))
+
+	result, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{
+		ArgoEnv: argoappv1.Env{{Name: "ARGOCD_APP_NAME", Value: "demo"}},
+		Jsonnet: argoappv1.ApplicationSourceJsonnet{
+			ExtVars: []argoappv1.JsonnetVar{{Name: "deep", Value: "$$$$ARGOCD_APP_NAME"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	got := map[string]any{}
+	for _, manifest := range result {
+		data, _ := manifest.Object.Object["data"].(map[string]any)
+		got[manifest.Object.GetName()] = data["deep"]
+	}
+	want := map[string]any{"a": "$$ARGOCD_APP_NAME", "b": nil, "c": "$ARGOCD_APP_NAME"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("deep = %#v, want %#v", got, want)
+	}
+}
