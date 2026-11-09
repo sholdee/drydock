@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 
 	git "github.com/go-git/go-git/v5"
@@ -57,25 +58,49 @@ func FillLFS(ctx context.Context, fill LFSFill, opts GitOptions) (gitlfs.Result,
 	})
 }
 
+// lfsFilledMarker is the file in the .git directory of a cache checkout
+// that says that a run with enableLfs may have filled its pointer files.
+const lfsFilledMarker = "drydock-lfs-filled"
+
 // checkoutLFS lists the Git LFS pointer files of commit in repo when
 // opts.LFS is set, outside submodules (gittree.ScanLFSPointers), and fills
 // them in the checkout at cachePath (FillLFS). A pointer that it cannot
 // fill holds the pointer blob again, also when an earlier run filled it.
+//
+// Without opts.LFS, a checkout that an earlier run filled gets every
+// pointer blob back, as the repo-server, which runs git with
+// GIT_LFS_SKIP_SMUDGE=1, holds them. A checkout of HEAD is not checked out
+// again, so its files would keep the content otherwise. The marker goes in
+// place before drydock writes any content, so a run that stops halfway
+// leaves it.
 func checkoutLFS(ctx context.Context, repo *git.Repository, cachePath, commit, repoURL string, opts GitOptions) ([]gittree.LFSPointer, gitlfs.Result, error) {
-	if !opts.LFS {
+	marker := filepath.Join(cachePath, git.GitDirName, lfsFilledMarker)
+	_, markerErr := os.Lstat(marker)
+	filled := markerErr == nil
+	if !opts.LFS && !filled {
 		return nil, gitlfs.Result{}, nil
 	}
-	object, err := repo.CommitObject(plumbing.NewHash(commit))
-	if err != nil {
-		return nil, gitlfs.Result{}, err
-	}
-	tree, err := object.Tree()
+	tree, err := commitTree(repo, commit)
 	if err != nil {
 		return nil, gitlfs.Result{}, err
 	}
 	pointers, err := gittree.ScanLFSPointers(ctx, tree)
-	if err != nil || len(pointers) == 0 {
-		return pointers, gitlfs.Result{}, err
+	if err != nil {
+		return nil, gitlfs.Result{}, err
+	}
+	if !opts.LFS {
+		if err := restorePointers(cachePath, tree, pointers, pointerPaths(pointers)); err != nil {
+			return nil, gitlfs.Result{}, err
+		}
+		return nil, gitlfs.Result{}, os.Remove(marker)
+	}
+	if len(pointers) == 0 {
+		return pointers, gitlfs.Result{}, nil
+	}
+	if !filled {
+		if err := os.WriteFile(marker, nil, 0o644); err != nil {
+			return nil, gitlfs.Result{}, err
+		}
 	}
 	opts.CacheDir = filepath.Dir(cachePath)
 	result, err := FillLFS(ctx, LFSFill{
@@ -88,6 +113,22 @@ func checkoutLFS(ctx context.Context, repo *git.Repository, cachePath, commit, r
 		return nil, gitlfs.Result{}, err
 	}
 	return pointers, result, restorePointers(cachePath, tree, pointers, result.Missing)
+}
+
+func commitTree(repo *git.Repository, commit string) (*object.Tree, error) {
+	object, err := repo.CommitObject(plumbing.NewHash(commit))
+	if err != nil {
+		return nil, err
+	}
+	return object.Tree()
+}
+
+func pointerPaths(pointers []gittree.LFSPointer) []string {
+	out := make([]string, 0, len(pointers))
+	for _, pointer := range pointers {
+		out = append(out, pointer.Path)
+	}
+	return out
 }
 
 func restorePointers(root string, tree *object.Tree, pointers []gittree.LFSPointer, missing []string) error {

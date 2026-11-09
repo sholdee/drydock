@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -249,5 +250,57 @@ func TestPersistentCacheSnapshotLFSKeyIgnoresObjectSource(t *testing.T) {
 	result, err = countingOrchestrator(&renders).DiffApps(context.Background(), request)
 	if err != nil || hasConfigMap(result, "from-lfs") || renders.Load() == 0 || !hasDiagnosticCode(result.Diagnostics, lfsPointerCode) {
 		t.Fatalf("offline DiffApps() = %v, renders %d, Diagnostics %#v; want a new render of the pointer", err, renders.Load(), result.Diagnostics)
+	}
+}
+
+// TestDiffFetchedSourceWithEnableLFSOnOneSide pins that a diff in which
+// one side sets enableLfs and the other does not renders the content on
+// the first side and the pointer on the second, although both read one
+// cache checkout of HEAD. Before the fix the side without enableLfs
+// rendered the content that the other side filled, so the diff was empty.
+func TestDiffFetchedSourceWithEnableLFSOnOneSide(t *testing.T) {
+	for _, enabledOnHead := range []bool{true, false} {
+		server := lfstest.New(t, false, false)
+		_, pointer := server.Add(fetchedLFSConfigMap)
+		repo := lfstest.ServeRepo(t, server, map[string]string{"lfs/cm.yaml": pointer})
+		root := t.TempDir()
+		submoduletest.Run(t, root, "init", "-q")
+		submoduletest.WriteFile(t, root, "apps/fetched.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fetched
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+repo.URL+`
+    targetRevision: HEAD
+    path: lfs
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+		secret := lfsRepoSecret(repo.URL)
+		off := strings.Replace(secret, `enableLfs: "true"`, `enableLfs: "false"`, 1)
+		first, second := off, secret
+		if !enabledOnHead {
+			first, second = secret, off
+		}
+		submoduletest.WriteFile(t, root, "argocd/repo.yaml", first)
+		submoduletest.Run(t, root, "add", "-A")
+		submoduletest.Run(t, root, "commit", "-q", "-m", "base")
+		base := submoduletest.Run(t, root, "rev-parse", "HEAD")
+		submoduletest.WriteFile(t, root, "argocd/repo.yaml", second)
+		submoduletest.Run(t, root, "commit", "-q", "-am", "toggle enableLfs")
+		result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+			RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base,
+			GitCacheDir: t.TempDir(),
+		})
+		if err != nil {
+			t.Fatalf("enableLfs on HEAD %t: DiffApps() error = %v", enabledOnHead, err)
+		}
+		if !hasConfigMap(result, "fetched-lfs") {
+			t.Fatalf("enableLfs on HEAD %t: Results = %#v; want the ConfigMap as a change between the sides", enabledOnHead, result.Results)
+		}
 	}
 }

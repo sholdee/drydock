@@ -93,3 +93,37 @@ func requireTokenOnlyOnBatch(t *testing.T, server *lfstest.Server, authorization
 		}
 	}
 }
+
+// TestDefaultGitAcquirerRestoresPointersWhenLFSTurnsOff pins that a cache
+// checkout of HEAD that a run with enableLfs filled holds the pointer
+// files again for a run without it, online and offline, as the Argo CD
+// repo-server holds them without enableLfs. A HEAD checkout is not checked
+// out again, so before the fix the files kept the content.
+func TestDefaultGitAcquirerRestoresPointersWhenLFSTurnsOff(t *testing.T) {
+	server := lfstest.New(t, false, false)
+	_, pointer := server.Add(lfsSourceContent)
+	repo := lfstest.ServeRepo(t, server, map[string]string{"lfs/cm.yaml": pointer})
+	cacheDir := t.TempDir()
+	for i, step := range []struct {
+		lfs, network bool
+		want         string
+	}{
+		{true, true, lfsSourceContent},
+		{false, true, pointer},
+		{true, false, lfsSourceContent},
+		{false, false, pointer},
+	} {
+		opts := GitOptions{AllowNetwork: step.network, CacheDir: cacheDir, LFS: step.lfs}
+		result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: repo.URL, Revision: "HEAD"}, opts)
+		if err != nil {
+			t.Fatalf("step %d: Acquire() error = %v", i, err)
+		}
+		if data, _ := os.ReadFile(filepath.Join(result.Path, "lfs", "cm.yaml")); string(data) != step.want {
+			t.Fatalf("step %d (LFS %t, network %t): lfs/cm.yaml = %q, want %q", i, step.lfs, step.network, data, step.want)
+		}
+		_, markerErr := os.Stat(filepath.Join(result.Path, ".git", "drydock-lfs-filled"))
+		if (markerErr == nil) != step.lfs {
+			t.Fatalf("step %d: marker present %t, want %t", i, markerErr == nil, step.lfs)
+		}
+	}
+}
