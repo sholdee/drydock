@@ -59,7 +59,14 @@ func HelmValueFileReads(repoRoot string, source ResolvedSource, opts RenderOptio
 // reads for opts.ValueFiles (planArgo): the real path of each file that
 // helm reads, when it is a regular file in repoRoot.
 func addArgoHelmValueFileReads(reads map[string]struct{}, repoRoot string, source ResolvedSource, opts RenderOptions, refOnly bool) {
-	realRepoRoot, err := filepath.EvalSymlinks(repoRoot)
+	// The loader resolves value files to absolute paths, so a relative
+	// repoRoot such as the default --path . must be made absolute too, or
+	// filepath.Rel fails for every file.
+	absRepoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return
+	}
+	realRepoRoot, err := filepath.EvalSymlinks(absRepoRoot)
 	if err != nil {
 		return
 	}
