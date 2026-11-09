@@ -847,7 +847,7 @@ func localInputDigestPathsForSource(ctx context.Context, plan PlanResult, source
 	if err != nil {
 		return nil, false, err
 	}
-	paths, helmGlobs, err := localToolInputDigestPaths(ctx, plan, sourcePlan, provider.repoRoot, clean, provider.sourceTypes)
+	paths, helmGlobs, err := localToolInputDigestPaths(ctx, plan, sourcePlan, provider.repoRoot, clean, provider.sourceTypes, provider.controllerNamespace)
 	if err != nil {
 		return nil, false, err
 	}
@@ -873,8 +873,9 @@ func argocdSourceOverrideDigestPaths(sourcePath, appName string) []gitref.PathDi
 // same classification the render path uses (selectLocalRenderer), so the
 // digested inputs cannot diverge from the files the render actually reads.
 // The returned bool reports whether any Helm input path contains glob
-// metacharacters.
-func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot, clean string, gates sourceTypeGates) ([]gitref.PathDigestPath, bool, error) {
+// metacharacters. controllerNamespace is the Argo CD controller namespace
+// of the render, which decides ARGOCD_APP_NAME.
+func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot, clean string, gates sourceTypeGates, controllerNamespace string) ([]gitref.PathDigestPath, bool, error) {
 	switch sourcePlan.ExplicitType {
 	case argoappv1.ApplicationSourceTypeDirectory, argoappv1.ApplicationSourceTypeHelm, argoappv1.ApplicationSourceTypeKustomize, "":
 	case argoappv1.ApplicationSourceTypePlugin:
@@ -892,7 +893,7 @@ func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan 
 	}
 	switch renderer.(type) {
 	case render.DirectoryRenderer:
-		paths, err := localDirectoryInputDigestPaths(ctx, plan, sourcePlan, repoRoot, gates)
+		paths, err := localDirectoryInputDigestPaths(ctx, plan, sourcePlan, repoRoot, gates, controllerNamespace)
 		return paths, false, err
 	case render.HelmRenderer:
 		return localHelmInputDigestPaths(plan, sourcePlan, repoRoot)
@@ -908,8 +909,9 @@ func localKustomizeInputDigestPaths(ctx context.Context, plan PlanResult, source
 	// The build environment never reaches the digest: CollectHelmLocalInputPaths
 	// rejects env-substituted inputs (pinned by
 	// TestPersistentRenderCacheCollectSourceIdentitiesRejectsEnvSubstitutedHelmValueFiles),
-	// and the Kustomize/Directory enumerators do not read ArgoEnv, so the
-	// default tracking options are sufficient here.
+	// and the Kustomize enumerator does not read ArgoEnv, so the default
+	// tracking options are sufficient here. The Directory enumerator does
+	// (localDirectoryInputDigestPaths).
 	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		return nil, err
@@ -921,11 +923,20 @@ func localKustomizeInputDigestPaths(ctx context.Context, plan PlanResult, source
 	return render.KustomizeInputDigestPaths(ctx, source, opts)
 }
 
-func localDirectoryInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot string, gates sourceTypeGates) ([]gitref.PathDigestPath, error) {
+// localDirectoryInputDigestPaths enumerates the inputs of a directory
+// source. The Jsonnet extVar and TLA code that the render evaluates can
+// import files, and the import paths in that code can name build
+// environment variables. So the enumerator gets the build environment of
+// the render (sourcePlanArgoEnv), with the controller namespace of the
+// render. The key holds every value of that environment: the Application
+// name and namespace, its spec, the tracking options, and the revision
+// (withKeyAppRevision).
+func localDirectoryInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot string, gates sourceTypeGates, controllerNamespace string) ([]gitref.PathDigestPath, error) {
 	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		return nil, err
 	}
+	opts.ArgoEnv = sourcePlanArgoEnv(plan.Application, sourcePlan, normalizeTrackingOptions(TrackingOptions{ControllerNamespace: controllerNamespace}).ControllerNamespace)
 	opts.DirectoryJsonnetDisabled = gates.jsonnetDisabled
 	source := resolvedSourceForPlan(sourcePlan)
 	if source.RepoRoot == "" {

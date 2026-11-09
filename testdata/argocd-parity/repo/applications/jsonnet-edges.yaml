@@ -18,6 +18,11 @@ spec:
             code: true
           - name: source
             value: jsonnet-edges
+          # Code with no importing file: the import resolves through the
+          # Jsonnet paths, here the library.
+          - name: extImport
+            value: '(import "configmap.libsonnet").library'
+            code: true
         tlas:
           - name: namespace
             value: '"parity-jsonnet-edges"'

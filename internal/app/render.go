@@ -117,9 +117,7 @@ func renderSourcePlan(ctx context.Context, application argoappv1.Application, pr
 			return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), specErr)
 		}
 	}
-	if sourcePlan.AppRevision != "" {
-		opts.ArgoEnv = argoRenderEnvAt(application, sourcePlan.Source, sourcePlan.AppRevision, normalizeTrackingOptions(trackingOpts).ControllerNamespace)
-	}
+	opts.ArgoEnv = sourcePlanArgoEnv(application, sourcePlan, normalizeTrackingOptions(trackingOpts).ControllerNamespace)
 	opts.EnableAVPCompat = pluginOpts.EnableAVPCompat
 	opts.EnableKSOPSCompat = pluginOpts.EnableKSOPSCompat
 	opts.EnablePlugins = pluginOpts.EnablePlugins
@@ -541,6 +539,16 @@ func parseKubeVersion(kubeVersion string) (string, error) {
 // argoRenderEnvAt when PrepareSource resolved one.
 func argoRenderEnv(application argoappv1.Application, source argoappv1.ApplicationSource, controllerNamespace string) argoappv1.Env {
 	return argoRenderEnvAt(application, source, source.TargetRevision, controllerNamespace)
+}
+
+// sourcePlanArgoEnv is the build environment of the render of a prepared
+// sourcePlan: argoRenderEnv, with sourcePlan.AppRevision as
+// ARGOCD_APP_REVISION when PrepareSource resolved one.
+func sourcePlanArgoEnv(application argoappv1.Application, sourcePlan SourcePlan, controllerNamespace string) argoappv1.Env {
+	if sourcePlan.AppRevision != "" {
+		return argoRenderEnvAt(application, sourcePlan.Source, sourcePlan.AppRevision, controllerNamespace)
+	}
+	return argoRenderEnv(application, sourcePlan.Source, controllerNamespace)
 }
 
 // argoRenderEnvAt is argoRenderEnv with revision as ARGOCD_APP_REVISION.

@@ -363,6 +363,7 @@ APPLICATIONS=(
   parity-helm-valuefiles-glob
   parity-jsonnet
   parity-jsonnet-edges
+  parity-jsonnet-passes
   parity-kustomize
   parity-kustomize-helm
   parity-multi-source-ref-values

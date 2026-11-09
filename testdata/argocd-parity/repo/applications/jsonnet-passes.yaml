@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-jsonnet-passes
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/jsonnet-passes
+    directory:
+      # The repo-server substitutes the values once more for each Jsonnet
+      # file that it evaluates. b-excluded.jsonnet is never evaluated, and
+      # b.yaml is no Jsonnet file, so a.jsonnet gets one pass and c.jsonnet
+      # gets two. deep needs three passes to lose every "$", so it shows
+      # the pass count.
+      exclude: b-excluded.jsonnet
+      jsonnet:
+        extVars:
+          - name: plain
+            value: "$$ARGOCD_APP_NAME"
+          - name: code
+            value: '"$$ARGOCD_APP_NAME"'
+            code: true
+          - name: deep
+            value: "$$$$ARGOCD_APP_NAME"
+  destination:
+    name: in-cluster
+    namespace: parity-jsonnet-passes
