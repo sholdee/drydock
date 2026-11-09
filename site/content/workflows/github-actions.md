@@ -439,6 +439,24 @@ extra-diff-args: |
   --oci-password=${{ secrets.OCI_REGISTRY_PASSWORD }}
 ```
 
+The `--git-username`, `--git-password`, and `--git-bearer-token` flags need a
+`--git-auth-host` line, and the `--remote-*` credential flags need a
+`--remote-auth-host` line, in each `extra-*` input that passes them. drydock
+sends the credentials only to those hosts, so an Application or a remote base
+that a pull request adds on another host gets no token. Without the host line,
+drydock stops before it fetches anything. The action passes no Git or remote
+credentials to drydock by itself. Its GitHub token is only for checkout,
+release downloads, and comments.
+
+```yaml
+extra-test-args: |
+  --git-bearer-token=${{ secrets.GIT_TOKEN }}
+  --git-auth-host=github.com
+extra-diff-args: |
+  --git-bearer-token=${{ secrets.GIT_TOKEN }}
+  --git-auth-host=github.com
+```
+
 ## Setup Action Inputs
 
 | Input | Default | Purpose |

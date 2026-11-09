@@ -221,6 +221,7 @@ func TestDefaultAcquirerUsesOfflineGitCacheWithoutCredentials(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PlainClone() error = %v", err)
 	}
+	setCacheEntryOrigin(t, cachePath, request.RepoURL)
 
 	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{AllowFileTransport: true, CacheDir: cacheDir, Offline: true})
 	if err != nil {
@@ -304,6 +305,7 @@ func TestDefaultAcquirerRedactsGitRemoteCredentialErrors(t *testing.T) {
 		BearerToken:   "secret-token",
 		SSHPrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----",
 		SSHPassphrase: "secret-passphrase",
+		Hosts:         []string{"example.invalid"},
 	}
 	_, err := DefaultAcquirer{}.Acquire(context.Background(), Request{
 		Kind:     RequestGitRepo,

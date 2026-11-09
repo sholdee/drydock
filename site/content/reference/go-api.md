@@ -33,6 +33,16 @@ entry fails the call before drydock fetches anything. A custom
 `RemoteResourceAcquirer` receives `Hosts` and must send the credentials only
 to those hosts itself.
 
+`Config.GitCredentials` mirrors the `--git-*` flags. Its `Hosts` field
+mirrors `--git-auth-host`: the default Git acquirers send `Username`,
+`Password`, and `BearerToken` only to a Git URL whose scheme, host, and port
+match an entry. This covers Application sources, remote Kustomize Git bases,
+and submodules. An HTTP Git credential without a `Hosts` entry fails the call
+before drydock fetches anything. The SSH fields ignore `Hosts`. A custom
+`GitAcquirer`, and a custom `RemoteResourceAcquirer` through
+`RemoteResourceOptions.GitCredentials`, receives `Hosts` and must send the
+HTTP credentials only to those hosts itself.
+
 `Config.OCICacheDir` overrides the OCI artifact source cache root, mirroring
 the CLI `--oci-cache-dir` flag. Like the other cache roots, it must resolve
 outside current and baseline repository trees. `Config.OCICredentials`

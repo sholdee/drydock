@@ -242,7 +242,7 @@ metadata:
 	if got := acquirer.requests[0]; got.Kind != remote.RequestGitRepo || got.RepoURL != "https://github.com/example/repo.git" || got.Revision != "v1.2.3" {
 		t.Fatalf("remote request = %#v, want Git repo metadata", got)
 	}
-	if got := acquirer.options[0].GitCredentials; got != gitCredentials {
+	if got := acquirer.options[0].GitCredentials; !reflect.DeepEqual(got, gitCredentials) {
 		t.Fatalf("remote git credentials = %#v, want %#v", got, gitCredentials)
 	}
 }

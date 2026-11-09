@@ -207,13 +207,17 @@ func (info URLUserinfo) GoString() string {
 // token. An ssh URL keeps its user, which names the ssh login, and loses
 // only a password. Other URLs and an scp-like URL come back as they are.
 // found reports that the URL held userinfo.
+//
+// The authority ends at the first "/", "?", or "#", as net/url reads it.
+// So the host of clean is the host that net/url, go-git, and the cache key
+// see: in "https://a.test?@b.test/x" the host is a.test, not b.test.
 func SplitURLUserinfo(value string) (clean string, info URLUserinfo, found bool) {
 	scheme, rest, isURL := strings.Cut(value, "://")
 	if !isURL {
 		return value, URLUserinfo{}, false
 	}
 	authority, path := rest, ""
-	if i := strings.Index(rest, "/"); i >= 0 {
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
 		authority, path = rest[:i], rest[i:]
 	}
 	at := strings.LastIndex(authority, "@")
@@ -227,6 +231,25 @@ func SplitURLUserinfo(value string) (clean string, info URLUserinfo, found bool)
 		return scheme + "://" + user + "@" + host + path, URLUserinfo{Password: info.Password}, password != ""
 	}
 	return scheme + "://" + host + path, info, true
+}
+
+// CheckURLAuthority fails when the text between "://" and the first "/"
+// of value holds "?", "#", or "\". Parsers end the authority at different
+// places for such a URL: net/url ends it at "?" or "#", and code that cuts
+// at "/" does not. A Git repository URL never needs these characters
+// there, so drydock refuses the URL instead of guessing its host. A URL
+// without "://", such as an scp-like URL, passes. The error does not quote
+// value.
+func CheckURLAuthority(value string) error {
+	_, rest, isURL := strings.Cut(strings.TrimSpace(value), "://")
+	if !isURL {
+		return nil
+	}
+	authority, _, _ := strings.Cut(rest, "/")
+	if strings.ContainsAny(authority, "?#\\") {
+		return fmt.Errorf("the host part of the URL holds \"?\", \"#\", or \"\\\"; drydock does not fetch such a URL")
+	}
+	return nil
 }
 
 func unescapeUserinfo(value string) string {

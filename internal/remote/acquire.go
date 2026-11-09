@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/cache"
+	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/pathsafety"
 )
 
@@ -64,6 +65,10 @@ type GitCredentials struct {
 	SSHPrivateKey     string
 	SSHPassphrase     string
 	SSHKnownHostsPath string
+	// Hosts lists the hosts that receive Username, Password, and
+	// BearerToken, one --git-auth-host entry each (gitauth.Credentials).
+	// The SSH fields ignore it.
+	Hosts []string
 }
 
 type Options struct {
@@ -136,11 +141,26 @@ func NewCacheKey(request Request) (string, error) {
 }
 
 func NormalizeGitRepoCacheURL(raw string) (string, error) {
-	normalized, err := NormalizeGitRepoURL(raw)
+	// The key starts from the URL without userinfo that drydock clones, so
+	// the host of the key is the host that drydock contacts. For a URL
+	// that net/url parses, the key is the same as before.
+	clean, _, _ := gittree.SplitURLUserinfo(strings.TrimSpace(raw))
+	normalized, err := NormalizeGitRepoURL(clean)
 	if err != nil {
 		return "", err
 	}
 	return cache.RedactedTarget(normalized), nil
+}
+
+// sameRemoteGitRepository returns a test that an origin URL of a remote
+// Git cache entry names the repository of repoURL: both have the same
+// normalized cache URL.
+func sameRemoteGitRepository(repoURL string) func(originURL string) bool {
+	want, err := NormalizeGitRepoCacheURL(repoURL)
+	return func(originURL string) bool {
+		got, originErr := NormalizeGitRepoCacheURL(originURL)
+		return err == nil && originErr == nil && got == want
+	}
 }
 
 func requestKind(kind RequestKind) RequestKind {

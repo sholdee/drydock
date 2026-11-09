@@ -667,8 +667,9 @@ Supported:
 - Default Git clone/fetch into the Git cache for unmapped path sources missing
   from the local tree.
 - `--repo-map URL=PATH` path-source resolution for local external checkouts.
-- Explicit Git HTTPS bearer/basic auth; Git SSH auth from an explicit key file
-  or from the ssh-agent and `~/.ssh` identities.
+- Explicit Git HTTPS bearer/basic auth, sent only to the hosts that
+  `--git-auth-host` names. Git SSH auth from an explicit key file or from the
+  ssh-agent and `~/.ssh` identities.
 - Explicit HTTP(S) Helm bearer/basic auth.
 - Explicit HTTP(S) remote file bearer/basic auth (`--remote-*`) for remote
   Kustomize resources, Helm value file URLs, and Helm `fileParameters` URLs,
@@ -941,6 +942,65 @@ Important boundaries:
   bases also refuses every URL that it would read from the local file
   system. The kind parity smoke pins this divergence with the
   `parity-decode-kustomize-file-remote-base` case.
+- Recorded difference from Argo CD v3.6.1: drydock sends the `--git-*` HTTP
+  credentials (`--git-username`, `--git-password`, `--git-bearer-token`) only
+  to a Git URL whose scheme, host, and port match a `--git-auth-host` entry.
+  An entry without a scheme is HTTPS only, and `http://host[:port]` allows
+  plain HTTP. A run that sets an HTTP Git credential without
+  `--git-auth-host` fails before it fetches anything. The rule covers
+  Application sources, the revision lookup and refresh fetches of the Git
+  cache, remote Kustomize Git bases, and submodules. go-git sends the
+  credentials with the first request, before the server asks for them, so
+  without the rule a repository can collect them with a URL on its own
+  host. go-git v5.19.3 removes the credentials when a redirect leaves the
+  scheme, host, and port of the first request, except for a redirect from
+  `http` on port 80 to `https` on port 443 of the same host
+  (`credentialsMayFollow` and `stripCredentials`,
+  `plumbing/transport/http/common.go`). SSH keys need no entry: the server
+  learns only the public key, and known_hosts verification makes sure of the
+  host.
+  - Application sources: Argo CD v3.6.1 gives each repository the
+    credentials of the repository Secret whose URL is the same repository
+    (`getRepositorySecret`, `util/db/repository_secrets.go:568-603`), else of
+    the repository credential template with the longest URL prefix after
+    `NormalizeGitURL` (`getRepositoryCredentialIndex`,
+    `util/db/repository_secrets.go:619-634`, and `enrichCredsToRepo`,
+    `util/db/repository.go:435-450`). A repository that matches neither is
+    fetched without credentials (`getRepository`,
+    `util/db/repository.go:151-165`). drydock has one set of HTTP Git
+    credentials, so `--git-auth-host` takes the place of these URLs. Name
+    the hosts of the repositories that your Argo CD instance has credentials
+    for. drydock matches a host, not a URL path prefix. A redirect within the
+    same host keeps the credentials in go-git, so drydock cannot enforce a
+    path rule. The Argo CD prefix match is a plain string prefix, so a
+    template for `https://github.com` also matches
+    `https://github.com.example.net/x`. drydock does not copy that.
+  - Remote Kustomize Git bases: the Argo CD repo-server runs
+    `kustomize build` with the credentials of the Application repository in
+    its environment (`util/kustomize/kustomize.go:134-162`). For HTTPS, the
+    environment points git at the askpass server
+    (`HTTPSCreds.Environ`, `util/git/creds.go:269-338`), which answers every
+    request that has the nonce and does not look at the host
+    (`GetCredentials`, `util/askpass/server.go:53-62`). So Argo CD gives the
+    repository credentials to a remote base on any host. drydock sends the
+    `--git-*` credentials to a remote base only on a `--git-auth-host` host.
+    A remote base on another host that needs credentials fails to fetch in
+    drydock, where Argo CD can fetch it.
+  - Submodules keep the same-host rule below in addition.
+  - A user name and password in a repository URL go only to the host of that
+    URL. They take the place of the `--git-*` credentials when that host has
+    no `--git-auth-host` entry.
+  - drydock refuses a Git URL with `?`, `#`, or `\` between `://` and the
+    first `/`, such as `https://a.example?@b.example/org/repo.git`. net/url
+    reads the host `a.example` from it, and code that cuts at `/` reads
+    `b.example`. The Git cache key and the clone URL use the net/url host.
+    A `?` or `#` in the user name or password of a URL is part of the host
+    part too, so it must be percent-encoded (`%3F`, `%23`).
+    A cache entry whose origin names another repository than the request
+    is cloned again, or is a cache miss with `--offline`, and every fetch
+    goes to the URL of the request. This applies to Application sources,
+    remote Kustomize Git bases, and submodule stores. Cache keys of other
+    URLs do not change.
 - Ambient Git credential helpers, ambient Helm registry config, and secret
   credential fields from discovered repository Secrets are not read. SSH
   identities are the exception: without `--git-ssh-key-file`, the agent and
@@ -1083,7 +1143,8 @@ repository. drydock sends a username, password, or bearer token only to a
 submodule on the same host and port as the repository, and never from
 `https` to `http`. SSH keys work for every host. This is a recorded
 difference: a `.gitmodules` file cannot send drydock's HTTP credentials to
-another host or in clear text.
+another host or in clear text. The submodule host must also match a
+`--git-auth-host` entry.
 
 The Git generator follows `applicationsetcontroller.enable.git.submodule`,
 but a snapshot holds submodule content only when

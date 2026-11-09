@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -235,7 +236,7 @@ func TestBuildAppsSuppressesPartialStdoutWhenOutputWouldBeInvalid(t *testing.T) 
 	writeFailingCLIApplication(t, root, "broken")
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"build", "apps", "--path", root})
+	cmd.SetArgs([]string{"build", "apps", "--path", root, "--git-cache-dir", t.TempDir()})
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
@@ -287,6 +288,17 @@ func TestBuildAppsFailsClosedForPluginSource(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// assertCLIGitCredentials checks the Git credentials that
+// TestBuildAppsPassesAuthenticatedSourceFlags passes, with both
+// --git-auth-host entries in order.
+func assertCLIGitCredentials(t *testing.T, got sourcepkg.GitCredentials) {
+	t.Helper()
+	if got.Username != "git-user" || got.Password != "git-pass" || got.BearerToken != "git-token" ||
+		!reflect.DeepEqual(got.Hosts, []string{"git.example.test", "http://git.example.test:8080"}) {
+		t.Fatalf("git credentials = %#v", got)
 	}
 }
 
@@ -354,6 +366,8 @@ data:
 		"--git-username", "git-user",
 		"--git-password", "git-pass",
 		"--git-bearer-token", "git-token",
+		"--git-auth-host", "git.example.test",
+		"--git-auth-host", "http://git.example.test:8080",
 		"--helm-username", "helm-user",
 		"--helm-password", "helm-pass",
 		"--helm-bearer-token", "helm-token",
@@ -375,9 +389,7 @@ data:
 	if len(gitAcquirer.options) != 1 {
 		t.Fatalf("git options = %d, want 1", len(gitAcquirer.options))
 	}
-	if got := gitAcquirer.options[0].Credentials; got.Username != "git-user" || got.Password != "git-pass" || got.BearerToken != "git-token" {
-		t.Fatalf("git credentials = %#v", got)
-	}
+	assertCLIGitCredentials(t, gitAcquirer.options[0].Credentials)
 	if len(chartAcquirer.options) != 1 {
 		t.Fatalf("chart options = %d, want 1", len(chartAcquirer.options))
 	}
@@ -847,7 +859,7 @@ func TestBuildAppsJSONOutputStaysEmptyOnRenderFailure(t *testing.T) {
 	writeSimpleAppForCLI(t, root, "ok")
 	writeFailingCLIApplication(t, root, "broken")
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"build", "apps", "--path", root, "-o", "json"})
+	cmd.SetArgs([]string{"build", "apps", "--path", root, "-o", "json", "--git-cache-dir", t.TempDir()})
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)

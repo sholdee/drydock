@@ -329,7 +329,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 	if err := request.validateKubeVersion(); err != nil {
 		return BuildResult{}, err
 	}
-	if err := request.validateRemoteResourceCredentials(); err != nil {
+	if err := request.validateCredentialHosts(); err != nil {
 		return BuildResult{}, err
 	}
 	request = resolveBuildRequestRoot(request)
@@ -499,7 +499,7 @@ func applicationSetOptionsForRequest(request BuildRequest) (appset.Options, []di
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (result BuildResult, err error) {
-	if err := request.validateRemoteResourceCredentials(); err != nil {
+	if err := request.validateCredentialHosts(); err != nil {
 		return BuildResult{}, err
 	}
 	request = resolveBuildRequestRoot(request)
@@ -957,6 +957,9 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	if name == "" {
 		return BuildResult{}, fmt.Errorf("application name is required")
 	}
+	if err := request.validateCredentialHosts(); err != nil {
+		return BuildResult{}, err
+	}
 
 	buildRequest := resolveBuildRequestRoot(request.BuildRequest)
 	buildRequest, releaseSnapshots, err := ensureSnapshotSession(buildRequest)
@@ -1000,6 +1003,9 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 // BuildSelection lists Applications, narrows them with selectApps, and builds
 // the selection while reusing the list phase's discovery and render caches.
 func (o Orchestrator) BuildSelection(ctx context.Context, request BuildRequest, selectApps ApplicationSelector) (BuildResult, error) {
+	if err := request.validateCredentialHosts(); err != nil {
+		return BuildResult{}, err
+	}
 	request = resolveBuildRequestRoot(request)
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {

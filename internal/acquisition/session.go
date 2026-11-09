@@ -300,6 +300,12 @@ type cacheSafeGitAcquirer struct {
 }
 
 func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source.GitRequest, opts source.GitOptions) (source.GitResult, error) {
+	// The memo below can answer without the delegate, so the URL check
+	// runs here too, and the refusal does not depend on the order of the
+	// Applications.
+	if err := source.CheckGitRequestURL(request.URL); err != nil {
+		return source.GitResult{}, err
+	}
 	key, keyErr := gitCacheLockKey(request, opts)
 	if keyErr != nil {
 		return acquirer.delegate.Acquire(ctx, request, opts)

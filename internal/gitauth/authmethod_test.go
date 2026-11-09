@@ -11,7 +11,7 @@ func TestAuthMethodHTTPCredentials(t *testing.T) {
 	const repoURL = "https://github.com/example/private.git"
 
 	t.Run("bearer token wins over basic auth", func(t *testing.T) {
-		auth, hasAuth, res, err := AuthMethod(Credentials{Username: "user", Password: "pass", BearerToken: "token"}, repoURL, newTestEnv(t).env)
+		auth, hasAuth, res, err := AuthMethod(Credentials{Username: "user", Password: "pass", BearerToken: "token", Hosts: []string{"github.com"}}, repoURL, newTestEnv(t).env)
 		if err != nil {
 			t.Fatalf("AuthMethod() error = %v", err)
 		}
@@ -31,7 +31,7 @@ func TestAuthMethodHTTPCredentials(t *testing.T) {
 	})
 
 	t.Run("username and password produce basic auth", func(t *testing.T) {
-		auth, hasAuth, _, err := AuthMethod(Credentials{Username: "user", Password: "pass"}, repoURL, newTestEnv(t).env)
+		auth, hasAuth, _, err := AuthMethod(Credentials{Username: "user", Password: "pass", Hosts: []string{"github.com"}}, repoURL, newTestEnv(t).env)
 		if err != nil {
 			t.Fatalf("AuthMethod() error = %v", err)
 		}

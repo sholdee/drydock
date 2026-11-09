@@ -87,6 +87,7 @@ func TestDefaultGitAcquirerOfflineSSHCacheHitDoesNotRequireCredentials(t *testin
 	if err := os.Rename(seed.Path, cachePath); err != nil {
 		t.Fatalf("rename seed cache: %v", err)
 	}
+	setCacheEntryOrigin(t, cachePath, sshURL)
 	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: sshURL, Revision: "HEAD"}, GitOptions{CacheDir: cacheDir})
 	if err != nil {
 		t.Fatalf("offline SSH cache Acquire() error = %v", err)
@@ -442,7 +443,7 @@ func TestDefaultGitAcquirerRedactsURLOnCloneFailure(t *testing.T) {
 }
 
 func TestGitCredentialsHTTPBasicAuth(t *testing.T) {
-	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass"}, "https://github.com/example/private")
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass", Hosts: []string{"github.com"}}, "https://github.com/example/private")
 	if err != nil {
 		t.Fatalf("gitAuthMethod() error = %v", err)
 	}
@@ -459,7 +460,7 @@ func TestGitCredentialsHTTPBasicAuth(t *testing.T) {
 }
 
 func TestGitCredentialsBearerToken(t *testing.T) {
-	auth, hasAuth, err := gitAuthMethod(GitCredentials{BearerToken: "token"}, "https://github.com/example/private")
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{BearerToken: "token", Hosts: []string{"github.com"}}, "https://github.com/example/private")
 	if err != nil {
 		t.Fatalf("gitAuthMethod() error = %v", err)
 	}
@@ -476,7 +477,7 @@ func TestGitCredentialsBearerToken(t *testing.T) {
 }
 
 func TestGitCredentialsBearerTokenPrecedence(t *testing.T) {
-	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass", BearerToken: "token"}, "https://github.com/example/private")
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass", BearerToken: "token", Hosts: []string{"github.com"}}, "https://github.com/example/private")
 	if err != nil {
 		t.Fatalf("gitAuthMethod() error = %v", err)
 	}

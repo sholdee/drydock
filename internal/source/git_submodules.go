@@ -10,7 +10,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/sholdee/drydock/internal/cache"
-
+	"github.com/sholdee/drydock/internal/gitauth"
 	"github.com/sholdee/drydock/internal/gittree"
 )
 
@@ -83,6 +83,7 @@ func openSubmoduleStore(ctx context.Context, ref gittree.SubmoduleRef, opts GitO
 	}
 	repo, fetched, err := gittree.OpenSubmoduleStore(ctx, gittree.StoreRequest{
 		Path: path, URL: ref.URL, Commit: ref.Commit, Transport: ref.Transport, Auth: auth, AllowNetwork: opts.AllowNetwork,
+		SameRepository: sameGitRepository(ref.URL),
 	})
 	if err != nil {
 		return nil, fetched, err
@@ -102,8 +103,11 @@ func openSubmoduleStore(ctx context.Context, ref gittree.SubmoduleRef, opts GitO
 // and port of the superproject, and never from https to http, so a
 // .gitmodules file cannot send them elsewhere or in clear text. Without
 // such credentials, the user and password that the resolved URL carried
-// (ref.Userinfo) are used within the same scope. SSH keys are kept for
-// every host: SSH never sends the private key.
+// (ref.Userinfo) are used within the same scope. The submodule's scheme,
+// host, and port must also match a --git-auth-host entry, which
+// gitauth.AuthMethod checks, and the userinfo goes only to the scheme,
+// host, and port of the submodule (gitauth.Credentials.WithURLUserinfo).
+// SSH keys are kept for every host: SSH never sends the private key.
 func submoduleCredentials(credentials GitCredentials, superURL string, ref gittree.SubmoduleRef) GitCredentials {
 	httpScope := (ref.Transport == "http" || ref.Transport == "https") && gittree.SameCredentialScope(superURL, ref.URL)
 	if !httpScope {
@@ -112,11 +116,7 @@ func submoduleCredentials(credentials GitCredentials, superURL string, ref gittr
 		credentials.BearerToken = ""
 		return credentials
 	}
-	if credentials.Username == "" && credentials.Password == "" && credentials.BearerToken == "" {
-		credentials.Username = ref.Userinfo.Username
-		credentials.Password = ref.Userinfo.Password
-	}
-	return credentials
+	return GitCredentials(gitauth.Credentials(credentials).WithURLUserinfo(ref.URL, ref.Userinfo.Username, ref.Userinfo.Password))
 }
 
 // lfsPointersOf lists the Git LFS pointer files of commit in repo when

@@ -45,7 +45,7 @@ func (acquirer DefaultAcquirer) checkoutGitRepo(ctx context.Context, request Req
 	if err != nil {
 		return Result{}, err
 	}
-	if err := rejectLocalGitTransport(repoURL, opts.AllowFileTransport); err != nil {
+	if err := checkGitRepoRequest(repoURL, opts); err != nil {
 		return Result{}, err
 	}
 	cacheDir, err := ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
@@ -149,7 +149,13 @@ func openCachedGitRepository(cachePath, repoURL string, credentials GitCredentia
 	if err == nil {
 		// An entry that an older drydock cloned from a URL with userinfo
 		// loses it now.
-		return repo, true, gittree.ScrubRemoteUserinfo(repo)
+		if err := gittree.ScrubRemoteUserinfo(repo); err != nil {
+			return nil, false, err
+		}
+		// An entry whose origin names another repository is a cache miss:
+		// drydock clones repoURL into it again, and never fetches it with
+		// the auth of repoURL or serves its content for repoURL.
+		return repo, gittree.OriginMatches(repo, sameRemoteGitRepository(repoURL)), nil
 	}
 	if errors.Is(err, git.ErrRepositoryNotExists) || errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
@@ -186,6 +192,7 @@ func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL strin
 	// ls-remote in the Argo CD repo-server no longer finds it.
 	err := repo.FetchContext(ctx, &git.FetchOptions{
 		RemoteName: "origin",
+		RemoteURL:  repoURL,
 		Auth:       auth,
 		Tags:       git.AllTags,
 		Prune:      true,
@@ -202,6 +209,7 @@ func pullGitRepository(ctx context.Context, worktree *git.Worktree, repoURL stri
 	}
 	err := worktree.PullContext(ctx, &git.PullOptions{
 		RemoteName: "origin",
+		RemoteURL:  repoURL,
 		Auth:       auth,
 		Force:      true,
 	})
@@ -226,6 +234,20 @@ func gitAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMe
 // newSSHEnvironment builds the ambient environment SSH identity resolution
 // reads. Tests replace it so they never touch the developer's ~/.ssh or agent.
 var newSSHEnvironment = gitauth.Default
+
+// checkGitRepoRequest runs the checks of a remote Git request that come
+// before the cache: the host part of repoURL (gittree.CheckURLAuthority),
+// its transport (rejectLocalGitTransport), and the hosts of the HTTP Git
+// credentials (GitCredentials.Validate).
+func checkGitRepoRequest(repoURL string, opts Options) error {
+	if err := gittree.CheckURLAuthority(repoURL); err != nil {
+		return fmt.Errorf("remote Git repository %s: %w", RedactGitRepoURL(repoURL), err)
+	}
+	if err := rejectLocalGitTransport(repoURL, opts.AllowFileTransport); err != nil {
+		return err
+	}
+	return opts.GitCredentials.Validate()
+}
 
 // rejectLocalGitTransport fails when repoURL names the file transport, or
 // when go-git would read it as a local path, unless allowFile is set. The
