@@ -857,3 +857,74 @@ func TestComponentSettingsWrappedPrograms(t *testing.T) {
 		})
 	}
 }
+
+// committedKustomizePatch finds a file that a kustomization in its
+// directory or in a directory above it lists as a patch, in each patch
+// field, and nothing else.
+func TestCommittedKustomizePatch(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "install", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - repo-server.yaml
+patches:
+  - path: patches/sidecar.yaml
+  - patch: |-
+      inline.yaml
+patchesStrategicMerge:
+  - strategic.yaml
+patchesJson6902:
+  - target:
+      kind: Deployment
+      name: argocd-repo-server
+    path: json6902.yaml
+`)
+	for _, tc := range []struct {
+		file string
+		want bool
+	}{
+		{file: "install/patches/sidecar.yaml", want: true},
+		{file: "install/strategic.yaml", want: true},
+		{file: "install/json6902.yaml", want: true},
+		{file: "install/repo-server.yaml"},
+		{file: "install/inline.yaml"},
+		{file: "other/strategic.yaml"},
+	} {
+		if got := committedKustomizePatch(root, tc.file); got != tc.want {
+			t.Errorf("committedKustomizePatch(%q) = %v, want %v", tc.file, got, tc.want)
+		}
+	}
+}
+
+// Two committed workload files that different Applications render: the
+// answer for one file must not stand for the other. The repo-server file
+// lands where Application a deploys, and the controller file, without a
+// namespace, lands where Application b deploys, which is the Argo CD
+// namespace. So the controller counts and its flag sets the setting.
+func TestCommittedWorkloadsOfDifferentApplications(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argocd-cmd-params-cm\n  namespace: argocd\ndata:\n  application.namespaces: team-a\n")
+	for _, app := range []struct{ name, namespace string }{{"a", "aaa"}, {"b", "argocd"}} {
+		writeTestFile(t, filepath.Join(root, "apps", app.name+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+app.name+`
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: `+app.name+`
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: `+app.namespace+`
+`)
+	}
+	writeTestFile(t, filepath.Join(root, "a", "repo-server.yaml"), strings.SplitN(vendoredArgoCDWorkloads, "---\n", 2)[0])
+	writeTestFile(t, filepath.Join(root, "b", "controller.yaml"), strings.Replace(strings.SplitN(vendoredArgoCDWorkloads, "---\n", 2)[1], "            - /usr/local/bin/argocd-application-controller\n", "            - /usr/local/bin/argocd-application-controller\n            - --application-namespaces=team-b\n", 1))
+	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+	if got := result.Settings.ApplicationNamespaces.Value; got != "team-b" {
+		t.Fatalf("ApplicationNamespaces = %q from %q, want team-b from the controller in the Argo CD namespace", got, result.Settings.ApplicationNamespaces.Provenance.Path)
+	}
+}

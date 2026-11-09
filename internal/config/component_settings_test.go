@@ -114,6 +114,13 @@ func TestParseComponentArgs(t *testing.T) {
 			notes:     []string{"flag -n is not a flag of argocd-repo-server, so argocd-repo-server does not start"},
 		},
 		{
+			name:      "-h stops the program",
+			component: ApplicationControllerComponent,
+			args:      []string{"/usr/local/bin/argocd-application-controller", "-h", "--application-namespaces=a"},
+			want:      []ComponentFlag{{Flag: "application-namespaces", Value: "a"}},
+			notes:     []string{"flag -h prints the help of argocd-application-controller, so argocd-application-controller does not start"},
+		},
+		{
 			name:      "help stops the program",
 			component: RepoServerComponent,
 			args:      []string{"/usr/local/bin/argocd-repo-server", "--help"},
