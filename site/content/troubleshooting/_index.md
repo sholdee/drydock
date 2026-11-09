@@ -351,7 +351,8 @@ second run and its namespace, also for the final render. `--strict` does not fai
 `argocd-cmp-cm`, repository Secret, cluster Secret, or AppProject is in
 another namespace. Argo CD reads these objects only in its own namespace, so
 drydock skips the object. An Application that names a skipped AppProject
-gets `project.missing`. drydock never skips an object without a namespace.
+gets `project.missing`. drydock never skips an object that has no namespace
+after it lands.
 `--strict` does not fail on the warning. If the object belongs to the Argo
 CD that you emulate, make sure that `--argocd-namespace` names its
 namespace.

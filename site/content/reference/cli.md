@@ -144,9 +144,11 @@ With the flag, drydock also skips `argocd-cm`, `argocd-cmd-params-cm`,
 `argocd-cmp-cm`, repository and cluster Secrets, and AppProjects that are in
 another namespace, because Argo CD reads them only in its own namespace. Each
 skipped object gets a `discovery.outside-controller-namespace` warning.
-A committed object is in the namespace where the kustomization of the
-Applications that render it puts it, else its own namespace. drydock never
-skips an object without a namespace. Without the flag, drydock
+A committed object is in each namespace where an Application puts it: the
+kustomization namespace, else its own namespace, else the destination
+namespace. drydock keeps it when one of these is the flag namespace, and
+never skips an object that has no namespace after it lands. A file that
+does not parse in a skipped namespace gives only the skip warning. Without the flag, drydock
 skips none of these objects, with one exception from earlier releases. The
 settings ConfigMaps that an Argo CD install on this cluster renders count
 only in the controller namespace. A ConfigMap of the install without a

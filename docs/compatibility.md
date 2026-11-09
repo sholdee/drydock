@@ -249,11 +249,11 @@ Supported:
 
   An `argocd-cmd-params-cm` counts when it has a namespace and reaches
   this cluster. A rendered object has the namespace that the render gives
-  it. A committed file has the namespace where it lands: when Applications
-  on this cluster render it and all put it in one namespace, that is the
-  outermost kustomization namespace on the way, else its own
-  `metadata.namespace`. When no Application renders the file, or the
-  Applications disagree, drydock uses its own `metadata.namespace`. A
+  it. A committed file has each namespace where it lands. Each Application
+  on this cluster that renders it puts it in the outermost kustomization
+  namespace on the way, else in its own `metadata.namespace`, else in the
+  destination namespace of the Application. When no Application renders
+  the file, it has its own `metadata.namespace`. A
   rendered object counts unless only Applications on other clusters render
   it. A committed file counts unless only Applications on other clusters
   render it, and a committed file that no Application renders counts. The
@@ -325,7 +325,10 @@ Supported:
   namespace only when `--argocd-namespace` is set. A rendered object is in
   the namespace that the render gives it, and a committed object in the
   namespace where it lands, as for an `argocd-cmd-params-cm` above. drydock
-  never skips an object without a namespace. drydock reports each skipped
+  keeps a committed object when one of the namespaces where it lands is the
+  flag namespace. drydock never skips an object that has no namespace
+  after it lands. A file that does not parse in a skipped namespace gives
+  only the skip warning, because Argo CD does not read it. drydock reports each skipped
   object with the `discovery.outside-controller-namespace` warning, and
   `--strict` does not fail on it. A skipped AppProject is still declared in
   the repository, so an Application that names it gets `project.missing`,
