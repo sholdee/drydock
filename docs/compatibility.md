@@ -1764,10 +1764,16 @@ Supported:
   also cover each library path as written and every symlink on the way to
   it, so moving a library is a change to the source. A source without a
   Jsonnet file never resolves its libraries, so they do not count. drydock
-  reads the import paths from the parsed Jsonnet files. It does not follow
-  imports in `extVars` or `tlas` code, so a change to a file
-  that only such code imports does not change the key or select the
-  Application. The import scan has a budget of 1000 files and 10 MB per
+  reads the import paths from the parsed Jsonnet files. It also follows the
+  imports in `extVars` and `tlas` values with `code: true`, after the same
+  env substitution as the render, such as `$ARGOCD_APP_NAME`. Argo CD
+  evaluates such code with no importing file, so its relative imports
+  resolve against the Jsonnet paths: the libraries, last first, and then the
+  source path. A value with `code: false` is a plain string, and code that
+  does not parse adds nothing. Changed-only selection does not know the
+  revision of the render, so when an import path in such code names an
+  `ARGOCD_APP_REVISION` variable, it renders the source on every change,
+  with the warning below. The import scan has a budget of 1000 files and 10 MB per
   source. The file limit is there because a symlink to a directory above a
   file can give that file endlessly many import paths. A single Jsonnet
   file over 10 MB also runs the budget out, because the scan does not read

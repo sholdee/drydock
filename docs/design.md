@@ -401,8 +401,15 @@ that the symlinks under its path and Jsonnet libraries reach
 (`render.DirectoryJsonnetImportPaths`), and, for a source with a Jsonnet file,
 each library path and the symlinks on the way to it
 (`render.DirectoryJsonnetLibInputs`), and the persistent render cache
-digest of a directory source holds them as optional paths. Imports in
-`extVars` or `tlas` code are not followed. If drydock cannot walk a tree for
+digest of a directory source holds them as optional paths. The import scan
+also follows the imports in `extVars` and `tlas` values with `code: true`,
+after the same env substitution as the render (`render.JsonnetCodeValues`).
+Such code has no file, so its imports resolve against the source path and
+the libraries only, as in the renderer's importer. The digest scan uses the
+build environment of the render. Changed-only selection does not know the
+revision of the render, so a source whose code names an
+`ARGOCD_APP_REVISION` variable in an import path is selected on every
+change, with `diff.changed-only-jsonnet-scan`. If drydock cannot walk a tree for
 the verdict, every Application renders with the same diagnostic, and each
 source then fails on its own. One verdict memo serves the whole run. The persistent key of a
 source that renders from the provider root also carries the first
