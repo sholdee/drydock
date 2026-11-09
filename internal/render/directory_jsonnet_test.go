@@ -462,3 +462,56 @@ func TestDirectoryRendererRejectsJsonnetImportsOutsideRepository(t *testing.T) {
 		t.Fatalf("Render() error = %v, want the repo-server outside-repository import error", err)
 	}
 }
+
+// TestDirectoryRendererSubstitutesJsonnetVarsOncePerEvaluatedFile pins the
+// repo-server's repeated env substitution. makeJsonnetVM writes each
+// substituted TLA and extVar value back into the request, so the k-th
+// Jsonnet file that findManifests evaluates, in walk order, gets each value
+// substituted k times. A file that exclude leaves out is never evaluated,
+// so it does not count. The spec itself does not change.
+func TestDirectoryRendererSubstitutesJsonnetVarsOncePerEvaluatedFile(t *testing.T) {
+	root := t.TempDir()
+	body := func(name string) string {
+		return `function(tla) {
+  apiVersion: 'v1',
+  kind: 'ConfigMap',
+  metadata: { name: '` + name + `' },
+  data: { plain: std.extVar('plain'), code: std.extVar('code'), tla: tla },
+}`
+	}
+	writeFile(t, filepath.Join(root, "apps", "a.jsonnet"), body("a"))
+	writeFile(t, filepath.Join(root, "apps", "b.jsonnet"), body("b"))
+	writeFile(t, filepath.Join(root, "apps", "c.jsonnet"), body("c"))
+	sourceJsonnet := argoappv1.ApplicationSourceJsonnet{
+		ExtVars: []argoappv1.JsonnetVar{
+			{Name: "plain", Value: "$$ARGOCD_APP_NAME"},
+			{Name: "code", Value: `"$$ARGOCD_APP_NAME"`, Code: true},
+		},
+		TLAs: []argoappv1.JsonnetVar{{Name: "tla", Value: "$$$$ARGOCD_APP_NAME"}},
+	}
+	spec := sourceJsonnet.DeepCopy()
+
+	result, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{
+		ArgoEnv:          argoappv1.Env{{Name: "ARGOCD_APP_NAME", Value: "demo"}},
+		DirectoryExclude: "b.jsonnet",
+		Jsonnet:          sourceJsonnet,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	got := map[string]map[string]any{}
+	for _, manifest := range result {
+		data, _ := manifest.Object.Object["data"].(map[string]any)
+		got[manifest.Object.GetName()] = data
+	}
+	want := map[string]map[string]any{
+		"a": {"plain": "$ARGOCD_APP_NAME", "code": "$ARGOCD_APP_NAME", "tla": "$$ARGOCD_APP_NAME"},
+		"c": {"plain": "demo", "code": "demo", "tla": "$ARGOCD_APP_NAME"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("data = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(&sourceJsonnet, spec) {
+		t.Fatalf("Render() changed the spec to %#v, want %#v", sourceJsonnet, *spec)
+	}
+}

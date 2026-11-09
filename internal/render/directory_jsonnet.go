@@ -18,9 +18,10 @@ import (
 // returns the objects it produces, as the repo-server's findManifests does
 // (reposerver/repository/repository.go:2005-2051 at v3.6.1). The objects go
 // through the same list split and kind check as the objects of every other
-// file.
-func renderJsonnetFile(appPath, repoRoot, filePath, manifestPath string, opts RenderOptions) ([]generatedObject, error) {
-	vm, err := makeJsonnetVM(appPath, repoRoot, opts.Jsonnet, opts.ArgoEnv)
+// file. sourceJsonnet holds the TLAs and extVars of this pass
+// (jsonnetVarPasses).
+func renderJsonnetFile(appPath, repoRoot, filePath, manifestPath string, sourceJsonnet argoappv1.ApplicationSourceJsonnet) ([]generatedObject, error) {
+	vm, err := makeJsonnetVM(appPath, repoRoot, sourceJsonnet)
 	if err != nil {
 		return nil, err
 	}
@@ -35,22 +36,24 @@ func renderJsonnetFile(appPath, repoRoot, filePath, manifestPath string, opts Re
 	return decodeJsonnetObjects(manifestPath, []byte(jsonOutput))
 }
 
-func makeJsonnetVM(appPath, repoRoot string, sourceJsonnet argoappv1.ApplicationSourceJsonnet, env argoappv1.Env) (*jsonnet.VM, error) {
+// makeJsonnetVM is the repo-server's makeJsonnetVM
+// (reposerver/repository/repository.go:2281-2321 at v3.6.1) after its env
+// substitution: the values of sourceJsonnet are already substituted for
+// this pass (jsonnetVarPasses).
+func makeJsonnetVM(appPath, repoRoot string, sourceJsonnet argoappv1.ApplicationSourceJsonnet) (*jsonnet.VM, error) {
 	vm := jsonnet.MakeVM()
 	for _, arg := range sourceJsonnet.TLAs {
-		value := env.Envsubst(arg.Value)
 		if arg.Code {
-			vm.TLACode(arg.Name, value)
+			vm.TLACode(arg.Name, arg.Value)
 		} else {
-			vm.TLAVar(arg.Name, value)
+			vm.TLAVar(arg.Name, arg.Value)
 		}
 	}
 	for _, extVar := range sourceJsonnet.ExtVars {
-		value := env.Envsubst(extVar.Value)
 		if extVar.Code {
-			vm.ExtCode(extVar.Name, value)
+			vm.ExtCode(extVar.Name, extVar.Value)
 		} else {
-			vm.ExtVar(extVar.Name, value)
+			vm.ExtVar(extVar.Name, extVar.Value)
 		}
 	}
 
@@ -72,6 +75,38 @@ func makeJsonnetVM(appPath, repoRoot string, sourceJsonnet argoappv1.Application
 	}
 	vm.Importer(newBoundedJsonnetImporter(absRepoRoot, jpaths))
 	return vm, nil
+}
+
+// jsonnetVarPasses gives the TLAs and extVars of a directory source for
+// each Jsonnet file that the render evaluates, as the repo-server does.
+// findManifests (reposerver/repository/repository.go:2005-2051 at v3.6.1)
+// gets the directory spec by value, but its TLAs and ExtVars slices share
+// their arrays with the request. makeJsonnetVM (repository.go:2283-2288)
+// writes each substituted value back into those arrays before it builds
+// the VM. So the k-th Jsonnet file that findManifests evaluates, in walk
+// order, gets each value substituted k times: "$$ARGOCD_APP_NAME" is
+// "$ARGOCD_APP_NAME" for the first file and the Application name for the
+// second. jsonnetVarPasses keeps its own copy of the values, so the spec
+// never changes.
+type jsonnetVarPasses struct {
+	current argoappv1.ApplicationSourceJsonnet
+	env     argoappv1.Env
+}
+
+func newJsonnetVarPasses(sourceJsonnet argoappv1.ApplicationSourceJsonnet, env argoappv1.Env) *jsonnetVarPasses {
+	return &jsonnetVarPasses{current: *sourceJsonnet.DeepCopy(), env: env}
+}
+
+// next substitutes every value once more and returns the values for the
+// next Jsonnet file that the render evaluates.
+func (p *jsonnetVarPasses) next() argoappv1.ApplicationSourceJsonnet {
+	for index := range p.current.TLAs {
+		p.current.TLAs[index].Value = p.env.Envsubst(p.current.TLAs[index].Value)
+	}
+	for index := range p.current.ExtVars {
+		p.current.ExtVars[index].Value = p.env.Envsubst(p.current.ExtVars[index].Value)
+	}
+	return p.current
 }
 
 // JsonnetCodeValues returns the TLA and extVar values of sourceJsonnet that

@@ -76,6 +76,7 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, diags, err
 	}
 	var objects []generatedObject
+	jsonnetVars := newJsonnetVarPasses(opts.Jsonnet, opts.ArgoEnv)
 	for index := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, diags, err
@@ -91,7 +92,9 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			// (reposerver/repository/repository.go:2019 at v3.6.1).
 			continue
 		case isJsonnetFile(file.path):
-			fileObjects, err = renderJsonnetFile(root, source.RepoRoot, file.path, file.manifestPath, opts)
+			// Each Jsonnet file that is evaluated substitutes the values
+			// once more (jsonnetVarPasses).
+			fileObjects, err = renderJsonnetFile(root, source.RepoRoot, file.path, file.manifestPath, jsonnetVars.next())
 		case isJSONSuffixFile(file.path):
 			fileObjects, err = directoryJSONFileObjects(file.manifestPath, file.data)
 		default:
