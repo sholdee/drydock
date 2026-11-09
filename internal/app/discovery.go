@@ -438,7 +438,7 @@ func (o Orchestrator) discoverRenderedFleet(ctx context.Context, root string, re
 	var allEvents []cacheevent.Event
 
 	for depth := 1; depth <= maxDepth; depth++ {
-		settled, diags, events, err := o.settleSettingsInstalls(ctx, root, request, current, renderCache)
+		settled, diags, events, err := o.settleSettingsInstalls(ctx, root, request, current, start.SettingsCandidates, renderCache)
 		allDiags = append(allDiags, diags...)
 		allEvents = append(allEvents, events...)
 		if err != nil {
@@ -511,7 +511,8 @@ func (o Orchestrator) discoverRenderedFleet(ctx context.Context, root string, re
 
 // maxSettingsInstallRounds bounds settleSettingsInstalls. One round settles
 // the usual case: the settings read from the values files and the rendered
-// settings render the installs the same way.
+// settings render the installs the same way. Three rounds find a cycle of
+// two states.
 const maxSettingsInstallRounds = 3
 
 // settleSettingsInstalls renders the Applications that drydock renders only
@@ -521,7 +522,26 @@ const maxSettingsInstallRounds = 3
 // other Application once, with those settings, instead of once with the
 // settings of the values files and again with the rendered ones. When the
 // rounds run out, the frontier loop keeps converging as before.
-func (o Orchestrator) settleSettingsInstalls(ctx context.Context, root string, request BuildRequest, current discovery.Result, renderCache *applicationRenderCache) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {
+//
+// Each round starts again from the discovery result without the settings
+// of the settings-only renders of earlier rounds and earlier frontier
+// iterations (withoutSettingsOnlyRenders), and adds the renders of the
+// installs that count with the settings of this round. So an install that
+// counted in an earlier round, but does not count with the settings that
+// settle, leaves no settings behind. An example is an install whose
+// destination a cluster Secret, which a later frontier iteration finds,
+// moves to another cluster.
+//
+// The installs can also fail to settle: a round comes back to the settings
+// of an earlier round, because an install counts only without the settings
+// that it renders, for example an argocd-cm that turns the in-cluster
+// destination off. Then drydock keeps the last settings-only render of
+// every install that counted in a round, as earlier releases did, and
+// warns once for each install that counted in some rounds and not in others
+// (settingsInstallsUnsettledDiagnostic). start holds the settings
+// candidates that discovery found before the frontier. They come back when
+// no render reads them anymore.
+func (o Orchestrator) settleSettingsInstalls(ctx context.Context, root string, request BuildRequest, current discovery.Result, start []discovery.SettingsCandidate, renderCache *applicationRenderCache) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {
 	var allDiags []diagnostic.Diagnostic
 	var allEvents []cacheevent.Event
 	previous := ""
@@ -534,6 +554,7 @@ func (o Orchestrator) settleSettingsInstalls(ctx context.Context, root string, r
 			request.renderNamespaces.record(used)
 		}
 	}()
+	rounds := settingsInstallRounds{seen: map[string]bool{}, renders: map[string]settingsInstallRender{}}
 	for round := range maxSettingsInstallRounds {
 		settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), current)
 		if err != nil {
@@ -550,21 +571,168 @@ func (o Orchestrator) settleSettingsInstalls(ctx context.Context, root string, r
 		if round > 0 && settled == previous {
 			break
 		}
-		previous = settled
-		rendered, rendersInstalls, diags, events, err := o.renderSettingsInstalls(ctx, root, request, current, settings, installSig, renderCache)
-		if rendersInstalls {
-			used = settings.ControllerNamespace("")
+		if rounds.seen[settled] {
+			var mergeDiags []diagnostic.Diagnostic
+			current, mergeDiags = mergeDiscoveryResultsWithDiagnostics(withoutSettingsOnlyRenders(current, start), rounds.union())
+			allDiags = append(allDiags, mergeDiags...)
+			allDiags = append(allDiags, rounds.unsettledDiagnostics()...)
+			break
 		}
+		rounds.seen[settled] = true
+		previous = settled
+		installs := o.settingsInstallApplications(ctx, root, request, current, settings)
+		base := withoutSettingsOnlyRenders(current, start)
+		if len(installs) == 0 {
+			rounds.record(nil)
+			if !hasSettingsOnlyRender(current) {
+				return current, allDiags, allEvents, nil
+			}
+			// The settings of an earlier settings-only render are gone, so
+			// the next round checks the installs again without them.
+			current = base
+			continue
+		}
+		rendered, diags, events, err := o.renderSettingsInstalls(ctx, root, request, current, settings, installSig, installs, renderCache)
+		used = settings.ControllerNamespace("")
 		allDiags = append(allDiags, diags...)
 		allEvents = append(allEvents, events...)
-		if err != nil || !rendersInstalls {
+		if err != nil {
 			return current, allDiags, allEvents, err
 		}
-		var mergeDiags []diagnostic.Diagnostic
-		current, mergeDiags = mergeDiscoveryResultsWithDiagnostics(current, rendered)
-		allDiags = append(allDiags, mergeDiags...)
+		rounds.record(rendered)
+		current = base
+		for _, item := range rendered {
+			var mergeDiags []diagnostic.Diagnostic
+			current, mergeDiags = mergeDiscoveryResultsWithDiagnostics(current, item.result)
+			allDiags = append(allDiags, mergeDiags...)
+		}
 	}
 	return current, allDiags, allEvents, nil
+}
+
+// settingsInstallRender is the settings-only render of one install.
+type settingsInstallRender struct {
+	appFile discovery.ApplicationFile
+	result  discovery.Result
+}
+
+// settingsInstallRounds records the installs of each settle round.
+type settingsInstallRounds struct {
+	// seen holds the settled signature of each round.
+	seen map[string]bool
+	// order lists the key of each install that counted in a round, in the
+	// order the rounds found them, and renders holds its last render.
+	order   []string
+	renders map[string]settingsInstallRender
+	// counted holds, for each round, the keys of the installs that
+	// counted in it.
+	counted []map[string]bool
+}
+
+func (r *settingsInstallRounds) record(rendered []settingsInstallRender) {
+	keys := map[string]bool{}
+	for _, item := range rendered {
+		key := applicationKey(item.appFile.Application)
+		if _, ok := r.renders[key]; !ok {
+			r.order = append(r.order, key)
+		}
+		r.renders[key] = item
+		keys[key] = true
+	}
+	r.counted = append(r.counted, keys)
+}
+
+// union merges the last render of every install that counted in a round.
+func (r *settingsInstallRounds) union() discovery.Result {
+	var out discovery.Result
+	for _, key := range r.order {
+		out, _ = mergeDiscoveryResultsWithDiagnostics(out, r.renders[key].result)
+	}
+	return out
+}
+
+// unsettledDiagnostics warns once for each install that counted in some
+// rounds and not in others.
+func (r *settingsInstallRounds) unsettledDiagnostics() []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+	for _, key := range r.order {
+		for _, counted := range r.counted {
+			if !counted[key] {
+				diags = append(diags, settingsInstallsUnsettledDiagnostic(r.renders[key].appFile))
+				break
+			}
+		}
+	}
+	return diags
+}
+
+// settingsInstallsUnsettledDiagnostic reports an install that counts as an
+// Argo CD install on this cluster only without the settings that some
+// installs render, so the settings do not settle.
+func settingsInstallsUnsettledDiagnostic(appFile discovery.ApplicationFile) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:       diagnostic.CodeSettingsInstallsUnsettled,
+		Severity:   diagnostic.SeverityWarning,
+		Category:   "settings",
+		Message:    fmt.Sprintf("the Argo CD settings do not settle: Application %s installs Argo CD on this cluster with some of the settings that discovery finds and not with others, for example because a setting that it renders moves or turns off its destination; drydock keeps the settings that it renders", applicationDisplayName(appFile.Application)),
+		Provenance: diagnostic.Provenance{Path: filepath.ToSlash(appFile.Path)},
+	}
+}
+
+// hasSettingsOnlyRender reports a settings candidate of a settings-only
+// render in result.
+func hasSettingsOnlyRender(result discovery.Result) bool {
+	for _, candidate := range result.SettingsCandidates {
+		if candidate.SettingsOnly {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutSettingsOnlyRenders drops the settings candidates of the
+// settings-only renders from result. A candidate of start that a merge
+// dropped because such a render read it (mergeSettingsCandidates) comes
+// back in its place when no render that stays reads it. The other
+// candidates keep their order.
+func withoutSettingsOnlyRenders(result discovery.Result, start []discovery.SettingsCandidate) discovery.Result {
+	kept := make([]discovery.SettingsCandidate, 0, len(result.SettingsCandidates))
+	present := make(map[string]struct{}, len(result.SettingsCandidates))
+	for _, candidate := range result.SettingsCandidates {
+		if candidate.SettingsOnly {
+			continue
+		}
+		kept = append(kept, candidate)
+		present[settingsCandidateLoadKey(candidate)] = struct{}{}
+	}
+	if len(kept) == len(result.SettingsCandidates) {
+		return result
+	}
+	inputs := renderedSettingsInputs(kept)
+	out := make([]discovery.SettingsCandidate, 0, len(kept)+len(start))
+	fromStart := make(map[string]struct{}, len(start))
+	byKey := make(map[string]discovery.SettingsCandidate, len(kept))
+	for _, candidate := range kept {
+		byKey[settingsCandidateLoadKey(candidate)] = candidate
+	}
+	for _, candidate := range start {
+		key := settingsCandidateLoadKey(candidate)
+		fromStart[key] = struct{}{}
+		if current, ok := byKey[key]; ok {
+			out = append(out, current)
+			continue
+		}
+		if _, ok := present[key]; !ok && !candidate.SettingsOnly && !supersededBySettingsRender(candidate, inputs) {
+			out = append(out, candidate)
+		}
+	}
+	for _, candidate := range kept {
+		if _, ok := fromStart[settingsCandidateLoadKey(candidate)]; !ok {
+			out = append(out, candidate)
+		}
+	}
+	result.SettingsCandidates = out
+	return result
 }
 
 // settingsInstallRenderSignature is renderSettingsSignature without the
@@ -580,17 +748,11 @@ func settingsInstallRenderSignature(settings config.ArgoSettings) (string, error
 	return renderSettingsSignature(settings)
 }
 
-// renderSettingsInstalls renders, for their Argo CD settings only, the
-// discovered Applications whose Helm values set Argo CD settings and that the
-// frontier does not render for discovery (applicationMayRenderDiscoveryObjects).
-// rendersInstalls is false when there is none.
-//
-// The render is keyed by settingsInstallRenderSignature and default tracking
-// in the controller namespace, not by the full render settings: it only
-// reads the data of the settings ConfigMaps, which these leave out, so a
-// later round or frontier iteration with the same signature reuses it. The
-// final render renders the Application again with the full settings.
-func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, settings config.ArgoSettings, installSig string, renderCache *applicationRenderCache) (discovery.Result, bool, []diagnostic.Diagnostic, []cacheevent.Event, error) {
+// settingsInstallApplications returns the discovered Applications whose
+// Helm values set Argo CD settings or that render the argo-cd chart, on this
+// cluster, that the frontier does not render for discovery
+// (applicationMayRenderDiscoveryObjects).
+func (o Orchestrator) settingsInstallApplications(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, settings config.ArgoSettings) []discovery.ApplicationFile {
 	probe := settingsInstallProbe(root, request, settings.ControllerNamespace(""))
 	explicit := explicitDiscoverKustomizePaths(request)
 	var installs []discovery.ApplicationFile
@@ -609,10 +771,18 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 			installs = append(installs, appFile)
 		}
 	}
-	if len(installs) == 0 {
-		return discovery.Result{}, false, nil, nil, nil
-	}
+	return installs
+}
 
+// renderSettingsInstalls renders installs (settingsInstallApplications) for
+// their Argo CD settings only, and returns the render of each.
+//
+// The render is keyed by settingsInstallRenderSignature and default tracking
+// in the controller namespace, not by the full render settings: it only
+// reads the data of the settings ConfigMaps, which these leave out, so a
+// later round or frontier iteration with the same signature reuses it. The
+// final render renders the Application again with the full settings.
+func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, settings config.ArgoSettings, installSig string, installs []discovery.ApplicationFile, renderCache *applicationRenderCache) ([]settingsInstallRender, []diagnostic.Diagnostic, []cacheevent.Event, error) {
 	recorder := cacheevent.NewRecorder(request.RecordCacheEvents)
 	// The render reads the settings that the install creates, so the
 	// settings found so far must not stop it (WithKustomizeHelmAssumed).
@@ -620,7 +790,7 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 	// the final render, which uses the found settings as Argo CD does.
 	provider, cleanup, err := o.discoveryProvider(ctx, root, settings.WithKustomizeHelmAssumed(), request, recorder)
 	if err != nil {
-		return discovery.Result{}, true, nil, recorder.Events(), err
+		return nil, nil, recorder.Events(), err
 	}
 	defer cleanup()
 
@@ -634,19 +804,20 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 		settings:     settings,
 		applications: discovered.Applications,
 	}
-	var out discovery.Result
+	out := make([]settingsInstallRender, 0, len(installs))
 	var allDiags []diagnostic.Diagnostic
 	for _, appFile := range installs {
 		next, diags, err := renderAndScanDiscoveryApplication(ctx, request, provider, renderSettings, renderCache, inputs, appFile, true)
 		allDiags = append(allDiags, diags...)
 		if err != nil {
-			return out, true, allDiags, recorder.Events(), err
+			return out, allDiags, recorder.Events(), err
 		}
-		var mergeDiags []diagnostic.Diagnostic
-		out, mergeDiags = mergeDiscoveryResultsWithDiagnostics(out, next)
-		allDiags = append(allDiags, mergeDiags...)
+		for i := range next.SettingsCandidates {
+			next.SettingsCandidates[i].SettingsOnly = true
+		}
+		out = append(out, settingsInstallRender{appFile: appFile, result: next})
 	}
-	return out, true, allDiags, recorder.Events(), nil
+	return out, allDiags, recorder.Events(), nil
 }
 
 func (o Orchestrator) discoveryProvider(ctx context.Context, root string, settings config.ArgoSettings, request BuildRequest, recorder *cacheevent.Recorder) (localProvider, func(), error) {

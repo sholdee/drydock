@@ -117,6 +117,10 @@ type SettingsCandidate struct {
 	// its ConfigMaps never name the controller namespace and are never
 	// settings.
 	OtherInstall bool
+	// SettingsOnly reports a candidate of an Application that drydock
+	// renders only for its Argo CD settings. Each settle round of those
+	// renders replaces the candidates of the earlier rounds.
+	SettingsOnly bool
 }
 
 // IsSettingsConfigMapKind reports whether kind is the candidate kind of an
