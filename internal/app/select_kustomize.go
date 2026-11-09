@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -79,15 +80,12 @@ func withSelectionOnlyPathsIn(ctx context.Context, root string, repoMaps []sourc
 		return paths
 	}
 	symlinkMemo := map[string]symlinkSelection{}
-	symlinkInputs := func(source argoappv1.ApplicationSource) symlinkSelection {
-		var libs []string
-		if source.Directory != nil {
-			libs = source.Directory.Jsonnet.Libs
-		}
-		key := fmt.Sprintf("%q %q", source.Path, libs)
+	symlinkInputs := func(application argoappv1.Application, source argoappv1.ApplicationSource) symlinkSelection {
+		jsonnet := directoryJsonnetSelectionFor(application, source, tree.controllerNamespace)
+		key := fmt.Sprintf("%q %q %q %t", source.Path, jsonnet.libs, jsonnet.code, jsonnet.codeImportsReadRevision)
 		selection, ok := symlinkMemo[key]
 		if !ok {
-			selection = directorySelectionInputs(ctx, root, source.Path, libs, gates)
+			selection = directorySelectionInputs(ctx, root, source.Path, jsonnet, gates)
 			symlinkMemo[key] = selection
 		}
 		return selection
@@ -119,7 +117,7 @@ func withSelectionOnlyPathsIn(ctx context.Context, root string, repoMaps []sourc
 			// symlinks, and neither evaluates Jsonnet. Helm file parameters
 			// own their symlinks above.
 			if rendersAsDirectory(root, source, gates) {
-				selection := symlinkInputs(source)
+				selection := symlinkInputs(input.Application, source)
 				out[i].Paths = append(out[i].Paths, selection.paths...)
 				if selection.unknown {
 					// The inputs are not known, so selectChangedDiffSides
@@ -145,15 +143,72 @@ func withSelectionOnlyPathsIn(ctx context.Context, root string, repoMaps []sourc
 type symlinkSelection struct {
 	paths []string
 	// unknown reports a Jsonnet import scan that ran out of budget or
-	// failed: the source's inputs are not known.
+	// failed, or extVar or TLA code whose import paths read the revision:
+	// the source's inputs are not known.
 	unknown bool
+}
+
+// directoryJsonnetSelection is what decides the Jsonnet inputs of a
+// directory source for changed-only selection.
+type directoryJsonnetSelection struct {
+	libs []string
+	// code holds the extVar and TLA values that the render evaluates as
+	// Jsonnet code, after env substitution (render.JsonnetCodeValues).
+	code []string
+	// codeImportsReadRevision reports that an import path in that code
+	// names an ARGOCD_APP_REVISION variable. Selection does not know the
+	// revision of the render, so it does not know those imports.
+	codeImportsReadRevision bool
+}
+
+// revisionProbes are two revisions that differ in every byte, also in the
+// two short forms, for directoryJsonnetSelectionFor.
+var revisionProbes = [2]string{
+	"0000000000000000000000000000000000000000",
+	"1111111111111111111111111111111111111111",
+}
+
+// directoryJsonnetSelectionFor returns the Jsonnet inputs of source, a
+// source of application, as the render gets them. The code values are
+// substituted with the build environment of the render (argoRenderEnv) in
+// controllerNamespace. That environment holds the spec revision, not the
+// revision that the render resolves. So the code is substituted with two
+// different revisions too, and when its import paths differ, they read the
+// revision. A revision in any other place of the code does not change its
+// imports.
+func directoryJsonnetSelectionFor(application argoappv1.Application, source argoappv1.ApplicationSource, controllerNamespace string) directoryJsonnetSelection {
+	if source.Directory == nil {
+		return directoryJsonnetSelection{}
+	}
+	if controllerNamespace == "" {
+		controllerNamespace = defaultArgoCDControllerNamespace
+	}
+	sourceJsonnet := source.Directory.Jsonnet
+	env := argoRenderEnv(application, source, controllerNamespace)
+	selection := directoryJsonnetSelection{
+		libs: sourceJsonnet.Libs,
+		code: render.JsonnetCodeValues(sourceJsonnet, env),
+	}
+	first := render.JsonnetCodeValues(sourceJsonnet, withArgoAppRevision(env, revisionProbes[0]))
+	second := render.JsonnetCodeValues(sourceJsonnet, withArgoAppRevision(env, revisionProbes[1]))
+	for index := range first {
+		if first[index] == second[index] {
+			continue
+		}
+		if !slices.Equal(render.JsonnetCodeImportLiterals(first[index]), render.JsonnetCodeImportLiterals(second[index])) {
+			selection.codeImportsReadRevision = true
+			break
+		}
+	}
+	return selection
 }
 
 // directorySelectionInputs returns the paths that a directory source at
 // sourcePath reads through symlinks, Jsonnet libraries, and Jsonnet
-// imports. With Jsonnet off in argocd-cm, no library or import is read, so
-// only the symlinks under the source path count.
-func directorySelectionInputs(ctx context.Context, root, sourcePath string, libs []string, gates sourceTypeGates) symlinkSelection {
+// imports, also the imports in extVar and TLA code. With Jsonnet off in
+// argocd-cm, no library or import is read, so only the symlinks under the
+// source path count.
+func directorySelectionInputs(ctx context.Context, root, sourcePath string, jsonnet directoryJsonnetSelection, gates sourceTypeGates) symlinkSelection {
 	var selection symlinkSelection
 	if gates.jsonnetDisabled {
 		selection.paths = render.DirectorySymlinkInputPaths(root, []string{sourcePath})
@@ -162,7 +217,7 @@ func directorySelectionInputs(ctx context.Context, root, sourcePath string, libs
 	// The symlinks under the source path and under each library that
 	// resolves, as the renderer resolves it, and the library paths and
 	// symlinks that decide where a library is.
-	libDirs, libLinks, libErr := render.DirectoryJsonnetLibInputs(root, sourcePath, libs)
+	libDirs, libLinks, libErr := render.DirectoryJsonnetLibInputs(root, sourcePath, jsonnet.libs)
 	dirs := []string{sourcePath}
 	for _, dir := range libDirs {
 		// A library at the repository root would cover every path, so it
@@ -175,9 +230,11 @@ func directorySelectionInputs(ctx context.Context, root, sourcePath string, libs
 	selection.paths = render.DirectorySymlinkInputPaths(root, dirs)
 	selection.paths = append(selection.paths, libLinks...)
 	// A scan that ran out of budget or failed, such as on an unreadable
-	// directory, leaves the imports unknown.
-	imports, err := render.DirectoryJsonnetImportPaths(ctx, root, sourcePath, libs)
-	selection.unknown = err != nil || libErr != nil
+	// directory, leaves the imports unknown. So does code whose import
+	// paths read the revision. The scan returns nothing for a source
+	// without a Jsonnet file, which never evaluates the code.
+	imports, err := render.DirectoryJsonnetImportPaths(ctx, root, sourcePath, jsonnet.libs, jsonnet.code)
+	selection.unknown = err != nil || libErr != nil || (jsonnet.codeImportsReadRevision && render.DirectoryHasJsonnetFile(root, sourcePath))
 	selection.paths = append(selection.paths, imports...)
 	return selection
 }

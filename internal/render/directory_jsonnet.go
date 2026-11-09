@@ -74,6 +74,25 @@ func makeJsonnetVM(appPath, repoRoot string, sourceJsonnet argoappv1.Application
 	return vm, nil
 }
 
+// JsonnetCodeValues returns the TLA and extVar values of sourceJsonnet that
+// makeJsonnetVM passes to the VM as Jsonnet code (code: true), after the
+// same env substitution, in the same order: TLAs first, then extVars. A
+// value with code: false is a plain string, so it is left out.
+func JsonnetCodeValues(sourceJsonnet argoappv1.ApplicationSourceJsonnet, env argoappv1.Env) []string {
+	var out []string
+	for _, arg := range sourceJsonnet.TLAs {
+		if arg.Code {
+			out = append(out, env.Envsubst(arg.Value))
+		}
+	}
+	for _, extVar := range sourceJsonnet.ExtVars {
+		if extVar.Code {
+			out = append(out, env.Envsubst(extVar.Value))
+		}
+	}
+	return out
+}
+
 // resolveJsonnetLib resolves one entry of spec.source.directory.jsonnet.libs
 // as the Argo CD v3.6.1 repo-server does, with
 // pathutil.ResolveFileOrDirectoryPath(repoRoot, repoRoot, lib)

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 )
 
 // TestDirectoryJsonnetImportPaths pins the files outside a directory source
@@ -33,7 +35,7 @@ local vendored = import 'vendored.libsonnet';
 	symlink(t, "../other/target.libsonnet", filepath.Join(root, "app", "linked.libsonnet"))
 	writeFile(t, filepath.Join(root, "app", "broken.jsonnet"), "local x = import '../ignored.libsonnet'; {")
 
-	got, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", []string{"vendor"})
+	got, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", []string{"vendor"}, nil)
 	if err != nil {
 		t.Fatalf("DirectoryJsonnetImportPaths() error = %v", err)
 	}
@@ -64,7 +66,7 @@ func TestDirectoryJsonnetImportPathsReadsOnlyBoundedRepositoryFiles(t *testing.T
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	got, err := DirectoryJsonnetImportPaths(ctx, root, "app", nil)
+	got, err := DirectoryJsonnetImportPaths(ctx, root, "app", nil, nil)
 	if err != nil {
 		t.Fatalf("DirectoryJsonnetImportPaths() error = %v", err)
 	}
@@ -95,7 +97,7 @@ func TestDirectoryJsonnetImportPathsStopsAtItsBudget(t *testing.T) {
 	writeJsonnetImportFanout(t, root)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	if _, err := DirectoryJsonnetImportPaths(ctx, root, "app", nil); !errors.Is(err, ErrJsonnetImportScanBudget) {
+	if _, err := DirectoryJsonnetImportPaths(ctx, root, "app", nil, nil); !errors.Is(err, ErrJsonnetImportScanBudget) {
 		t.Fatalf("DirectoryJsonnetImportPaths() error = %v, want the budget error", err)
 	}
 	if _, err := DirectoryInputDigestPaths(ctx, ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{}); !errors.Is(err, ErrJsonnetImportScanBudget) {
@@ -113,7 +115,7 @@ func TestDirectoryJsonnetImportPathsRunsOutOnALargeFile(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "lib", "inner.libsonnet"), "{}\n")
 	writeFile(t, filepath.Join(root, "app", "main.jsonnet"), "import '../lib/inner.libsonnet'\n"+strings.Repeat(" ", maxJsonnetImportScanBytes))
-	if _, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", nil); !errors.Is(err, ErrJsonnetImportScanBudget) {
+	if _, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", nil, nil); !errors.Is(err, ErrJsonnetImportScanBudget) {
 		t.Fatalf("DirectoryJsonnetImportPaths() error = %v, want the budget error", err)
 	}
 }
@@ -124,8 +126,87 @@ func TestDirectoryJsonnetImportPathsRunsOutOnALargeFile(t *testing.T) {
 func TestDirectoryJsonnetImportPathsWithoutJsonnetFiles(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "app", "cm.yaml"), "a: 1\n")
-	got, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", []string{"../outside"})
+	got, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", []string{"../outside"}, nil)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("DirectoryJsonnetImportPaths() = %v, %v, want nothing and no error", got, err)
+	}
+}
+
+// TestDirectoryJsonnetImportPathsFollowsCode pins that the scan follows the
+// imports in extVar and TLA code, with the same records as for a file: each
+// path the importer tries before the one it finds, the path it finds, what
+// that file imports, and the symlinks on the way. A code value has no file,
+// so the importer tries the libraries, last first, and then the source
+// path. Code that does not parse adds nothing.
+func TestDirectoryJsonnetImportPathsFollowsCode(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "main.jsonnet"), "std.extVar('cfg')\n")
+	writeFile(t, filepath.Join(root, "vendor", "cfg.libsonnet"), "{ nested: import 'nested.libsonnet' }\n")
+	writeFile(t, filepath.Join(root, "vendor", "nested.libsonnet"), "{}\n")
+	writeFile(t, filepath.Join(root, "shared", "text.txt"), "text")
+	writeFile(t, filepath.Join(root, "other", "target.libsonnet"), "{}\n")
+	symlink(t, "../other/target.libsonnet", filepath.Join(root, "links", "linked.libsonnet"))
+	code := []string{
+		// lib2 does not exist, so the importer tries lib2/cfg.libsonnet
+		// before it finds vendor/cfg.libsonnet.
+		"import 'cfg.libsonnet'",
+		"importstr '../shared/text.txt'",
+		"import '../links/linked.libsonnet'",
+		"import '../ignored.libsonnet' {",
+	}
+
+	got, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", []string{"vendor", "lib2"}, code)
+	if err != nil {
+		t.Fatalf("DirectoryJsonnetImportPaths() error = %v", err)
+	}
+	want := []string{"lib2/cfg.libsonnet", "links/linked.libsonnet", "other/target.libsonnet", "shared/text.txt", "vendor/cfg.libsonnet", "vendor/nested.libsonnet"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("DirectoryJsonnetImportPaths() = %v, want %v", got, want)
+	}
+
+	// The renderer never evaluates the code of a source without a Jsonnet
+	// file, so its imports are no inputs.
+	if err := os.Remove(filepath.Join(root, "app", "main.jsonnet")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "app", "cm.yaml"), "a: 1\n")
+	got, err = DirectoryJsonnetImportPaths(t.Context(), root, "app", []string{"vendor", "lib2"}, code)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("DirectoryJsonnetImportPaths() without a Jsonnet file = %v, %v, want nothing and no error", got, err)
+	}
+}
+
+// TestJsonnetCodeValues pins the values that the renderer evaluates as
+// Jsonnet code: the TLAs and then the extVars with code: true, after env
+// substitution. A value with code: false is a plain string, so it is left
+// out, also when it looks like an import.
+func TestJsonnetCodeValues(t *testing.T) {
+	sourceJsonnet := argoappv1.ApplicationSourceJsonnet{
+		ExtVars: []argoappv1.JsonnetVar{
+			{Name: "plain", Value: "import 'plain.libsonnet'"},
+			{Name: "ext", Value: "import '${ARGOCD_APP_NAME}.libsonnet'", Code: true},
+		},
+		TLAs: []argoappv1.JsonnetVar{
+			{Name: "tla", Value: "importstr 'tla.txt'", Code: true},
+			{Name: "plainTLA", Value: "importstr 'plain.txt'"},
+		},
+	}
+	env := argoappv1.Env{{Name: "ARGOCD_APP_NAME", Value: "demo"}}
+	got := JsonnetCodeValues(sourceJsonnet, env)
+	want := []string{"importstr 'tla.txt'", "import 'demo.libsonnet'"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("JsonnetCodeValues() = %q, want %q", got, want)
+	}
+}
+
+// TestJsonnetCodeImportLiterals pins the import paths of one code value, in
+// source order, and that a value that does not parse has none.
+func TestJsonnetCodeImportLiterals(t *testing.T) {
+	got := JsonnetCodeImportLiterals("{ a: import 'a.libsonnet', b: importstr 'b.txt', c: importbin 'c.bin' }")
+	if strings.Join(got, ",") != "a.libsonnet,b.txt,c.bin" {
+		t.Fatalf("JsonnetCodeImportLiterals() = %v", got)
+	}
+	if got := JsonnetCodeImportLiterals("import 'a.libsonnet' {"); len(got) != 0 {
+		t.Fatalf("JsonnetCodeImportLiterals() of code that does not parse = %v, want none", got)
 	}
 }

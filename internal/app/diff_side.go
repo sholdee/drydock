@@ -191,7 +191,9 @@ func changedOnlyProjectsDiagnostic() diagnostic.Diagnostic {
 
 // changedOnlyJsonnetScanCode identifies the Applications that changed-only
 // selects because the scan of their Jsonnet imports ran out of budget
-// (render.ErrJsonnetImportScanBudget) or failed. It is strict-exempt
+// (render.ErrJsonnetImportScanBudget) or failed, or because an import path
+// in their extVar or TLA code names an ARGOCD_APP_REVISION variable, whose
+// value selection does not know. It is strict-exempt
 // (strictExemptDiagnostic): selecting them is the safe answer, not an
 // ownership gap.
 const changedOnlyJsonnetScanCode = "diff.changed-only-jsonnet-scan"
@@ -201,7 +203,7 @@ func changedOnlyJsonnetScanDiagnostic(names []string) diagnostic.Diagnostic {
 		Code:     changedOnlyJsonnetScanCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  fmt.Sprintf("the Jsonnet imports of %d Application(s) could not be scanned within the scan budget or could not be read, so changed-only renders them on every change: %s", len(names), strings.Join(names, ", ")),
+		Message:  fmt.Sprintf("the Jsonnet imports of %d Application(s) could not be scanned within the scan budget, could not be read, or name an ARGOCD_APP_REVISION variable in extVar or TLA code, so changed-only renders them on every change: %s", len(names), strings.Join(names, ", ")),
 	}
 }
 

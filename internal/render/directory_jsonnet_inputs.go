@@ -26,15 +26,18 @@ import (
 // path would win), the path it finds, and the symlinks on the way to that
 // path's target. It reads every .jsonnet file under the source path, also
 // one that recurse or a filter leaves out, so the result is conservative.
-// An import that the renderer refuses, a file that does not parse, and
-// imports in extVar or TLA code add nothing. The scan has a budget of files
+// It also follows the imports in code, the extVar and TLA values that the
+// renderer evaluates as Jsonnet code (JsonnetCodeValues). Such a value has
+// no file, so its relative imports resolve against the source path and the
+// libraries only (visitCode). An import that the renderer refuses, and a file or a code
+// value that does not parse, add nothing. The scan has a budget of files
 // and bytes; when it runs out, the result is ErrJsonnetImportScanBudget. It
 // reads a file only after the
 // checks of the renderer's importer: its symlinks must resolve to a regular
 // file inside the repository, outside .git. It reads at most
 // maxJsonnetImportScanBytes of a file, and does not parse a larger one. The
 // result is sorted, with forward slashes.
-func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath string, libs []string) ([]string, error) {
+func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath string, libs, code []string) ([]string, error) {
 	absRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
 		return nil, err
@@ -80,6 +83,9 @@ func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath strin
 	}
 	for _, entry := range entries {
 		collector.visit(entry)
+	}
+	for _, value := range code {
+		collector.visitCode(value)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -159,6 +165,18 @@ func appendJsonnetLibLinks(links []string, absRoot, realRoot, lib string) []stri
 		}
 	}
 	return links
+}
+
+// DirectoryHasJsonnetFile reports whether the directory source at
+// sourcePath has a .jsonnet file, so that the renderer evaluates Jsonnet.
+// It reports true when the walk fails: then the inputs are not known.
+func DirectoryHasJsonnetFile(repoRoot, sourcePath string) bool {
+	appPath, err := sourceRoot(ResolvedSource{RepoRoot: repoRoot, Path: sourcePath})
+	if err != nil {
+		return true
+	}
+	entries, err := directoryJsonnetEntryFiles(appPath)
+	return err != nil || len(entries) > 0
 }
 
 // repoRelative returns path relative to root with forward slashes, and
@@ -253,8 +271,38 @@ func (c *jsonnetImportCollector) visit(path string) {
 	if err != nil {
 		return
 	}
+	c.follow(path, node)
+}
+
+// visitCode parses one code value of an extVar or TLA and follows its
+// imports. go-jsonnet parses such a value with an empty file name
+// (codeToPV, imports.go:185-196 at go-jsonnet v0.22.0), and an import
+// passes the file name of its node to the importer (interpreter.go:510-520).
+// So the importer gets an empty importedFrom. The Argo CD repo-server's
+// confinedImporter then tries the import path against its own working
+// directory, and then against the Jsonnet paths in reverse order: the
+// libraries, last first, and then the source path
+// (reposerver/repository/repository.go:2305-2313 and 2339-2378 at v3.6.1).
+// drydock's importer tries the Jsonnet paths only (importCandidates), and
+// the scan uses that importer. A value that does not parse adds nothing:
+// go-jsonnet fails only a render that reads that variable.
+func (c *jsonnetImportCollector) visitCode(code string) {
+	if c.exhausted || c.ctx.Err() != nil {
+		return
+	}
+	node, err := jsonnet.SnippetToAST("", code)
+	if err != nil {
+		return
+	}
+	c.follow("", node)
+}
+
+// follow adds the paths that the imports of node, parsed from the file at
+// from (empty for a code value), try and find, and visits each Jsonnet file
+// that an import finds.
+func (c *jsonnetImportCollector) follow(from string, node ast.Node) {
 	for _, imported := range jsonnetImportLiterals(node) {
-		candidates, err := c.importer.importCandidates(path, imported.path)
+		candidates, err := c.importer.importCandidates(from, imported.path)
 		if err != nil {
 			continue
 		}
@@ -335,6 +383,22 @@ func (c *jsonnetImportCollector) addRel(rel string) {
 		return
 	}
 	c.found[filepath.ToSlash(rel)] = struct{}{}
+}
+
+// JsonnetCodeImportLiterals returns the import, importstr, and importbin
+// paths of one Jsonnet code value, as written, in source order. A value
+// that does not parse has none.
+func JsonnetCodeImportLiterals(code string) []string {
+	node, err := jsonnet.SnippetToAST("", code)
+	if err != nil {
+		return nil
+	}
+	literals := jsonnetImportLiterals(node)
+	out := make([]string, 0, len(literals))
+	for _, literal := range literals {
+		out = append(out, literal.path)
+	}
+	return out
 }
 
 type jsonnetImportLiteral struct {
