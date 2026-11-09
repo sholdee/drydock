@@ -698,3 +698,41 @@ func TestComponentSettingsEnvFromPrefix(t *testing.T) {
 		})
 	}
 }
+
+// A configMapKeyRef to a ConfigMap of the render whose key is missing sets
+// nothing when it is optional. controller.env comes after the
+// argocd-cmd-params-cm reference, so the earlier reference decides. When
+// it is not optional, the pod does not start, and drydock warns.
+func TestComponentSettingsMissingKeyOfARenderedConfigMap(t *testing.T) {
+	result := componentSettingsResult(t, `configs:
+  params:
+    application.namespaces: team-a
+controller:
+  env:
+    - name: ARGOCD_APPLICATION_NAMESPACES
+      valueFrom:
+        configMapKeyRef:
+          name: repo-limits
+          key: namespaces
+          optional: true
+repoServer:
+  env:
+    - name: ARGOCD_REPO_SERVER_ALLOW_OUT_OF_BOUNDS_SYMLINKS
+      valueFrom:
+        configMapKeyRef:
+          name: repo-limits
+          key: symlinks
+`, func(root string) {
+		writeTestFile(t, filepath.Join(root, "argocd", "limits.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: repo-limits\ndata:\n  size: 30M\n")
+		writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), kustomizeArgoCDInstallYAML("resources:\n  - limits.yaml\n", []string{"values.yaml"}))
+	})
+	if got := result.Settings.ApplicationNamespaces.Value; got != "team-a" {
+		t.Errorf("ApplicationNamespaces = %q, want team-a from argocd-cmd-params-cm", got)
+	}
+	if got := workloadWarnings(result.Diagnostics, "ARGOCD_APPLICATION_NAMESPACES"); len(got) != 0 {
+		t.Errorf("warnings = %#v, want none for the optional reference", got)
+	}
+	if got := workloadWarnings(result.Diagnostics, "ConfigMap repo-limits without the key symlinks"); len(got) != 1 {
+		t.Errorf("warnings = %#v, want one for the reference that is not optional", got)
+	}
+}

@@ -139,22 +139,41 @@ func TestParseComponentArgs(t *testing.T) {
 }
 
 // Every boolean flag of each program takes no separate value, so a setting
-// flag after it is read. A boolean flag that the tables miss would take the
-// setting flag as its value.
+// flag after it is read. The lists repeat the BoolVar flags of Argo CD
+// v3.6.1 (see componentBoolFlags) on purpose: a flag that the table misses
+// would stop the program as an unknown flag, or take the setting flag as
+// its value.
 func TestParseComponentArgsReadsEveryBooleanFlagAsBoolean(t *testing.T) {
-	next := map[ArgoCDComponent][]string{
-		RepoServerComponent:               {"--allow-oob-symlinks"},
-		ApplicationControllerComponent:    {"--application-namespaces", "team-a"},
-		ApplicationSetControllerComponent: {"--enable-progressive-syncs"},
-	}
-	for component, flags := range componentBoolFlags {
-		for _, flag := range flags {
-			if flag == "help" {
-				continue
-			}
-			t.Run(string(component)+"/"+flag, func(t *testing.T) {
-				args := append([]string{"/usr/local/bin/" + string(component), "--" + flag}, next[component]...)
-				got, notes := ParseComponentArgs(component, nil, args)
+	cacheBool := []string{"redis-use-tls", "redis-insecure-skip-tls-verify"}
+	kubectlBool := []string{"insecure-skip-tls-verify", "disable-compression"}
+	for _, tc := range []struct {
+		component ArgoCDComponent
+		flags     []string
+		next      []string
+	}{
+		{
+			component: RepoServerComponent,
+			flags: append([]string{"otlp-insecure", "disable-oci-manifest-max-extracted-size", "disable-helm-manifest-max-extracted-size",
+				"plugin-use-manifest-generate-paths", "enable-builtin-git-config", "disable-tls"}, cacheBool...),
+			next: []string{"--allow-oob-symlinks"},
+		},
+		{
+			component: ApplicationControllerComponent,
+			flags: append(append([]string{"repo-server-plaintext", "repo-server-strict-tls", "otlp-insecure", "persist-resource-health",
+				"dynamic-cluster-distribution-enabled", "server-side-diff-enabled", "hydrator-enabled"}, cacheBool...), kubectlBool...),
+			next: []string{"--application-namespaces", "team-a"},
+		},
+		{
+			component: ApplicationSetControllerComponent,
+			flags: append([]string{"enable-leader-election", "enable-policy-override", "debug", "enable-scm-providers", "dry-run",
+				"token-ref-strict-mode", "repo-server-plaintext", "repo-server-strict-tls", "enable-github-api-metrics"}, kubectlBool...),
+			next: []string{"--enable-progressive-syncs"},
+		},
+	} {
+		for _, flag := range tc.flags {
+			t.Run(string(tc.component)+"/"+flag, func(t *testing.T) {
+				args := append([]string{"/usr/local/bin/" + string(tc.component), "--" + flag}, tc.next...)
+				got, notes := ParseComponentArgs(tc.component, nil, args)
 				if len(got) != 1 || len(notes) != 0 {
 					t.Fatalf("ParseComponentArgs(%q) = %#v, %q, want the setting flag after the boolean flag", args, got, notes)
 				}
