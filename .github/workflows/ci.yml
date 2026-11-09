@@ -35,6 +35,7 @@ jobs:
       lint: ${{ steps.paths.outputs.lint }}
       render-parity-smoke: ${{ steps.render_parity_smoke.outputs.run }}
       renovate: ${{ steps.paths.outputs.renovate }}
+      shell: ${{ steps.paths.outputs.shell }}
       workflow: ${{ steps.paths.outputs.workflow }}
     steps:
       - name: Checkout
@@ -79,6 +80,8 @@ jobs:
               - 'mise.toml'
             renovate:
               - '.github/renovate.json5'
+            shell:
+              - '**/*.sh'
             workflow:
               - '.github/workflows/**'
               - 'pr-action/**'
@@ -224,7 +227,7 @@ jobs:
 
   shellcheck:
     needs: detect
-    if: github.event_name != 'pull_request' || needs.detect.outputs.workflow == 'true' || needs.detect.outputs.lint == 'true'
+    if: github.event_name != 'pull_request' || needs.detect.outputs.shell == 'true' || needs.detect.outputs.workflow == 'true' || needs.detect.outputs.lint == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
