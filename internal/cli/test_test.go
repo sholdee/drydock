@@ -80,7 +80,7 @@ func TestTestAppsReportsFailures(t *testing.T) {
 	writeFailingCLIApplication(t, root, "broken")
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"test", "apps", "--path", root, "--offline"})
+	cmd.SetArgs([]string{"test", "apps", "--path", root, "--offline", "--git-cache-dir", t.TempDir()})
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
@@ -359,7 +359,7 @@ func TestTestAppsJSONOutputContainsStatusesOnly(t *testing.T) {
 	writeFailingCLIApplication(t, root, "broken")
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"test", "apps", "--path", root, "-o", "json"})
+	cmd.SetArgs([]string{"test", "apps", "--path", root, "-o", "json", "--git-cache-dir", t.TempDir()})
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)

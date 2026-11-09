@@ -236,7 +236,7 @@ func TestBuildAppsSuppressesPartialStdoutWhenOutputWouldBeInvalid(t *testing.T) 
 	writeFailingCLIApplication(t, root, "broken")
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"build", "apps", "--path", root})
+	cmd.SetArgs([]string{"build", "apps", "--path", root, "--git-cache-dir", t.TempDir()})
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
@@ -859,7 +859,7 @@ func TestBuildAppsJSONOutputStaysEmptyOnRenderFailure(t *testing.T) {
 	writeSimpleAppForCLI(t, root, "ok")
 	writeFailingCLIApplication(t, root, "broken")
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"build", "apps", "--path", root, "-o", "json"})
+	cmd.SetArgs([]string{"build", "apps", "--path", root, "-o", "json", "--git-cache-dir", t.TempDir()})
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
