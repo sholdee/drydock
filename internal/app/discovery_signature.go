@@ -115,7 +115,9 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 // controller.ignore.normalizer.jq.timeout is signed as the parsed duration:
 // it can change the diff of any Application with a jq ignore rule, but it
 // changes no render, so it stays out of renderSettingsSignature and the
-// render cache keys. Provenance is dropped: it names the side's own tree, so
+// render cache keys. controller.diff.server.side is signed the same way, as
+// the parsed switch, because it can change the diff mode of every
+// Application. Provenance is dropped: it names the side's own tree, so
 // identical settings in two trees would otherwise always differ.
 func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) {
 	renderSig, err := renderSettingsSignature(settings)
@@ -151,6 +153,12 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	// change.
 	jqTimeout := config.ParseIgnoreNormalizerJQTimeout(settings.IgnoreNormalizerJQTimeout.Value)
 	settings.IgnoreNormalizerJQTimeout = config.Value[string]{}
+	// The controller-level server-side diff switch changes the diff mode of
+	// every Application that does not set ServerSideDiff=false, so it is
+	// signed as the parsed value: "TRUE" and "true", or "" and "yes", are
+	// not a change.
+	controllerServerSideDiff := config.ParseControllerServerSideDiff(settings.ControllerServerSideDiff.Value)
+	settings.ControllerServerSideDiff = config.Value[string]{}
 	data, err := json.Marshal(settings)
 	if err != nil {
 		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)
@@ -171,6 +179,9 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	}
 	if generation.SubmodulesDisabled {
 		signed = append(signed, "appset-submodules-disabled")
+	}
+	if controllerServerSideDiff {
+		signed = append(signed, "controller-server-side-diff")
 	}
 	data, err = json.Marshal(signed)
 	if err != nil {

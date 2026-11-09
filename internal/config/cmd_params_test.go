@@ -20,7 +20,7 @@ metadata:
 data:
   reposerver.plugin.use.manifest.generate.paths: "true"
   reposerver.plugin.env: SUPER_SECRET_PLUGIN_VALUE
-  controller.diff.server.side: "true"
+  applicationsetcontroller.enable.scm.providers: "false"
   applicationsetcontroller.policy: create-update
   redis.server: redis:6379
   unknown.runtime.key: SUPER_SECRET_UNKNOWN_VALUE
@@ -43,7 +43,7 @@ data:
 		t.Fatalf("diagnostic message = %q, want exact key classified once", diag.Message)
 	}
 	assertContainsAll(t, diag.Message, []string{
-		"controller.diff.server.side",
+		"applicationsetcontroller.enable.scm.providers",
 		"reposerver.plugin.env",
 		"applicationsetcontroller.policy",
 	})

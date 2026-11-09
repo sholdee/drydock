@@ -38,6 +38,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeBoolCommandParameterDefault(&merged.EnableGitSubmodules, candidate.EnableGitSubmodules, enableGitSubmoduleKey, true)...)
 		diags = append(diags, mergeBoolCommandParameterDefault(&merged.AppSetEnableGitSubmodules, candidate.AppSetEnableGitSubmodules, appSetEnableGitSubmoduleKey, true)...)
 		diags = append(diags, mergeIgnoreNormalizerJQTimeout(&merged, candidate)...)
+		diags = append(diags, mergeBoolCommandParameter(&merged.ControllerServerSideDiff, candidate.ControllerServerSideDiff, controllerServerSideDiffKey)...)
 		merged.CommandParametersFound = merged.CommandParametersFound || candidate.CommandParametersFound
 		merged.ArgoCDConfigMapFound = merged.ArgoCDConfigMapFound || candidate.ArgoCDConfigMapFound
 		diags = append(diags, mergeKustomizeVersions(&merged, candidate)...)
@@ -166,6 +167,18 @@ func ParseEnableNewGitFileGlobbing(value string) bool {
 // as the Argo CD v3.6.1 repo-server reads it, through env.ParseBoolFromEnv
 // with the default false.
 func ParseIncludeHiddenDirectories(value string) bool {
+	return parseBoolFromEnv(value, false)
+}
+
+// ParseControllerServerSideDiff reads controller.diff.server.side as the
+// Argo CD v3.6.1 application controller reads it: the environment variable
+// ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF gives the default of the
+// --server-side-diff-enabled flag through env.ParseBoolFromEnv with the
+// default false
+// (cmd/argocd-application-controller/commands/argocd_application_controller.go:299).
+// So only "true" in any case turns server-side diff on for every
+// Application. The values "1", "yes", " true" and "" do not.
+func ParseControllerServerSideDiff(value string) bool {
 	return parseBoolFromEnv(value, false)
 }
 

@@ -543,8 +543,11 @@ whole object on both sides, as `.` does, and the Application uses the
 client-side diff. Argo CD then fails the comparison of the Application. When
 the expression removes the object on one side only, Argo CD and drydock show a
 change with `null` on that side instead. With server-side diff, both sides
-`null` compare as unchanged. Fix the jq expression so that it removes a field,
-not the object.
+`null` compare as unchanged. The `ServerSideDiff=true` compare option, the
+`ServerSideApply=true` sync option, or `controller.diff.server.side: "true"` in
+`argocd-cmd-params-cm` turns on server-side diff, unless the Application has
+the `ServerSideDiff=false` compare option. Fix the jq expression so that it
+removes a field, not the object.
 
 `diff.known-type-skipped` is an advisory warning. A known type failed to
 normalize a field of a changed resource that the diff shows. The known type is

@@ -603,12 +603,18 @@ drydock render behavior. There are seven exceptions:
   the Git generators see submodule content. Both keys read `false` in any
   case as off, and any other value as on.
 
-drydock also applies one key to diffs:
+drydock also applies two keys to diffs:
 
 - `controller.ignore.normalizer.jq.timeout`: the time one jq ignore-rule
   deletion may run before drydock skips it, as the Argo CD controller does.
   drydock reads it as the controller does: a duration such as `1500ms` or
   `2d`. An empty, zero, negative or unparseable value means 1 second.
+- `controller.diff.server.side`: when it is `true`, drydock compares every
+  Application with the rules of server-side diff, as the Argo CD controller
+  does. An Application with the `ServerSideDiff=false` compare option still
+  uses the client-side diff. The controller reads `true` in any case as on,
+  and any other value, such as `1` or `yes`, as off. See
+  [Local Diffs](/workflows/local-diffs/).
 
 The repository can install Argo CD from the argo-cd Helm chart. Then drydock
 reads these keys from the rendered `argocd-cmd-params-cm`, which the chart

@@ -71,6 +71,8 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	"ResourceCustomizations": settingsRenderAll,
 	// The jq timeout of every jq ignore rule.
 	"IgnoreNormalizerJQTimeout": settingsRenderAll,
+	// The diff mode of every Application without ServerSideDiff=false.
+	"ControllerServerSideDiff": settingsRenderAll,
 	// Which Applications and ApplicationSets Argo CD reconciles at all
 	// (namespaceGate).
 	"CommandParametersFound":      settingsRenderAll,
@@ -296,6 +298,7 @@ var nonZeroOverrides = map[string]any{
 	"ArgoSettings.EnableGitSubmodules.Value":       "false",
 	"ArgoSettings.AppSetEnableGitSubmodules.Value": "false",
 	"ArgoSettings.IgnoreNormalizerJQTimeout.Value": "5s",
+	"ArgoSettings.ControllerServerSideDiff.Value":  "true",
 	// Only a known key with a value other than "true" turns a tool off.
 	"ArgoSettings.SourceTypeEnable{}":      config.HelmEnableKey,
 	"ArgoSettings.RepoServerHelmNamespace": &config.Value[string]{Value: "argocd"},

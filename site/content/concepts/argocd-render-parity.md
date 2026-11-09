@@ -90,6 +90,16 @@ Application changes its own rules in the second commit, and Argo CD must use
 the new rules. One Application has a jq rule that does not parse. Argo CD
 must fail its comparison, and drydock must fail its diff.
 
+A second pair of tagged commits checks the controller-level switch
+`controller.diff.server.side` in `argocd-cmd-params-cm`. The smoke turns it
+on and restarts the application controller. One Application has no diff
+option, so Argo CD compares it with server-side diff. Another Application has
+the `ServerSideDiff=false` compare option, so Argo CD compares it with the
+client-side diff. In the second commit, a jq rule removes a whole ConfigMap.
+Argo CD and drydock must hide that change for the first Application, and both
+must fail the comparison of the second. The smoke then turns the switch off
+again.
+
 ## Covered Areas
 
 | Area | Covered examples |
@@ -108,7 +118,7 @@ must fail its comparison, and drydock must fail its diff.
 | Config management plugins | Named CMP sidecar with no `discover` block against a trusted `engine: exec` policy: the `ARGOCD_APP_*` build environment, `spec.source.plugin.env` delivered as `ARGOCD_ENV_<name>` after build-environment substitution and never under its bare name, the exact `ARGOCD_APP_PARAMETERS` JSON, and the `PARAM_*` surface with no extra names, plugin output read with `kube.SplitYAML` (an empty object `{}` fails the source) |
 | Build environment revision | `ARGOCD_APP_REVISION`, `ARGOCD_APP_REVISION_SHORT`, and `ARGOCD_APP_REVISION_SHORT_8` resolved per source and substituted into Helm parameters, Kustomize `commonAnnotations` and `commonLabels`, Jsonnet extVars and TLAs, and a config management plugin environment: the commit SHA of a Git source (drydock maps the fixture repository to the Git repository that the served bare repository is cloned from, so both sides see the same commit), the manifest digest of an OCI artifact source, the chart version of a Helm repository chart, one revision per rendered source in a multi-source Application with a `$ref` source, and an annotated tag that gives the peeled commit SHA in both a multi-source and a single-source Application |
 | Tracking and resources | Argo CD tracking metadata, repeated-resource last-wins behavior, CRDs excluded from tracking metadata, hook-annotated resources excluded from the manifests view across all source types (helm test hooks, Argo CD sync hooks; `crd-install` kept by the hook rules, although `helm template` drops it from Helm output) but still validated against AppProject resource policy, as Argo CD validates hook tasks at sync time and delete hooks at deletion |
-| Diff normalization | Argo CD sync status after a change between two commits: Application `jsonPointers` (including a pointer that is not valid and only warns), `jqPathExpressions` with a select, a `jq` expression that fails to run and is skipped, a `jq` expression that does not parse and fails the comparison, rules that change with the commit, `managedFieldsManagers` that own no field, argocd-cm split keys (a core kind without a slash, `all`) and the block form, `ignoreAggregatedRoles`, and the `argocd.argoproj.io/ignore-differences` annotation read from the target commit with JSON-patch path rules, under server-side diff and the client-side diff |
+| Diff normalization | Argo CD sync status after a change between two commits: Application `jsonPointers` (including a pointer that is not valid and only warns), `jqPathExpressions` with a select, a `jq` expression that fails to run and is skipped, a `jq` expression that does not parse and fails the comparison, rules that change with the commit, `managedFieldsManagers` that own no field, argocd-cm split keys (a core kind without a slash, `all`) and the block form, `ignoreAggregatedRoles`, and the `argocd.argoproj.io/ignore-differences` annotation read from the target commit with JSON-patch path rules, under server-side diff and the client-side diff, and the controller-level switch `controller.diff.server.side` with and without the `ServerSideDiff=false` compare option |
 
 ## AppProject Policy Check
 

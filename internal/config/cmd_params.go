@@ -74,6 +74,15 @@ const appSetEnableGitSubmoduleKey = "applicationsetcontroller.enable.git.submodu
 // and manifests/install.yaml:36973-36976).
 const ignoreNormalizerJQTimeoutKey = "controller.ignore.normalizer.jq.timeout"
 
+// controllerServerSideDiffKey sets the application controller flag
+// --server-side-diff-enabled through the environment variable
+// ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF (Argo CD v3.6.1
+// cmd/argocd-application-controller/commands/argocd_application_controller.go:299
+// and manifests/install.yaml:36967-36972). When it is true, the controller
+// compares every Application with server-side diff, unless the Application
+// has the ServerSideDiff=false compare option (controller/state.go:1184-1191).
+const controllerServerSideDiffKey = "controller.diff.server.side"
+
 // applicationNamespacesKey sets the application controller flag
 // --application-namespaces through the environment variable
 // ARGOCD_APPLICATION_NAMESPACES (Argo CD v3.6.1
@@ -251,9 +260,9 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 //     applicationsetcontroller.enable.progressive.syncs,
 //     applicationsetcontroller.enable.new.git.file.globbing,
 //     reposerver.include.hidden.directories,
-//     reposerver.enable.git.submodule, and
-//     applicationsetcontroller.enable.git.submodule with
-//     env.ParseBoolFromEnv,
+//     reposerver.enable.git.submodule,
+//     applicationsetcontroller.enable.git.submodule, and
+//     controller.diff.server.side with env.ParseBoolFromEnv,
 //     which compares the raw value;
 //   - controller.ignore.normalizer.jq.timeout with env.ParseDurationFromEnv;
 //   - application.namespaces and applicationsetcontroller.namespaces with
@@ -276,6 +285,8 @@ func applyCommandParameterValue(settings *ArgoSettings, key string, value Value[
 		settings.AppSetEnableGitSubmodules = value
 	case ignoreNormalizerJQTimeoutKey:
 		settings.IgnoreNormalizerJQTimeout = value
+	case controllerServerSideDiffKey:
+		settings.ControllerServerSideDiff = value
 	case applicationNamespacesKey:
 		settings.ApplicationNamespaces = value
 	case applicationSetNamespacesKey:
@@ -314,13 +325,12 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			classification: CommandParameterRendered,
 			valueMode:      commandParameterSanitizedValue,
 		}
-	case ignoreNormalizerJQTimeoutKey:
+	case ignoreNormalizerJQTimeoutKey, controllerServerSideDiffKey:
 		return commandParameterClassification{
 			classification: CommandParameterDiffed,
 			valueMode:      commandParameterSanitizedValue,
 		}
-	case "controller.diff.server.side",
-		"applicationsetcontroller.enable.scm.providers",
+	case "applicationsetcontroller.enable.scm.providers",
 		"applicationsetcontroller.allowed.scm.providers",
 		"applicationsetcontroller.enable.tokenref.strict.mode":
 		return commandParameterClassification{

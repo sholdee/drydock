@@ -391,6 +391,45 @@ func TestSettingsSignaturesSignJQTimeoutForChangedOnlyOnly(t *testing.T) {
 	}
 }
 
+// controller.diff.server.side changes diffs, not renders, like the jq
+// timeout. The changed-only settings signature sees the parsed switch, so
+// spellings that the controller reads the same are not a change, and the
+// signature of settings without the key does not change.
+func TestSettingsSignaturesSignControllerServerSideDiffForChangedOnlyOnly(t *testing.T) {
+	signatures := func(value string, set bool) (string, string) {
+		t.Helper()
+		settings := config.DefaultSettings()
+		if set {
+			settings.ControllerServerSideDiff = config.Value[string]{Value: value}
+		}
+		renderSig, err := renderSettingsSignature(settings)
+		if err != nil {
+			t.Fatalf("renderSettingsSignature() error = %v", err)
+		}
+		changedOnlySig, err := changedOnlySettingsSignature(settings)
+		if err != nil {
+			t.Fatalf("changedOnlySettingsSignature() error = %v", err)
+		}
+		return renderSig, changedOnlySig
+	}
+	defaultRender, defaultChangedOnly := signatures("", false)
+	onRender, onChangedOnly := signatures("true", true)
+	if onRender != defaultRender {
+		t.Fatal("render signature changed with controller.diff.server.side, want it to stay out of render cache keys")
+	}
+	if onChangedOnly == defaultChangedOnly {
+		t.Fatal("changed-only settings signature ignores controller.diff.server.side")
+	}
+	for _, value := range []string{"false", "1", "yes", ""} {
+		if _, sig := signatures(value, true); sig != defaultChangedOnly {
+			t.Fatalf("changed-only signature of %q differs from the default, want the same parsed switch to match", value)
+		}
+	}
+	if _, sig := signatures("TRUE", true); sig != onChangedOnly {
+		t.Fatal(`changed-only signatures of "TRUE" and "true" differ, want the same parsed switch to match`)
+	}
+}
+
 // drydock parses jq ignore rules with the gojq version that Argo CD v3.6.1
 // uses (v0.12.19). That version cannot parse `?//`, the alternative
 // destructuring operator, so Argo CD fails the comparison of this
@@ -594,13 +633,15 @@ func TestOrchestratorDiffAppsChangedOnlyUsesCurrentSideRules(t *testing.T) {
 }
 
 // applicationServerSideDiff follows shouldUseServerSideDiff
-// (controller/state.go:1184-1191) without the controller-level switch.
+// (controller/state.go:1184-1191), with the controller-level switch
+// controller.diff.server.side as controllerLevel.
 func TestApplicationServerSideDiff(t *testing.T) {
 	for _, tt := range []struct {
-		name        string
-		annotation  string
-		syncOptions []string
-		want        bool
+		name            string
+		annotation      string
+		syncOptions     []string
+		controllerLevel bool
+		want            bool
 	}{
 		{name: "default"},
 		{name: "ServerSideDiff=true annotation alone", annotation: "ServerSideDiff=true", want: true},
@@ -610,6 +651,11 @@ func TestApplicationServerSideDiff(t *testing.T) {
 		{name: "comma-separated annotation with spaces", annotation: "IgnoreExtraneous, ServerSideDiff=true", want: true},
 		{name: "comma-separated false wins", annotation: "ServerSideDiff=true,ServerSideDiff=false", syncOptions: []string{"ServerSideApply=true"}},
 		{name: "other options only", annotation: "IgnoreExtraneous", syncOptions: []string{"CreateNamespace=true"}},
+		{name: "controller switch alone", controllerLevel: true, want: true},
+		{name: "controller switch with other options", annotation: "IgnoreExtraneous", syncOptions: []string{"CreateNamespace=true"}, controllerLevel: true, want: true},
+		{name: "ServerSideDiff=false wins over the controller switch", annotation: "ServerSideDiff=false", controllerLevel: true},
+		{name: "ServerSideDiff=false wins over the controller switch and ServerSideApply=true", annotation: "IgnoreExtraneous,ServerSideDiff=false", syncOptions: []string{"ServerSideApply=true"}, controllerLevel: true},
+		{name: "ServerSideApply=false does not turn off the controller switch", syncOptions: []string{"ServerSideApply=false"}, controllerLevel: true, want: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			application := argoappv1.Application{}
@@ -619,8 +665,149 @@ func TestApplicationServerSideDiff(t *testing.T) {
 			if tt.syncOptions != nil {
 				application.Spec.SyncPolicy = &argoappv1.SyncPolicy{SyncOptions: tt.syncOptions}
 			}
-			if got := applicationServerSideDiff(application); got != tt.want {
+			if got := applicationServerSideDiff(application, tt.controllerLevel); got != tt.want {
 				t.Fatalf("applicationServerSideDiff() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+// writeCommandParameters writes an argocd-cmd-params-cm with data to root.
+func writeCommandParameters(t *testing.T, root, data string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "argocd-cmd-params-cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argocd-cmd-params-cm\n  namespace: argocd\ndata:\n"+data)
+}
+
+// With controller.diff.server.side "true", the Argo CD v3.6.1 controller
+// compares every Application with server-side diff unless it has the
+// ServerSideDiff=false compare option (controller/state.go:1184-1191). The
+// controller reads the key with env.ParseBoolFromEnv, so "TRUE" turns it on
+// and "1" does not. The current side's value decides, as for the other
+// diff settings. A jq rule that removes the whole object shows the mode: the
+// client-side diff fails the comparison, and server-side diff hides the
+// change.
+func TestOrchestratorDiffAppsUsesControllerServerSideDiff(t *testing.T) {
+	removeAll := "  ignoreDifferences:\n    - kind: ConfigMap\n      jqPathExpressions:\n        - .\n"
+	for _, tt := range []struct {
+		name        string
+		left, right string
+		optOut      bool
+		wantFailure bool
+	}{
+		{name: "no switch", wantFailure: true},
+		{name: "switch on", left: "true", right: "true"},
+		{name: "switch in upper case", left: "TRUE", right: "TRUE"},
+		{name: "switch 1 is not true", left: "1", right: "1", wantFailure: true},
+		{name: "switch off", left: "false", right: "false", wantFailure: true},
+		{name: "ServerSideDiff=false wins over the switch", left: "true", right: "true", optOut: true, wantFailure: true},
+		{name: "switch turned on by the change", left: "false", right: "true"},
+		{name: "switch turned off by the change", left: "true", right: "false", wantFailure: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			left := filepath.Join(root, "left")
+			right := filepath.Join(root, "right")
+			for _, side := range []struct {
+				root, value, switchValue string
+			}{{left, "a", tt.left}, {right, "b", tt.right}} {
+				writeConfigMapApp(t, side.root, "broken", side.value, removeAll)
+				writeConfigMapApp(t, side.root, "healthy", side.value, "")
+				if tt.optOut {
+					annotateCompareOptions(t, side.root, "broken", "ServerSideDiff=false")
+				}
+				if side.switchValue != "" {
+					writeCommandParameters(t, side.root, "  controller.diff.server.side: \""+side.switchValue+"\"\n")
+				}
+			}
+
+			result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3})
+			failures := diagnosticsWithCode(result.Diagnostics, diffComparisonFailedCode)
+			if tt.wantFailure {
+				if err == nil || len(failures) != 1 || !strings.Contains(failures[0].Message, "Application argocd/broken:") {
+					t.Fatalf("DiffApps() error = %v, %s diagnostics = %#v, want one for Application argocd/broken", err, diffComparisonFailedCode, failures)
+				}
+			} else if err != nil || len(failures) != 0 {
+				t.Fatalf("DiffApps() error = %v, %s diagnostics = %#v, want none", err, diffComparisonFailedCode, failures)
+			}
+			if len(result.Results) != 1 || result.Results[0].Parent.Name != "healthy" {
+				t.Fatalf("Results = %#v, want only the change of Application healthy", result.Results)
+			}
+			for _, diag := range result.Diagnostics {
+				if diag.Code == "settings.metadata-only" {
+					t.Fatalf("diagnostic %#v, want no runtime-only warning for controller.diff.server.side", diag)
+				}
+			}
+		})
+	}
+}
+
+// annotateCompareOptions adds the argocd.argoproj.io/compare-options
+// annotation to Application <name> that writeConfigMapApp wrote.
+func annotateCompareOptions(t *testing.T, root, name, options string) {
+	t.Helper()
+	path := filepath.Join(root, "apps", name+".yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	annotated := strings.Replace(string(data), "  namespace: argocd\n", "  namespace: argocd\n  annotations:\n    argocd.argoproj.io/compare-options: "+options+"\n", 1)
+	writeTestFile(t, path, annotated)
+}
+
+// Under server-side diff, Argo CD runs no ignore rule on a created or
+// deleted resource (gitops-engine pkg/diff/diff.go Diff and
+// handleResourceCreateOrDeleteDiff). With controller.diff.server.side
+// "true", that holds for an Application without any diff option, so a new
+// ConfigMap shows the field that its Application's rule hides from a
+// changed one. With ServerSideDiff=false, or without the switch, the
+// client-side diff removes it. Argo CD compares a live object that the new
+// desired state no longer has under the current settings, so when the switch
+// changes between the two sides, the deleted resource follows the current
+// (right) side's value too.
+func TestOrchestratorDiffAppsControllerServerSideDiffCreatedAndDeletedResources(t *testing.T) {
+	rule := "  ignoreDifferences:\n    - kind: ConfigMap\n      jsonPointers:\n        - /data/ignored\n"
+	for _, tt := range []struct {
+		name        string
+		left, right string
+		optOut      bool
+		wantShown   bool
+	}{
+		{name: "client-side diff"},
+		{name: "controller switch", left: "true", right: "true", wantShown: true},
+		{name: "controller switch with ServerSideDiff=false", left: "true", right: "true", optOut: true},
+		{name: "switch turned off by the change", left: "true", right: "false"},
+		{name: "switch turned on by the change", left: "false", right: "true", wantShown: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			left := filepath.Join(root, "left")
+			right := filepath.Join(root, "right")
+			for _, side := range []struct {
+				root, switchValue string
+			}{{left, tt.left}, {right, tt.right}} {
+				writeConfigMapApp(t, side.root, "demo", "same", rule)
+				if tt.optOut {
+					annotateCompareOptions(t, side.root, "demo", "ServerSideDiff=false")
+				}
+				if side.switchValue != "" {
+					writeCommandParameters(t, side.root, "  controller.diff.server.side: \""+side.switchValue+"\"\n")
+				}
+			}
+			writeTestFile(t, filepath.Join(left, "manifests", "demo", "deleted.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: deleted\ndata:\n  ignored: deleted-value\n  kept: same\n")
+			writeTestFile(t, filepath.Join(right, "manifests", "demo", "created.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: created\ndata:\n  ignored: created-value\n  kept: same\n")
+
+			result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3})
+			if err != nil {
+				t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
+			}
+			if len(result.Results) != 2 {
+				t.Fatalf("Results = %#v, want the created and the deleted ConfigMap", result.Results)
+			}
+			for _, res := range result.Results {
+				value := res.Resource.Name + "-value"
+				if shown := strings.Contains(res.Diff, value); shown != tt.wantShown {
+					t.Fatalf("diff of %s shows %q = %t, want %t:\n%s", res.Resource.Name, value, shown, tt.wantShown, res.Diff)
+				}
 			}
 		})
 	}

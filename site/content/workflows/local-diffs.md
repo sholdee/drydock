@@ -180,10 +180,22 @@ fails that comparison. With server-side diff, the resource then compares as
 unchanged. When the object is removed on one side only, the diff shows a change
 with `null` on that side.
 
-For an Application that uses server-side diff, through the `ServerSideDiff=true`
-compare option or the `ServerSideApply=true` sync option, a new or deleted
-resource shows the whole object, as in Argo CD: ignore rules, `status` removal,
-and known types do not apply to it. A changed resource still uses them.
+An Application uses server-side diff when it has the `ServerSideDiff=true`
+compare option or the `ServerSideApply=true` sync option. Every Application
+also uses it when the `argocd-cmd-params-cm` key `controller.diff.server.side`
+is `true`. The `ServerSideDiff=false` compare option turns it off in all cases.
+This is the rule of the Argo CD v3.6.1 controller. The controller reads the key
+only when it starts. The argo-cd Helm chart restarts it after a change through
+its checksum annotation, but with a plain `install.yaml` the live mode stays the
+old one until the controller restarts. drydock reads the key from
+the `argocd-cmd-params-cm` of the current side, committed or rendered from the
+argo-cd Helm chart `configs.params`. It does not see a switch that only the
+controller Deployment or StatefulSet sets, through `--server-side-diff-enabled`
+or a literal environment variable.
+
+For an Application that uses server-side diff, a new or deleted resource shows
+the whole object, as in Argo CD: ignore rules, `status` removal, and known
+types do not apply to it. A changed resource still uses them.
 
 Every `jsonPointers` entry follows the path rules of the JSON-patch library
 that Argo CD applies it with, the same rules as annotation pointers below. A

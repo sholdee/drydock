@@ -67,7 +67,7 @@ func normalizationFor(application argoappv1.Application, id manifest.Identity, s
 		normalization.ApplicationRules = appendIgnoreRule(normalization.ApplicationRules, rule.JSONPointers, rule.JQPathExpressions)
 		normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, rule.ManagedFieldsManagers...)
 	}
-	normalization.ServerSideDiff = applicationServerSideDiff(application)
+	normalization.ServerSideDiff = applicationServerSideDiff(application, config.ParseControllerServerSideDiff(settings.ControllerServerSideDiff.Value))
 	global := globalNormalizationFor(settings, id)
 	normalization.CustomizationRules = global.CustomizationRules
 	normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, global.ManagedFieldsManagers...)
@@ -78,15 +78,15 @@ func normalizationFor(application argoappv1.Application, id manifest.Identity, s
 // applicationServerSideDiff reports whether Argo CD v3.6.1 compares the
 // Application with server-side diff, as shouldUseServerSideDiff does
 // (controller/state.go:1184-1191): an explicit ServerSideDiff=false
-// compare option turns it off, and a ServerSideDiff=true compare option or
-// the ServerSideApply=true sync option turns it on. drydock does not read
-// the controller-level switch controller.diff.server.side, which turns it on
-// for every Application; it reports that key as runtime-only.
-func applicationServerSideDiff(application argoappv1.Application) bool {
+// compare option turns it off. Otherwise the controller-level switch
+// controller.diff.server.side (controllerLevel), a ServerSideDiff=true
+// compare option, or the ServerSideApply=true sync option turns it on.
+func applicationServerSideDiff(application argoappv1.Application, controllerLevel bool) bool {
 	if resourceutil.HasAnnotationOption(&application, common.AnnotationCompareOptions, "ServerSideDiff=false") {
 		return false
 	}
-	return resourceutil.HasAnnotationOption(&application, common.AnnotationCompareOptions, "ServerSideDiff=true") ||
+	return controllerLevel ||
+		resourceutil.HasAnnotationOption(&application, common.AnnotationCompareOptions, "ServerSideDiff=true") ||
 		(application.Spec.SyncPolicy != nil && application.Spec.SyncPolicy.SyncOptions.HasOption("ServerSideApply=true"))
 }
 
