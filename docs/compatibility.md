@@ -2768,12 +2768,25 @@ Supported:
   v3.6.1 requires (v0.12.19). A newer gojq accepts some expressions that
   Argo CD rejects, such as `.data.ignored?//empty`.
 - drydock reads the diff mode of each Application as Argo CD v3.6.1 does
-  (`controller/state.go`): the `ServerSideDiff=true` or
-  `ServerSideDiff=false` compare option and the `ServerSideApply=true` sync
-  option. drydock does not read the controller-level switch
-  `controller.diff.server.side`, which turns on server-side diff for every
-  Application, so with that switch drydock treats such an Application as
-  using the client-side diff. The mode decides the next two points.
+  (`shouldUseServerSideDiff` in `controller/state.go`). The
+  `ServerSideDiff=false` compare option turns server-side diff off, and it
+  wins over everything else. Otherwise, server-side diff is on when the
+  `argocd-cmd-params-cm` key `controller.diff.server.side` is on, when the
+  Application has the `ServerSideDiff=true` compare option, or when it has
+  the `ServerSideApply=true` sync option. The application controller reads
+  the key through `ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF` with
+  `env.ParseBoolFromEnv`. So `true` in any case turns it on, and every other
+  value, such as `1`, `yes`, ` true`, or an empty value, leaves it off.
+  drydock uses the value of the current side, as for the other diff
+  settings. drydock reads the key from a committed or rendered
+  `argocd-cmd-params-cm`, also from the one that the argo-cd Helm chart
+  makes from `configs.params`. It does not read the application controller
+  StatefulSet or Deployment. So drydock does not see the switch when the
+  chart sets it only through `controller.extraArgs`
+  (`--server-side-diff-enabled`) or as a literal value in `controller.env`.
+  Earlier drydock releases read the key as metadata only, gave a
+  runtime-only warning for it, and used the client-side diff for an
+  Application that had no diff option. The mode decides the next two points.
 - A resource that only one side has, a created or a deleted resource,
   shows as a change in both modes. Under server-side diff, Argo CD skips the
   whole ignore normalizer and the known-types normalizer for it
@@ -2993,6 +3006,14 @@ Supported:
   conflict. The key changes no render, so it is not in the render cache
   keys. It is in the changed-only settings signature, because a new
   timeout can change the diff of every Application with a jq rule.
+  drydock applies `controller.diff.server.side` to diffs too: it decides
+  the diff mode of every Application that does not have the
+  `ServerSideDiff=false` compare option (see "Diff, Images, And Output").
+  drydock parses it as the controller does, with `env.ParseBoolFromEnv`. Two
+  settings sources with different parsed values conflict. The key changes no
+  render, so it is not in the render cache keys. It is in the changed-only
+  settings signature as the parsed value, because the mode can change the
+  diff of every Application.
 - Custom health Lua validation in `test apps` and `test app`, executed offline
   against rendered desired manifests. It reports Lua runtime errors and
   invalid status values. A `deletionMessage` (Argo CD v3.6.1) applies only to

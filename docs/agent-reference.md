@@ -134,6 +134,14 @@ long one jq ignore-rule deletion may run. Keep it out of the render settings
 signature and the render cache keys. It is in the changed-only settings
 signature as the parsed duration.
 
+`controller.diff.server.side` changes only diffs too: it turns on server-side
+diff for every Application without the `ServerSideDiff=false` compare option,
+as `shouldUseServerSideDiff` does (`applicationServerSideDiff` in
+`internal/app/diff_normalization.go`). Parse it with
+`config.ParseControllerServerSideDiff`, which copies `env.ParseBoolFromEnv`.
+Keep it out of the render settings signature and the render cache keys. It is
+in the changed-only settings signature as the parsed value.
+
 Repository Secrets may contribute non-sensitive metadata such as `url`, `type`,
 `name`, `project`, and `enableOCI`. They must not retain username, password,
 bearer tokens, SSH keys, TLS material, or other credential fields.

@@ -556,6 +556,33 @@ func TestSettingsFromRenderedArgoCDInstallCommandParameters(t *testing.T) {
 	}
 }
 
+// configs.params can set controller.diff.server.side. The chart renders the
+// Helm boolean as "true" in argocd-cmd-params-cm, and the controller reads
+// it from there through ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF.
+// drydock applies it and gives no runtime-only warning for it.
+func TestSettingsFromRenderedArgoCDInstallControllerServerSideDiff(t *testing.T) {
+	for _, shape := range argoCDInstallShapes() {
+		t.Run(shape.name, func(t *testing.T) {
+			root := t.TempDir()
+			shape.write(t, root, []string{"values.yaml"})
+			writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  params:
+    controller.diff.server.side: true
+`)
+
+			result := listArgoCDInstallSettings(t, root, shape, fakeArgoCDChartAcquirer(t))
+			if got := result.Settings.ControllerServerSideDiff.Value; got != "true" {
+				t.Fatalf("ControllerServerSideDiff = %q, want configs.params value", got)
+			}
+			for _, diag := range result.Diagnostics {
+				if diag.Code == "settings.metadata-only" {
+					t.Fatalf("diagnostic %#v, want no runtime-only warning", diag)
+				}
+			}
+		})
+	}
+}
+
 // When drydock cannot render the install, it reads each values file on its
 // own as before, and it says so with a warning.
 func TestSettingsFromArgoCDInstallFallsBackToValuesFilesWhenRenderFails(t *testing.T) {

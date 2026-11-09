@@ -258,6 +258,13 @@ type ArgoSettings struct {
 	// controller.ignore.normalizer.jq.timeout, as written. It limits how long
 	// one jq ignore-rule deletion may run. See ParseIgnoreNormalizerJQTimeout.
 	IgnoreNormalizerJQTimeout Value[string] `json:"ignoreNormalizerJQTimeout,omitempty" yaml:"ignoreNormalizerJQTimeout,omitempty"`
+	// ControllerServerSideDiff is the argocd-cmd-params-cm key
+	// controller.diff.server.side, as written. The application controller
+	// reads "true" or "false" in any case, and any other value as false.
+	// When it is true, the controller compares every Application with
+	// server-side diff unless the Application has the ServerSideDiff=false
+	// compare option. See ParseControllerServerSideDiff.
+	ControllerServerSideDiff Value[string] `json:"controllerServerSideDiff,omitempty" yaml:"controllerServerSideDiff,omitempty"`
 	// CommandParametersFound reports that drydock read an
 	// argocd-cmd-params-cm ConfigMap. Only then do ApplicationNamespaces and
 	// ApplicationSetNamespaces decide which Applications and
