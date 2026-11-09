@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -118,6 +119,12 @@ spec:
               configMapKeyRef:
                 name: argocd-cmd-params-cm
                 key: application.namespaces
+                optional: true
+          - name: ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF
+            valueFrom:
+              configMapKeyRef:
+                name: argocd-cmd-params-cm
+                key: controller.diff.server.side
                 optional: true
           - name: ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT
             valueFrom:
@@ -734,5 +741,57 @@ repoServer:
 	}
 	if got := workloadWarnings(result.Diagnostics, "ConfigMap repo-limits without the key symlinks"); len(got) != 1 {
 		t.Errorf("warnings = %#v, want one for the reference that is not optional", got)
+	}
+}
+
+// controller.extraArgs can turn on server-side diff with
+// --server-side-diff-enabled, which wins over
+// ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF. The diff then follows it:
+// a jq rule that removes the whole ConfigMap fails the client-side
+// comparison, and server-side diff hides the change. A literal
+// controller.env value comes after the argocd-cmd-params-cm reference in
+// the StatefulSet, so it wins too.
+func TestOrchestratorDiffAppsServerSideDiffFromControllerWorkload(t *testing.T) {
+	removeAll := "  ignoreDifferences:\n    - kind: ConfigMap\n      jqPathExpressions:\n        - .\n"
+	for _, tc := range []struct {
+		name        string
+		values      string
+		wantFailure bool
+	}{
+		{name: "no switch", values: "controller:\n  extraArgs: []\n", wantFailure: true},
+		{name: "extraArgs flag", values: "controller:\n  extraArgs:\n    - --server-side-diff-enabled\n"},
+		{name: "extraArgs flag false wins over configs.params", values: "configs:\n  params:\n    controller.diff.server.side: true\ncontroller:\n  extraArgs:\n    - --server-side-diff-enabled=false\n", wantFailure: true},
+		{name: "controller.env literal", values: "controller:\n  env:\n    - name: ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF\n      value: \"true\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			left := filepath.Join(root, "left")
+			right := filepath.Join(root, "right")
+			for _, side := range []struct{ root, value string }{{left, "a"}, {right, "b"}} {
+				writeKustomizeArgoCDInstall(t, side.root, []string{"values.yaml"})
+				// The final render of the install needs Helm in kustomize.
+				values := strings.Replace(tc.values, "configs:\n  params:\n", "configs:\n  cm:\n    kustomize.buildOptions: --enable-helm\n  params:\n", 1)
+				if !strings.Contains(values, "kustomize.buildOptions") {
+					values = "configs:\n  cm:\n    kustomize.buildOptions: --enable-helm\n" + values
+				}
+				writeTestFile(t, filepath.Join(side.root, "argocd", "values.yaml"), values)
+				writeConfigMapApp(t, side.root, "broken", side.value, removeAll)
+				writeConfigMapApp(t, side.root, "healthy", side.value, "")
+			}
+			result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartWithWorkloadsAcquirer(t)}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3, Parallelism: 1})
+			failures := diagnosticsWithCode(result.Diagnostics, diffComparisonFailedCode)
+			if tc.wantFailure {
+				if err == nil || len(failures) != 1 || !strings.Contains(failures[0].Message, "Application argocd/broken:") {
+					t.Fatalf("DiffApps() error = %v, %s diagnostics = %#v, want one for Application argocd/broken", err, diffComparisonFailedCode, failures)
+				}
+				return
+			}
+			if err != nil || len(failures) != 0 {
+				t.Fatalf("DiffApps() error = %v, %s diagnostics = %#v, want none under server-side diff", err, diffComparisonFailedCode, failures)
+			}
+			if len(result.Results) != 1 || result.Results[0].Parent.Name != "healthy" {
+				t.Fatalf("Results = %#v, want only the change of Application healthy", result.Results)
+			}
+		})
 	}
 }

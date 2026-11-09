@@ -189,9 +189,11 @@ only when it starts. The argo-cd Helm chart restarts it after a change through
 its checksum annotation, but with a plain `install.yaml` the live mode stays the
 old one until the controller restarts. drydock reads the key from
 the `argocd-cmd-params-cm` of the current side, committed or rendered from the
-argo-cd Helm chart `configs.params`. It does not see a switch that only the
-controller Deployment or StatefulSet sets, through `--server-side-diff-enabled`
-or a literal environment variable.
+argo-cd Helm chart `configs.params`. It also reads the application controller
+Deployment or StatefulSet of the install, so it sees a switch that
+`--server-side-diff-enabled` or a literal environment variable sets, for
+example through the chart's `controller.extraArgs` or `controller.env`. The
+flag wins over the variable.
 
 For an Application that uses server-side diff, a new or deleted resource shows
 the whole object, as in Argo CD: ignore rules, `status` removal, and known

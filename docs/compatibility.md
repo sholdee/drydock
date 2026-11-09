@@ -1754,6 +1754,7 @@ Supported:
   | `reposerver.include.hidden.directories` | repo-server | `ARGOCD_REPO_SERVER_INCLUDE_HIDDEN_DIRECTORIES` | `--include-hidden-directories` |
   | `reposerver.enable.git.submodule` | repo-server | `ARGOCD_GIT_MODULES_ENABLED` | none |
   | `application.namespaces` | application controller | `ARGOCD_APPLICATION_NAMESPACES` | `--application-namespaces` |
+  | `controller.diff.server.side` | application controller | `ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF` | `--server-side-diff-enabled` |
   | `controller.ignore.normalizer.jq.timeout` | application controller | `ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT` | `--ignore-normalizer-jq-execution-timeout-seconds` |
   | `applicationsetcontroller.namespaces` | ApplicationSet controller | `ARGOCD_APPLICATIONSET_CONTROLLER_NAMESPACES` | `--applicationset-namespaces` |
   | `applicationsetcontroller.enable.progressive.syncs` | ApplicationSet controller | `ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS` | `--enable-progressive-syncs` |
@@ -1763,8 +1764,8 @@ Supported:
   The flags and variables are in
   `cmd/argocd-repo-server/commands/argocd_repo_server.go:50`, `:264`,
   `:266`, and `:274`,
-  `cmd/argocd-application-controller/commands/argocd_application_controller.go:286`
-  and `:300`, and
+  `cmd/argocd-application-controller/commands/argocd_application_controller.go:286`,
+  `:299`, and `:300`, and
   `cmd/argocd-applicationset-controller/commands/applicationset_controller.go:55`,
   `:316`, `:327`, and `:329`. drydock reads the workload of each program:
   the repo-server Deployment, the application controller StatefulSet or
@@ -2969,10 +2970,14 @@ Supported:
   until the controller restarts, while drydock already uses the new value.
   drydock reads the key from a committed or rendered
   `argocd-cmd-params-cm`, also from the one that the argo-cd Helm chart
-  makes from `configs.params`. It does not read the application controller
-  StatefulSet or Deployment. So drydock does not see the switch when the
-  chart sets it only through `controller.extraArgs`
-  (`--server-side-diff-enabled`) or as a literal value in `controller.env`.
+  makes from `configs.params`. drydock also reads the application
+  controller StatefulSet or Deployment of the install (see "Settings from
+  the Argo CD workloads"). So it sees the switch when the chart sets it
+  through `controller.extraArgs` (`--server-side-diff-enabled`) or as a
+  literal value in `controller.env`. The flag wins over the variable. A
+  flag value goes through `strconv.ParseBool`, as cobra reads it, so
+  `--server-side-diff-enabled=1` turns the switch on, and a value that is
+  not a boolean stops the controller, which drydock reports.
   Earlier drydock releases read the key as metadata only, gave a
   runtime-only warning for it, and used the client-side diff for an
   Application that had no diff option. The mode decides the next two points.

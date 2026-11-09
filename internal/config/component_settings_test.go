@@ -65,6 +65,12 @@ func TestParseComponentArgs(t *testing.T) {
 			want:      []ComponentFlag{{Flag: "enable-progressive-syncs", Value: "true"}},
 		},
 		{
+			name:      "server-side diff flag of the controller",
+			component: ApplicationControllerComponent,
+			args:      []string{"/usr/local/bin/argocd-application-controller", "--server-side-diff-enabled=TRUE"},
+			want:      []ComponentFlag{{Flag: "server-side-diff-enabled", Value: "true"}},
+		},
+		{
 			name:      "string slice flags add their fields",
 			component: ApplicationControllerComponent,
 			args:      []string{"/usr/local/bin/argocd-application-controller", "--application-namespaces=a,b", "--application-namespaces", "c"},
@@ -160,7 +166,7 @@ func TestParseComponentArgsReadsEveryBooleanFlagAsBoolean(t *testing.T) {
 		{
 			component: ApplicationControllerComponent,
 			flags: append(append([]string{"repo-server-plaintext", "repo-server-strict-tls", "otlp-insecure", "persist-resource-health",
-				"dynamic-cluster-distribution-enabled", "server-side-diff-enabled", "hydrator-enabled"}, cacheBool...), kubectlBool...),
+				"dynamic-cluster-distribution-enabled", "hydrator-enabled"}, cacheBool...), kubectlBool...),
 			next: []string{"--application-namespaces", "team-a"},
 		},
 		{

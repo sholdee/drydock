@@ -57,7 +57,7 @@ type ComponentSetting struct {
 // v3.6.1:
 //   - argocd_repo_server.go:50 (ARGOCD_GIT_MODULES_ENABLED, no flag), :264,
 //     :266, and :274;
-//   - argocd_application_controller.go:286 and :300;
+//   - argocd_application_controller.go:286, :299, and :300;
 //   - applicationset_controller.go:55 (ARGOCD_GIT_MODULES_ENABLED, no flag),
 //     :316, :327, and :329.
 var componentSettings = map[ArgoCDComponent][]ComponentSetting{
@@ -69,6 +69,7 @@ var componentSettings = map[ArgoCDComponent][]ComponentSetting{
 	},
 	ApplicationControllerComponent: {
 		{Key: applicationNamespacesKey, Env: "ARGOCD_APPLICATION_NAMESPACES", Flag: "application-namespaces", kind: componentFlagStringSlice},
+		{Key: controllerServerSideDiffKey, Env: "ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF", Flag: "server-side-diff-enabled", kind: componentFlagBool},
 		{Key: ignoreNormalizerJQTimeoutKey, Env: "ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT", Flag: "ignore-normalizer-jq-execution-timeout-seconds", kind: componentFlagDuration},
 	},
 	ApplicationSetControllerComponent: {
@@ -96,7 +97,7 @@ var componentBoolFlags = map[ArgoCDComponent][]string{
 	},
 	ApplicationControllerComponent: {
 		"repo-server-plaintext", "repo-server-strict-tls", "otlp-insecure", "persist-resource-health",
-		"dynamic-cluster-distribution-enabled", "server-side-diff-enabled", "hydrator-enabled",
+		"dynamic-cluster-distribution-enabled", "hydrator-enabled",
 		"redis-use-tls", "redis-insecure-skip-tls-verify", "insecure-skip-tls-verify", "disable-compression", "help",
 	},
 	ApplicationSetControllerComponent: {
@@ -462,6 +463,8 @@ func ComponentSettingValue(settings ArgoSettings, key string) Value[string] {
 		return settings.AppSetEnableGitSubmodules
 	case ignoreNormalizerJQTimeoutKey:
 		return settings.IgnoreNormalizerJQTimeout
+	case controllerServerSideDiffKey:
+		return settings.ControllerServerSideDiff
 	case applicationNamespacesKey:
 		return settings.ApplicationNamespaces
 	case applicationSetNamespacesKey:

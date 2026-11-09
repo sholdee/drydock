@@ -129,7 +129,7 @@ settings signature:
 - `reposerver.allow.oob.symlinks` decides whether a source fails while the
   tree it renders from holds an out-of-bounds symlink.
 
-The ten `argocd-cmd-params-cm` keys that drydock applies
+The eleven `argocd-cmd-params-cm` keys that drydock applies
 (`applyCommandParameterValue`) also come from the Argo CD workloads of the
 install (`applyComponentWorkloadSettings`, `config.ComponentSettings`): the
 repo-server Deployment, the application controller StatefulSet or
