@@ -1,0 +1,12 @@
+# The Argo CD command parameters for the controller-level server-side diff
+# phase. drydock reads this file from the repository at each tag. The smoke
+# sets the same key in the live argocd-cmd-params-cm and restarts the
+# application controller before it applies the Applications. It removes the
+# key and restarts the controller again when the phase ends.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  controller.diff.server.side: "true"

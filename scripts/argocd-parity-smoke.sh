@@ -112,6 +112,29 @@ LIVE_DIFF_WORK=""
 # Set to "true" while the live diff Applications and argocd-cm keys exist.
 # The cleanup trap reads it.
 LIVE_DIFF_STATE_CHANGED="false"
+# The controller-level server-side diff phase reuses the live diff checks.
+# Its Git repository has two tagged commits, built from live-diff-controller-ssd
+# like the live diff repository. The phase sets controller.diff.server.side in
+# the live argocd-cmd-params-cm and restarts the application controller, which
+# reads the key only at startup. drydock reads the same key from
+# settings/argocd-cmd-params-cm.yaml in that repository.
+CONTROLLER_SSD_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/live-diff-controller-ssd.git"
+CONTROLLER_SSD_FIXTURE_PATH="${REPO_ROOT}/testdata/argocd-parity/live-diff-controller-ssd"
+CONTROLLER_SSD_EXPECTED="${CONTROLLER_SSD_FIXTURE_PATH}/expected.yaml"
+CONTROLLER_SSD_REVISION_A="controller-ssd-a"
+CONTROLLER_SSD_REVISION_B="controller-ssd-b"
+CONTROLLER_SSD_NAMESPACES=(parity-controller-ssd parity-controller-ssd-opt-out)
+CONTROLLER_SSD_KEY="controller.diff.server.side"
+# Set by run_controller_ssd_smoke from CONTROLLER_SSD_EXPECTED, as for the
+# live diff phase.
+CONTROLLER_SSD_APPLICATIONS=()
+CONTROLLER_SSD_ERROR_APPLICATIONS=()
+# Set by prepare_live_diff_repo: the local git repo of
+# CONTROLLER_SSD_REPO_URL, which drydock diffs.
+CONTROLLER_SSD_WORK=""
+# Set to "true" while the phase Applications or the live key exist. The
+# cleanup trap reads it.
+CONTROLLER_SSD_STATE_CHANGED="false"
 # The source type gate phase turns Helm, Kustomize, and Jsonnet off in the
 # live argocd-cm and compares the Applications of its fixture repo, which
 # render as plain directories then. drydock reads the same keys from the
@@ -902,6 +925,12 @@ cleanup() {
   if [[ "${LIVE_DIFF_STATE_CHANGED}" == "true" && "${CREATE_CLUSTER}" != "true" && "${KEEP_CLUSTER}" != "true" ]]; then
     remove_live_diff_state >/dev/null 2>&1 || true
   fi
+  # The same for the controller-level server-side diff phase: delete its
+  # Applications, remove controller.diff.server.side, and restart the
+  # application controller.
+  if [[ "${CONTROLLER_SSD_STATE_CHANGED}" == "true" && "${CREATE_CLUSTER}" != "true" && "${KEEP_CLUSTER}" != "true" ]]; then
+    remove_controller_ssd_state >/dev/null 2>&1 || true
+  fi
   # The same for the source type gate phase: on an existing cluster, turn
   # the tools on again unless --keep-cluster keeps the state.
   if [[ "${SOURCE_TYPE_GATES_STATE_CHANGED}" == "true" && "${CREATE_CLUSTER}" != "true" && "${KEEP_CLUSTER}" != "true" ]]; then
@@ -1047,26 +1076,40 @@ prepare_submodule_repos() {
   SUBMODULE_REPO_MAP_ARGS=(--repo-map "${SUBMODULE_PARENT_REPO_URL}=${SUBMODULE_PARENT_WORK}")
 }
 
+# prepare_two_tag_repo builds WORK_DIR/<name>.git from a fixture directory:
+# one commit of <fixture>/repo tagged <tag-a>, and a second commit, with the
+# <fixture>/change files copied over it, tagged <tag-b>. The local work tree
+# is WORK_DIR/<name>-src.
+prepare_two_tag_repo() {
+  local fixture="$1"
+  local name="$2"
+  local tag_a="$3"
+  local tag_b="$4"
+  local work="${WORK_DIR}/${name}-src"
+  mkdir -p "${work}"
+  cp -R "${fixture}/repo/." "${work}/"
+  git -C "${work}" init --initial-branch=main >/dev/null
+  git -C "${work}" config user.email "drydock@example.invalid"
+  git -C "${work}" config user.name "drydock render parity smoke"
+  git -C "${work}" add .
+  git -C "${work}" commit -m "seed ${name} fixture" >/dev/null
+  git -C "${work}" tag "${tag_a}"
+  cp -R "${fixture}/change/." "${work}/"
+  git -C "${work}" add .
+  git -C "${work}" commit -m "change ${name} fixture" >/dev/null
+  git -C "${work}" tag "${tag_b}"
+  git clone --bare --no-hardlinks "${work}" "${WORK_DIR}/${name}.git" >/dev/null
+  git --git-dir="${WORK_DIR}/${name}.git" update-server-info
+}
+
 # prepare_live_diff_repo builds the repository of LIVE_DIFF_REPO_URL as
-# WORK_DIR/live-diff.git: one commit tagged LIVE_DIFF_REVISION_A, and a second
-# commit, with the live-diff/change files copied over it, tagged
-# LIVE_DIFF_REVISION_B.
+# WORK_DIR/live-diff.git, and the repository of CONTROLLER_SSD_REPO_URL as
+# WORK_DIR/live-diff-controller-ssd.git.
 prepare_live_diff_repo() {
+  prepare_two_tag_repo "${LIVE_DIFF_FIXTURE_PATH}" live-diff "${LIVE_DIFF_REVISION_A}" "${LIVE_DIFF_REVISION_B}"
   LIVE_DIFF_WORK="${WORK_DIR}/live-diff-src"
-  mkdir -p "${LIVE_DIFF_WORK}"
-  cp -R "${LIVE_DIFF_FIXTURE_PATH}/repo/." "${LIVE_DIFF_WORK}/"
-  git -C "${LIVE_DIFF_WORK}" init --initial-branch=main >/dev/null
-  git -C "${LIVE_DIFF_WORK}" config user.email "drydock@example.invalid"
-  git -C "${LIVE_DIFF_WORK}" config user.name "drydock render parity smoke"
-  git -C "${LIVE_DIFF_WORK}" add .
-  git -C "${LIVE_DIFF_WORK}" commit -m "seed live diff fixture" >/dev/null
-  git -C "${LIVE_DIFF_WORK}" tag "${LIVE_DIFF_REVISION_A}"
-  cp -R "${LIVE_DIFF_FIXTURE_PATH}/change/." "${LIVE_DIFF_WORK}/"
-  git -C "${LIVE_DIFF_WORK}" add .
-  git -C "${LIVE_DIFF_WORK}" commit -m "change live diff fixture" >/dev/null
-  git -C "${LIVE_DIFF_WORK}" tag "${LIVE_DIFF_REVISION_B}"
-  git clone --bare --no-hardlinks "${LIVE_DIFF_WORK}" "${WORK_DIR}/live-diff.git" >/dev/null
-  git --git-dir="${WORK_DIR}/live-diff.git" update-server-info
+  prepare_two_tag_repo "${CONTROLLER_SSD_FIXTURE_PATH}" live-diff-controller-ssd "${CONTROLLER_SSD_REVISION_A}" "${CONTROLLER_SSD_REVISION_B}"
+  CONTROLLER_SSD_WORK="${WORK_DIR}/live-diff-controller-ssd-src"
 }
 
 prepare_fixture_git_image() {
@@ -1124,9 +1167,10 @@ COPY --chown=65534:65534 helm-repo /srv/helm
 COPY --chown=65534:65534 repo.git /srv/git/repo.git
 COPY --chown=65534:65534 oob-symlink.git /srv/git/oob-symlink.git
 COPY --chown=65534:65534 live-diff.git /srv/git/live-diff.git
+COPY --chown=65534:65534 live-diff-controller-ssd.git /srv/git/live-diff-controller-ssd.git
 COPY --chown=65534:65534 submodule-parent.git /srv/git/submodule-parent.git
 COPY --chown=65534:65534 submodule-child.git /srv/git/submodule-child.git
-RUN touch /srv/git/repo.git/git-daemon-export-ok /srv/git/oob-symlink.git/git-daemon-export-ok /srv/git/live-diff.git/git-daemon-export-ok /srv/git/submodule-parent.git/git-daemon-export-ok /srv/git/submodule-child.git/git-daemon-export-ok && chmod -R a+rX /srv/git
+RUN touch /srv/git/repo.git/git-daemon-export-ok /srv/git/oob-symlink.git/git-daemon-export-ok /srv/git/live-diff.git/git-daemon-export-ok /srv/git/live-diff-controller-ssd.git/git-daemon-export-ok /srv/git/submodule-parent.git/git-daemon-export-ok /srv/git/submodule-child.git/git-daemon-export-ok && chmod -R a+rX /srv/git
 EXPOSE 9418
 USER 65534:65534
 ENTRYPOINT ["git", "daemon", "--verbose", "--export-all", "--base-path=/srv/git", "--reuseaddr", "--informative-errors", "/srv/git"]
@@ -2571,10 +2615,12 @@ ensure_namespace() {
 }
 
 # The value must equal application.namespaces in
-# repo/settings/argocd-cmd-params-cm.yaml, which drydock reads.
+# repo/settings/argocd-cmd-params-cm.yaml, which drydock reads. The patch
+# also removes controller.diff.server.side, which a failed run with
+# --keep-cluster can leave. The restart below applies both.
 configure_application_namespaces() {
   kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
-    -p "{\"data\":{\"application.namespaces\":\"${TENANT_NAMESPACE},${DIRECTORY_DECODE_NAMESPACE},project-policy-tenant\"}}" >/dev/null
+    -p "{\"data\":{\"application.namespaces\":\"${TENANT_NAMESPACE},${DIRECTORY_DECODE_NAMESPACE},project-policy-tenant\",\"${CONTROLLER_SSD_KEY}\":null}}" >/dev/null
   kubectl -n argocd rollout restart deployment/argocd-server >/dev/null
   kubectl -n argocd rollout restart statefulset/argocd-application-controller >/dev/null
   kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
@@ -3129,6 +3175,174 @@ run_live_diff_smoke() {
   LIVE_DIFF_STATE_CHANGED="false"
 }
 
+# set_controller_server_side_diff sets controller.diff.server.side in the
+# live argocd-cmd-params-cm to the given value, or removes the key for
+# "null". Then it restarts the application controller, which reads the key
+# through ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF only at startup.
+set_controller_server_side_diff() {
+  local value="$1"
+  local patch="{\"data\":{\"${CONTROLLER_SSD_KEY}\":null}}"
+  if [[ "${value}" != "null" ]]; then
+    patch="{\"data\":{\"${CONTROLLER_SSD_KEY}\":\"${value}\"}}"
+  fi
+  kubectl --request-timeout=30s -n argocd patch configmap argocd-cmd-params-cm --type merge -p "${patch}" >/dev/null
+  kubectl --request-timeout=30s -n argocd rollout restart statefulset/argocd-application-controller >/dev/null
+  kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
+}
+
+# remove_controller_ssd_state deletes the phase Applications, removes the
+# live key, and restarts the application controller. The Applications have
+# no resources finalizer, so their resources stay. It is safe to run more
+# than once.
+remove_controller_ssd_state() {
+  local apps=("${CONTROLLER_SSD_APPLICATIONS[@]}" "${CONTROLLER_SSD_ERROR_APPLICATIONS[@]}")
+  if [[ "${#apps[@]}" -gt 0 ]]; then
+    kubectl --request-timeout=30s -n argocd delete applications.argoproj.io "${apps[@]}" --ignore-not-found >/dev/null
+  fi
+  set_controller_server_side_diff null
+}
+
+# dump_controller_ssd_applications saves each phase Application and fails
+# the smoke with the given message.
+dump_controller_ssd_applications() {
+  local message="$1"
+  local app failure_dir
+  failure_dir="$(artifact_dir live-diff-controller-ssd/failed)"
+  for app in "${CONTROLLER_SSD_APPLICATIONS[@]}" "${CONTROLLER_SSD_ERROR_APPLICATIONS[@]}"; do
+    kubectl -n argocd get application "${app}" -o yaml > "${failure_dir}/${app}.yaml" 2>&1 || true
+  done
+  fail "${message}; see ${failure_dir}"
+}
+
+# compare_controller_ssd_revision_b does what compare_live_diff_revision_b
+# does, for the phase Applications.
+compare_controller_ssd_revision_b() {
+  local app revision_b state expected
+  revision_b="$(git -C "${CONTROLLER_SSD_WORK}" rev-parse "${CONTROLLER_SSD_REVISION_B}^{commit}")"
+  kubectl -n argocd apply -f "${CONTROLLER_SSD_WORK}/applications" >/dev/null
+  for app in "${CONTROLLER_SSD_APPLICATIONS[@]}" "${CONTROLLER_SSD_ERROR_APPLICATIONS[@]}"; do
+    kubectl -n argocd patch application "${app}" --type merge \
+      -p "{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\"}},\"spec\":{\"source\":{\"targetRevision\":\"${CONTROLLER_SSD_REVISION_B}\"}}}" >/dev/null
+  done
+  expected="${revision_b}|${CONTROLLER_SSD_REVISION_B}|"
+  for app in "${CONTROLLER_SSD_APPLICATIONS[@]}" "${CONTROLLER_SSD_ERROR_APPLICATIONS[@]}"; do
+    state=""
+    for _ in {1..90}; do
+      state="$(kubectl -n argocd get application "${app}" \
+        -o jsonpath='{.status.sync.revision}{"|"}{.status.sync.comparedTo.source.targetRevision}{"|"}{.metadata.annotations.argocd\.argoproj\.io/refresh}')"
+      [[ "${state}" == "${expected}" ]] && break
+      sleep 2
+    done
+    [[ "${state}" == "${expected}" ]] \
+      || dump_controller_ssd_applications "Argo CD did not compare Application argocd/${app} at ${CONTROLLER_SSD_REVISION_B} (last revision|targetRevision|refresh: ${state})"
+  done
+}
+
+# capture_controller_ssd_drydock does what capture_live_diff_drydock_diff and
+# capture_live_diff_drydock_renders do, for the phase repository.
+capture_controller_ssd_drydock() {
+  local app output_dir failure_dir render_dir stderr_file exit_code
+  local common_args diff_args
+  output_dir="$(artifact_dir live-diff-controller-ssd)"
+  failure_dir="$(artifact_dir live-diff-controller-ssd/drydock-failures)"
+  render_dir="$(artifact_dir live-diff-controller-ssd/drydock-renders)"
+  stderr_file="${output_dir}/drydock-diff.stderr"
+  common_args=(--repo-map "${CONTROLLER_SSD_REPO_URL}=${CONTROLLER_SSD_WORK}"
+    --render-cache-dir "${WORK_DIR}/render-cache-controller-ssd"
+    --offline)
+  diff_args=(--repo "${CONTROLLER_SSD_WORK}"
+    --path "${CONTROLLER_SSD_WORK}"
+    --ref "${CONTROLLER_SSD_REVISION_B}"
+    --ref-orig "${CONTROLLER_SSD_REVISION_A}"
+    --changed-only=false
+    --show-ignored-fields
+    --exit-code=false
+    -o json
+    "${common_args[@]}")
+  local all_args=("${diff_args[@]}")
+  for app in "${CONTROLLER_SSD_ERROR_APPLICATIONS[@]}"; do
+    all_args+=(--discover-ignore "applications/${app}.yaml")
+  done
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diff apps "${all_args[@]}" \
+    > "${output_dir}/drydock-diff.json" 2> "${stderr_file}"); then
+    echo "argocd render parity smoke: drydock diff of the controller-level server-side diff fixture failed; its stderr follows" >&2
+    cat "${stderr_file}" >&2 || true
+    fail "drydock diff of the controller-level server-side diff fixture failed; see ${stderr_file}"
+  fi
+  for app in "${CONTROLLER_SSD_ERROR_APPLICATIONS[@]}"; do
+    exit_code=0
+    (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diff app "${app}" "${diff_args[@]}" \
+      > "${failure_dir}/${app}.json" 2> "${failure_dir}/${app}.stderr") || exit_code="$?"
+    printf '%s\n' "${exit_code}" > "${failure_dir}/${app}.exit"
+  done
+  for app in "${CONTROLLER_SSD_APPLICATIONS[@]}"; do
+    if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "${app}" \
+      --path "${CONTROLLER_SSD_WORK}" "${common_args[@]}" \
+      > "${render_dir}/${app}.yaml" 2> "${render_dir}/${app}.stderr"); then
+      cat "${render_dir}/${app}.stderr" >&2 || true
+      fail "drydock build of Application ${app} failed; see ${render_dir}/${app}.stderr"
+    fi
+  done
+}
+
+# run_controller_ssd_smoke checks the controller-level switch
+# controller.diff.server.side. With the switch on, Argo CD compares every
+# Application with server-side diff, unless the Application has the
+# ServerSideDiff=false compare option. A jq rule that removes the whole
+# object shows the mode in the sync status: server-side diff hides the
+# change, and the client-side diff fails the comparison. Unlike the live
+# diff phase, the smoke syncs the comparisonError Application too, because
+# the client-side diff fails only when the live object exists.
+run_controller_ssd_smoke() {
+  local namespace app output_dir
+  output_dir="$(artifact_dir live-diff-controller-ssd)"
+  CONTROLLER_SSD_APPLICATIONS=()
+  while IFS= read -r app; do
+    [[ -n "${app}" ]] && CONTROLLER_SSD_APPLICATIONS+=("${app}")
+  done < <(cd "${REPO_ROOT}" && go run ./scripts/argocd-live-diff-smoke --list --expected "${CONTROLLER_SSD_EXPECTED}")
+  CONTROLLER_SSD_ERROR_APPLICATIONS=()
+  while IFS= read -r app; do
+    [[ -n "${app}" ]] && CONTROLLER_SSD_ERROR_APPLICATIONS+=("${app}")
+  done < <(cd "${REPO_ROOT}" && go run ./scripts/argocd-live-diff-smoke --list-comparison-errors --expected "${CONTROLLER_SSD_EXPECTED}")
+  [[ "${#CONTROLLER_SSD_APPLICATIONS[@]}" -gt 0 && "${#CONTROLLER_SSD_ERROR_APPLICATIONS[@]}" -gt 0 ]] \
+    || fail "${CONTROLLER_SSD_EXPECTED} must list an Application with and one without comparisonError"
+  for namespace in "${CONTROLLER_SSD_NAMESPACES[@]}"; do
+    ensure_namespace "${namespace}"
+  done
+  log_step "Setting ${CONTROLLER_SSD_KEY} in argocd-cmd-params-cm and restarting the application controller"
+  CONTROLLER_SSD_STATE_CHANGED="true"
+  set_controller_server_side_diff "true"
+  log_step "Applying and syncing the controller-level server-side diff Applications at ${CONTROLLER_SSD_REVISION_A}"
+  kubectl -n argocd apply -f "${CONTROLLER_SSD_FIXTURE_PATH}/repo/applications" >/dev/null
+  argocd app sync "${CONTROLLER_SSD_APPLICATIONS[@]}" "${CONTROLLER_SSD_ERROR_APPLICATIONS[@]}" --timeout 300 \
+    > "${output_dir}/argocd-sync.log" 2>&1 \
+    || dump_controller_ssd_applications "Argo CD could not sync the controller-level server-side diff Applications at ${CONTROLLER_SSD_REVISION_A} (log: ${output_dir}/argocd-sync.log)"
+  argocd app wait "${CONTROLLER_SSD_APPLICATIONS[@]}" "${CONTROLLER_SSD_ERROR_APPLICATIONS[@]}" --sync --health --timeout 300 \
+    > "${output_dir}/argocd-wait.log" 2>&1 \
+    || dump_controller_ssd_applications "the controller-level server-side diff Applications are not Synced and Healthy at ${CONTROLLER_SSD_REVISION_A} (log: ${output_dir}/argocd-wait.log)"
+  log_step "Comparing the controller-level server-side diff Applications at ${CONTROLLER_SSD_REVISION_B}"
+  compare_controller_ssd_revision_b
+  local argocd_dir
+  argocd_dir="$(artifact_dir live-diff-controller-ssd/argocd-applications)"
+  for app in "${CONTROLLER_SSD_APPLICATIONS[@]}" "${CONTROLLER_SSD_ERROR_APPLICATIONS[@]}"; do
+    kubectl -n argocd get application "${app}" -o json > "${argocd_dir}/${app}.json"
+  done
+  log_step "Capturing the drydock diff between ${CONTROLLER_SSD_REVISION_A} and ${CONTROLLER_SSD_REVISION_B}"
+  capture_controller_ssd_drydock
+  log_step "Comparing controller-level server-side diff sync status"
+  (cd "${REPO_ROOT}" && go run ./scripts/argocd-live-diff-smoke \
+    --expected "${CONTROLLER_SSD_EXPECTED}" \
+    --argocd-app-dir "${argocd_dir}" \
+    --drydock-diff "${output_dir}/drydock-diff.json" \
+    --drydock-stderr "${output_dir}/drydock-diff.stderr" \
+    --drydock-failure-dir "${output_dir}/drydock-failures" \
+    --drydock-render-dir "${output_dir}/drydock-renders" \
+    --out "${output_dir}/summary.txt")
+  log_step "Removing the controller-level server-side diff Applications and ${CONTROLLER_SSD_KEY}"
+  remove_controller_ssd_state
+  CONTROLLER_SSD_STATE_CHANGED="false"
+}
+
 # The argocd-cm keys that the source type gate phase changes.
 SOURCE_TYPE_GATE_KEYS=(helm.enable kustomize.enable jsonnet.enable)
 
@@ -3490,6 +3704,7 @@ main() {
   compare_avp_oracle_manifests
   compare_tracking_manifests
   run_live_diff_smoke
+  run_controller_ssd_smoke
   run_directory_decode_smoke
   if [[ "${RUN_PROJECT_POLICY_SMOKE}" == "true" ]]; then
     run_project_policy_smoke

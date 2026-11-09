@@ -1,0 +1,41 @@
+# Expected sync status for the controller-level server-side diff phase.
+#
+# The phase sets controller.diff.server.side to "true" in the live
+# argocd-cmd-params-cm and restarts the application controller. drydock reads
+# the same key from repo/settings/argocd-cmd-params-cm.yaml. Argo CD syncs
+# each Application at controller-ssd-a (repo/). Then the smoke moves it to
+# controller-ssd-b (repo/ plus change/), and Argo CD compares
+# controller-ssd-b with the live objects. drydock diffs the same two commits.
+#
+# controller-ssd-b adds a jq rule "." that removes the whole ConfigMap
+# removed, on both sides. Argo CD v3.6.1 compares null with null under
+# server-side diff, so the change is hidden. The client-side diff cannot
+# build a patch from null, so the comparison of the Application fails.
+# The ConfigMap other changes a field that no rule removes, so it proves
+# that Argo CD compared the Application.
+#
+# The file format is the one of live-diff/expected.yaml, and
+# scripts/argocd-live-diff-smoke checks it.
+targetRevision: controller-ssd-b
+applications:
+  # No diff option: the controller-level switch turns on server-side diff.
+  - name: parity-controller-ssd
+    resources:
+      - kind: ConfigMap
+        name: removed
+        status: Synced
+      - kind: ConfigMap
+        name: other
+        status: OutOfSync
+  # ServerSideDiff=false wins over the switch: the client-side diff fails.
+  - name: parity-controller-ssd-opt-out
+    comparisonError:
+      argocdMessage: "Failed to compare desired state to live state"
+      drydockMessage: "diff.comparison-failed: Application argocd/parity-controller-ssd-opt-out:"
+    resources:
+      - kind: ConfigMap
+        name: removed
+        status: Unknown
+      - kind: ConfigMap
+        name: other
+        status: Unknown

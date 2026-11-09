@@ -1959,6 +1959,60 @@ depend on the diff mode.
   builds those patches for every Application, so it would fail every
   Application in the cluster. Unit tests in `internal/app` cover it.
 
+## Controller-level server-side diff phase
+
+This phase checks the `argocd-cmd-params-cm` key
+`controller.diff.server.side`. When the key is `true`, the Argo CD v3.6.1
+application controller compares every Application with server-side diff.
+An Application with the `ServerSideDiff=false` compare option still uses
+the client-side diff (`shouldUseServerSideDiff` in `controller/state.go`).
+
+The fixture lives in `live-diff-controller-ssd/`. The smoke serves it as the
+Git repository `live-diff-controller-ssd.git`, with the tags
+`controller-ssd-a` and `controller-ssd-b`, built as the live diff
+repository is built. `live-diff-controller-ssd/expected.yaml` has the format
+of `live-diff/expected.yaml`, and `scripts/argocd-live-diff-smoke` checks
+it.
+
+Both Applications render the ConfigMaps `removed` and `other` into their own
+namespaces. `controller-ssd-b` changes both ConfigMaps and adds an
+Application rule with the jq expression `.` for `removed`. The rule removes
+the whole object on the live side and on the desired side. Server-side diff
+then compares `null` with `null` and hides the change. The client-side diff
+cannot build a patch from `null`, so the comparison of the Application
+fails. `other` changes a field that no rule removes.
+
+| Application | diff mode | expected result |
+| --- | --- | --- |
+| `parity-controller-ssd` | no diff option, so the switch turns on server-side diff | `removed` is `Synced`, `other` is `OutOfSync`, and drydock shows only `other` |
+| `parity-controller-ssd-opt-out` | `ServerSideDiff=false` wins over the switch | a `ComparisonError` condition, and `drydock diff app` fails with `diff.comparison-failed` |
+
+`run_controller_ssd_smoke` in `scripts/argocd-parity-smoke.sh` runs these
+steps:
+
+1. It sets `controller.diff.server.side: "true"` in the live
+   `argocd-cmd-params-cm` and restarts the application controller. The
+   controller reads the key only at startup, through
+   `ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF`. drydock reads the key
+   from `settings/argocd-cmd-params-cm.yaml` in the repository.
+2. It applies and syncs both Applications at `controller-ssd-a`. It syncs
+   the `comparisonError` Application too, because the client-side diff
+   fails only when the live object exists.
+3. It applies the Applications of `controller-ssd-b`, moves them to that
+   tag with a hard refresh, and waits until Argo CD compared it.
+4. It runs the drydock diff and the drydock renders, and compares the
+   results as the live diff phase does.
+5. It deletes the Applications, removes the key, and restarts the
+   application controller again. On an existing cluster, the exit trap does
+   the same when the phase fails, unless `--keep-cluster` is set. The
+   install step also removes the key, in case an earlier run with
+   `--keep-cluster` left it.
+
+The results go to `live-diff-controller-ssd/` in the smoke output
+directory. Earlier drydock releases read the key as metadata only. They
+compared `parity-controller-ssd` with the client-side diff, so the drydock
+diff of this phase failed with `diff.comparison-failed`.
+
 ## Kustomize helmCharts shared API versions fixture
 
 `applications/kustomize-helm-shared-api-versions.yaml`

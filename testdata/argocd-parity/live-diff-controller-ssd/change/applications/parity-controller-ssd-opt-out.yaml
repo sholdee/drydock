@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-controller-ssd-opt-out
+  namespace: argocd
+  annotations:
+    # This option wins over the controller-level switch, so Argo CD
+    # compares the Application with the client-side diff.
+    argocd.argoproj.io/compare-options: ServerSideDiff=false
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/live-diff-controller-ssd.git
+    targetRevision: controller-ssd-a
+    path: workloads/removed-object
+  destination:
+    name: in-cluster
+    namespace: parity-controller-ssd-opt-out
+  # controller-ssd-b adds this rule. The jq expression "." removes the whole
+  # ConfigMap, on the live side and on the desired side.
+  ignoreDifferences:
+    - kind: ConfigMap
+      name: removed
+      jqPathExpressions:
+        - .
