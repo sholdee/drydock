@@ -79,6 +79,7 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	// The controller namespace of every instance name and the namespace
 	// gate (config.ArgoSettings.ControllerNamespace).
 	"ArgoCDNamespace":          settingsRenderAll,
+	"ControllerNamespaceHint":  settingsRenderAll,
 	"ApplicationNamespaces":    settingsRenderAll,
 	"ApplicationSetNamespaces": settingsRenderAll,
 	// Project validation of the Applications that use the entry; the OCI

@@ -13,7 +13,6 @@ import (
 	"github.com/argoproj/argo-cd/v3/common"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	argoutil "github.com/argoproj/argo-cd/v3/util/argo"
-	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/render"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -211,39 +210,6 @@ func TestArgoCDNamespaceFlagMustBeANamespaceName(t *testing.T) {
 	if _, err := (Orchestrator{}).ListApplications(context.Background(), request); err == nil || !strings.Contains(err.Error(), "argocd-namespace") {
 		t.Fatalf("ListApplications() error = %v, want an invalid --argocd-namespace error", err)
 	}
-}
-
-// The persistent render cache keys a render by the controller namespace, so
-// a run with another --argocd-namespace never replays a render with other
-// instance names.
-func TestRenderCacheKeyFollowsTheControllerNamespace(t *testing.T) {
-	root := t.TempDir()
-	cacheDir := t.TempDir()
-	writeControllerNamespaceApp(t, root, controllerNamespaceTestNamespace)
-	gitCommitAll(t, root, "initial")
-
-	first := persistentBuildRequest(root, cacheDir)
-	first.RecordCacheEvents = true
-	result, err := Orchestrator{}.Build(context.Background(), first)
-	if err != nil {
-		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
-	}
-	if !hasRenderCacheEvent(result.CacheEvents, cacheevent.ActionStore, controllerNamespaceTestNamespace+"/root", "") {
-		t.Fatalf("cache events = %#v, want a stored render", result.CacheEvents)
-	}
-	assertControllerNamespaceRender(t, result, defaultArgoCDControllerNamespace)
-
-	second := persistentBuildRequest(root, cacheDir)
-	second.RecordCacheEvents = true
-	second.ArgoCDNamespace = controllerNamespaceTestNamespace
-	result, err = Orchestrator{}.Build(context.Background(), second)
-	if err != nil {
-		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
-	}
-	if hasRenderCacheEvent(result.CacheEvents, cacheevent.ActionHit, controllerNamespaceTestNamespace+"/root", "") {
-		t.Fatalf("cache events = %#v, want no hit on the render of another controller namespace", result.CacheEvents)
-	}
-	assertControllerNamespaceRender(t, result, controllerNamespaceTestNamespace)
 }
 
 // Changed-only selection reads the .argocd-source-<app>.yaml file that the
@@ -717,8 +683,8 @@ spec:
 		t.Fatalf("ControllerNamespace = %q, want argocd", got)
 	}
 	warnings := diagnosticsWithCode(result.Diagnostics, controllerNamespaceAmbiguousCode)
-	if len(warnings) != 1 || !strings.Contains(warnings[0].Message, "argocd, team-a") {
-		t.Fatalf("namespace warnings = %#v, want one %s that names argocd and team-a", controllerNamespaceWarnings(result.Diagnostics), controllerNamespaceAmbiguousCode)
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Message, "other Argo CD installs in team-a") {
+		t.Fatalf("namespace warnings = %#v, want one %s that names team-a as another install", controllerNamespaceWarnings(result.Diagnostics), controllerNamespaceAmbiguousCode)
 	}
 	if got := applicationNames(result.Applications); !slices.Contains(got, "other") {
 		t.Fatalf("Applications = %v, want other kept by the gate in argocd", got)

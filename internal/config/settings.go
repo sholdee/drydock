@@ -277,6 +277,11 @@ type ArgoSettings struct {
 	// --argocd-namespace flag names. It wins over every
 	// argocd-cmd-params-cm.
 	ArgoCDNamespace string `json:"argocdNamespace,omitempty" yaml:"argocdNamespace,omitempty"`
+	// ControllerNamespaceHint is the controller namespace that a restarted
+	// discovery run uses from its start, because the first run found it only
+	// late. --argocd-namespace wins over it, and it wins over the
+	// argocd-cmd-params-cm ConfigMaps. Only discovery sets it.
+	ControllerNamespaceHint string `json:"controllerNamespaceHint,omitempty" yaml:"controllerNamespaceHint,omitempty"`
 	// ApplicationNamespaces is the argocd-cmd-params-cm key
 	// application.namespaces, as written. The application controller
 	// reconciles an Application only in its own namespace or in a namespace
@@ -295,17 +300,22 @@ const DefaultControllerNamespace = "argocd"
 
 // ControllerNamespace resolves the namespace that the Argo CD controllers
 // run in. Argo CD learns it from its own pod, so drydock takes it from the
-// --argocd-namespace flag (ArgoCDNamespace) when it is set. Otherwise the
-// argocd-cmd-params-cm ConfigMap lives there, so its metadata.namespace
-// decides when every such ConfigMap names the same one. When they name
-// several, drydock uses DefaultControllerNamespace and warns. When none
-// names one, fallback decides, such as the namespace of an AppProject, and
-// then DefaultControllerNamespace. The namespace gate, AppProject
-// validation, Application instance names, and resource tracking use this
-// one rule, so they cannot disagree. Instance names and tracking pass no
-// fallback.
+// --argocd-namespace flag (ArgoCDNamespace) when it is set, then from
+// ControllerNamespaceHint. Otherwise the argocd-cmd-params-cm ConfigMap
+// lives there, so its metadata.namespace decides when every such ConfigMap
+// names the same one. When they name several, drydock uses
+// DefaultControllerNamespace and warns. When none names one, fallback
+// decides, and then DefaultControllerNamespace. The namespace gate,
+// Application instance names, and resource tracking pass no fallback.
+// AppProject validation passes the namespace of the AppProject, so when
+// nothing names the controller namespace, it checks sourceNamespaces
+// against that AppProject namespace, as earlier releases did, while the
+// other consumers use DefaultControllerNamespace.
 func (s ArgoSettings) ControllerNamespace(fallback string) string {
 	if namespace := strings.TrimSpace(s.ArgoCDNamespace); namespace != "" {
+		return namespace
+	}
+	if namespace := strings.TrimSpace(s.ControllerNamespaceHint); namespace != "" {
 		return namespace
 	}
 	switch named := s.NamedControllerNamespaces(); len(named) {

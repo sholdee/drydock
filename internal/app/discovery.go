@@ -17,7 +17,7 @@ import (
 
 func (o Orchestrator) discoverRepository(ctx context.Context, root string, request BuildRequest) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
 	ociFetcher := newAppsetOCIArtifactFetcher(ctx, o, root, request)
-	discovered, diags, events, renderCache, renderSig, err := o.discoverRepositoryWithOCI(ctx, root, request, ociFetcher)
+	discovered, diags, events, renderCache, renderSig, err := o.discoverWithControllerNamespace(ctx, root, request, ociFetcher)
 	events = append(events, ociFetcher.close()...)
 	return discovered, diags, events, renderCache, renderSig, err
 }
@@ -49,7 +49,7 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 	if used == nil || !hasGenerationSensitiveApplicationSet(discovered) {
 		return discovered, diags, events, renderCache, renderSig, runErr
 	}
-	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
 	if err != nil {
 		if runErr != nil {
 			err = runErr
@@ -67,7 +67,7 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 	if err != nil {
 		return restarted, diags, events, renderCache, renderSig, err
 	}
-	restartedSettings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, restarted)
+	restartedSettings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), restarted)
 	if err != nil {
 		return restarted, diags, events, renderCache, renderSig, err
 	}
@@ -226,6 +226,9 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 	request.discoveryPathMemo = &sync.Map{}
 	request.appsetGenerationMemo = &sync.Map{}
 	request.settingsInstallMemo = &sync.Map{}
+	if request.committedRenderMemo == nil {
+		request.committedRenderMemo = &sync.Map{}
+	}
 
 	discovered, externalDiags, err := scanRepositoryWithSubmodules(ctx, root, request)
 	if err != nil {
@@ -262,7 +265,7 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 		return discovered, allDiags, allEvents, renderCache, "", err
 	}
 
-	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
 	if err != nil {
 		return discovered, allDiags, allEvents, renderCache, "", err
 	}
@@ -316,7 +319,7 @@ func applicationSetOptionsForRun(ctx context.Context, root string, request Build
 // (warnGitGeneratorProjects) warns about an AppProject that the repository
 // does not declare.
 func applyFinalGates(root string, request BuildRequest, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, error) {
-	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
 	if err != nil {
 		return discovered, nil, err
 	}
@@ -335,7 +338,7 @@ func expandFirstApplicationSets(root string, request BuildRequest, discovered di
 	if request.appsetGeneration != nil {
 		generation = *request.appsetGeneration
 	} else {
-		settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
+		settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
 		if err != nil {
 			return discovered, nil, err
 		}
@@ -361,7 +364,7 @@ func (o Orchestrator) applyExplicitKustomizeDiscovery(ctx context.Context, root 
 	if len(request.DiscoverKustomizePaths) == 0 {
 		return discovered, nil, nil, nil
 	}
-	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
 	if err != nil {
 		return discovered, nil, nil, err
 	}
@@ -442,7 +445,7 @@ func (o Orchestrator) discoverRenderedFleet(ctx context.Context, root string, re
 			return current, settingsSig, renderSig, allDiags, allEvents, err
 		}
 		current = settled
-		settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, current)
+		settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), current)
 		if err != nil {
 			return current, settingsSig, renderSig, allDiags, allEvents, err
 		}
@@ -475,7 +478,7 @@ func (o Orchestrator) discoverRenderedFleet(ctx context.Context, root string, re
 			return next, settingsSig, renderSig, allDiags, allEvents, err
 		}
 
-		nextSettings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, next)
+		nextSettings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), next)
 		if err != nil {
 			return next, settingsSig, renderSig, allDiags, allEvents, err
 		}
@@ -523,7 +526,7 @@ func (o Orchestrator) settleSettingsInstalls(ctx context.Context, root string, r
 	var allEvents []cacheevent.Event
 	previous := ""
 	for round := range maxSettingsInstallRounds {
-		settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, current)
+		settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), current)
 		if err != nil {
 			return current, allDiags, allEvents, err
 		}
@@ -609,6 +612,7 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 	}
 	defer cleanup()
 
+	request.renderNamespaces.record(settings.ControllerNamespace(""))
 	inputs := applicationInputsByKey(discovered)
 	renderSettings := discoveryRenderSettings{
 		signature: "settings-install\x00" + installSig,
@@ -662,7 +666,7 @@ func scanRepositoryWithSubmodules(ctx context.Context, root string, request Buil
 // read the settings: a configuration that git refuses, or a submodule
 // that drydock cannot find, fails the sources that render from it.
 func fillSnapshotSubmodulesForDiscovery(ctx context.Context, root string, request BuildRequest, discovered discovery.Result) (*snapshotFill, error) {
-	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
 	if err != nil {
 		return nil, err
 	}

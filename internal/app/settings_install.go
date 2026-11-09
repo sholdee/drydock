@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/argo-cd/v3/util/security"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
@@ -559,13 +560,46 @@ func markSettingsRenderInputs(result *discovery.Result, install settingsInstall)
 }
 
 // markArgoCDInstallSettings marks the settings ConfigMaps of result as
-// rendered by an Argo CD install on this cluster.
-func markArgoCDInstallSettings(result *discovery.Result) {
+// rendered by an Argo CD install on this cluster, which application
+// installs, with the namespace where each lands. When the install would not
+// reconcile application (installReconciles), they are another install.
+func markArgoCDInstallSettings(result *discovery.Result, application argoappv1.Application) {
+	destinationNamespace := application.Spec.Destination.Namespace
+	other := !installReconciles(*result, application)
 	for i := range result.SettingsCandidates {
-		if discovery.IsSettingsConfigMapKind(result.SettingsCandidates[i].Kind) {
-			result.SettingsCandidates[i].ArgoCDInstall = true
+		candidate := &result.SettingsCandidates[i]
+		if discovery.IsSettingsConfigMapKind(candidate.Kind) {
+			candidate.InstallNamespace = settingsCandidateNamespace(*candidate, destinationNamespace)
+			candidate.OtherInstall = other
 		}
 	}
+}
+
+// installReconciles reports whether the Argo CD that result installs would
+// reconcile application, the Application that installs it. Argo CD
+// reconciles an Application in its own namespace, or in a namespace that
+// its application.namespaces enables (isAppNamespaceAllowed,
+// controller/appcontroller.go:2852-2854). This is a check of the install
+// against itself: an install without an argocd-cmd-params-cm, or an
+// Application without a namespace, passes.
+func installReconciles(result discovery.Result, application argoappv1.Application) bool {
+	destinationNamespace := application.Spec.Destination.Namespace
+	found := false
+	for _, candidate := range result.SettingsCandidates {
+		if candidate.Kind != commandParametersCandidateKind || candidate.Object == nil {
+			continue
+		}
+		installNamespace := settingsCandidateNamespace(candidate, destinationNamespace)
+		if installNamespace == "" || application.Namespace == "" {
+			return true
+		}
+		found = true
+		enabled, _, _ := unstructured.NestedString(candidate.Object.Object, "data", "application.namespaces")
+		if security.IsNamespaceEnabled(application.Namespace, installNamespace, config.ParseNamespaceList(enabled)) {
+			return true
+		}
+	}
+	return !found
 }
 
 // markRemoteSettingsCandidates marks the settings candidates of result as

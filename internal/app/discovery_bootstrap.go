@@ -31,7 +31,7 @@ func (o Orchestrator) applyPolicyBootstrapDiscovery(ctx context.Context, root st
 		return discovered, nil, nil, nil
 	}
 
-	settings, _, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
+	settings, _, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
 	if err != nil {
 		return discovered, nil, nil, err
 	}
@@ -84,6 +84,7 @@ func renderPolicyBootstrapEntrypoint(ctx context.Context, root string, request B
 	if controllerNamespace == "" {
 		controllerNamespace = defaultArgoCDControllerNamespace
 	}
+	request.renderNamespaces.record(controllerNamespace)
 	application := policyBootstrapEntrypointApplication(entrypoint, sourcePath, controllerNamespace)
 	rendered, err := renderApplicationCached(renderContext{
 		context:              ctx,

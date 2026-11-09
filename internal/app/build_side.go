@@ -20,7 +20,7 @@ func (o Orchestrator) loadBuildSideDiscovery(ctx context.Context, root string, r
 }
 
 func loadBuildSideSettings(root string, request BuildRequest, discovered discovery.Result, result *BuildResult) ([]diagnostic.Diagnostic, error) {
-	settings, settingsDiags, err := loadSettingsFromDiscovery(root, request.ArgoCDNamespace, discovered)
+	settings, settingsDiags, err := loadSettingsFromDiscovery(root, request.namespaceScope(), discovered)
 	if err != nil {
 		return nil, err
 	}

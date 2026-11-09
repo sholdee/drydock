@@ -140,28 +140,38 @@ func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]dis
 	return keepSettingsReach(keepSettingsRenderInputs(out, base, overlay), base, overlay), diags
 }
 
-// keepSettingsReach keeps the reach of a merged candidate independent of
-// which copy the merge keeps. It is RemoteOnly only when every base and
-// overlay candidate with its identity is: an object that an Application on
-// this cluster renders too reaches this cluster. It is an ArgoCDInstall
-// ConfigMap when any copy is.
+// keepSettingsReach keeps the marks of a merged candidate independent of
+// which copy the merge keeps. It is RemoteOnly or OtherInstall only when
+// every base and overlay candidate with its identity is: an object that an
+// Application on this cluster, or an install that reconciles its own
+// Application, renders too counts. Its InstallNamespace is the first one
+// that a copy sets.
 func keepSettingsReach(out, base, overlay []discovery.SettingsCandidate) []discovery.SettingsCandidate {
-	local := map[string]bool{}
-	install := map[string]bool{}
+	type marks struct {
+		local, own       bool
+		installNamespace string
+	}
+	byKey := map[string]marks{}
 	marked := false
 	for _, item := range append(append([]discovery.SettingsCandidate(nil), base...), overlay...) {
 		key := settingsDiscoveryKey(item)
-		local[key] = local[key] || !item.RemoteOnly
-		install[key] = install[key] || item.ArgoCDInstall
-		marked = marked || item.RemoteOnly || item.ArgoCDInstall
+		entry := byKey[key]
+		entry.local = entry.local || !item.RemoteOnly
+		entry.own = entry.own || !item.OtherInstall
+		if entry.installNamespace == "" {
+			entry.installNamespace = item.InstallNamespace
+		}
+		byKey[key] = entry
+		marked = marked || item.RemoteOnly || item.OtherInstall || item.InstallNamespace != ""
 	}
 	if !marked {
 		return out
 	}
 	for i := range out {
-		key := settingsDiscoveryKey(out[i])
-		out[i].RemoteOnly = !local[key]
-		out[i].ArgoCDInstall = install[key]
+		entry := byKey[settingsDiscoveryKey(out[i])]
+		out[i].RemoteOnly = !entry.local
+		out[i].OtherInstall = !entry.own
+		out[i].InstallNamespace = entry.installNamespace
 	}
 	return out
 }

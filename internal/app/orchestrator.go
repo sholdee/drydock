@@ -72,6 +72,15 @@ type BuildRequest struct {
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map
 	settingsInstallMemo  *sync.Map
+	// committedRenderMemo keeps, for one build side, which Applications
+	// render a committed settings file (committedFileRemoteOnly).
+	committedRenderMemo *sync.Map
+	// controllerNamespaceHint is the controller namespace of a restarted
+	// discovery run (discoverWithControllerNamespace).
+	controllerNamespaceHint string
+	// renderNamespaces records the controller namespaces that the renders
+	// of one discovery run use.
+	renderNamespaces *namespaceRecorder
 	// appsetGeneration, when set, holds the argocd-cmd-params-cm values
 	// that change ApplicationSet generation for a restarted discovery run
 	// (discoverRepositoryWithOCI).
@@ -350,6 +359,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 	}
 	request = loadedRequest
 	result.pluginOptions = request.PluginOptions
+	request.committedRenderMemo = &sync.Map{}
 	discovered, discoveryDiags, err := o.loadBuildSideDiscovery(ctx, root, request, &result)
 	if err != nil {
 		return result, diagnosticsError(discoveryDiags, err)
@@ -846,6 +856,7 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 		}
 		return result, nil
 	}
+	request.committedRenderMemo = &sync.Map{}
 	discovered, discoveryDiags, err := o.loadBuildSideDiscovery(ctx, root, request, &result)
 	if err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
@@ -1240,7 +1251,7 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // drydock uses one of the namespaces that they name.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, namespaceNotEnabledCode, outsideControllerNamespaceCode, controllerNamespaceAmbiguousCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode, SelectorNoMatchCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, namespaceNotEnabledCode, outsideControllerNamespaceCode, controllerNamespaceAmbiguousCode, controllerNamespaceUnsettledCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode, SelectorNoMatchCode:
 		return true
 	}
 	return false

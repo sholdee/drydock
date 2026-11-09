@@ -477,9 +477,11 @@ func validateSourceNamespace(app argoappv1.Application, proj argoappv1.AppProjec
 
 // controllerNamespace is the namespace of the Argo CD controllers, which
 // always reconcile Applications there. It uses the shared rule
-// (config.ArgoSettings.ControllerNamespace): the namespace of the
-// argocd-cmd-params-cm ConfigMap when it names one, else the namespace of
-// the AppProject, which also lives there, else argocd.
+// (config.ArgoSettings.ControllerNamespace) with the namespace of the
+// AppProject, which also lives there, as the fallback. So when nothing
+// names the controller namespace, this check uses the AppProject namespace
+// while instance names and the namespace gate use argocd. That permissive
+// fallback is what earlier releases did.
 func controllerNamespace(proj argoappv1.AppProject, settings config.ArgoSettings) string {
 	return settings.ControllerNamespace(proj.Namespace)
 }

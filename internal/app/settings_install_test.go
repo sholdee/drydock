@@ -1724,18 +1724,34 @@ func TestSettingsInstallRenderFailedDiagnostic(t *testing.T) {
 }
 
 // When the frontier renders an install for discovery, its settings
-// ConfigMaps are settings in every namespace, as for a settings-only
-// render: drydock filters them by namespace only with --argocd-namespace.
-// Here namespaceOverride moves them to another namespace, and the rendered
-// argocd-cm still replaces the values file that the render read.
+// ConfigMaps name the namespace where they land, as for a settings-only
+// render. Here namespaceOverride moves them to another namespace. When that
+// Argo CD would reconcile the Application in argocd that installs it, it is
+// the Argo CD of the repository, and the rendered argocd-cm replaces the
+// values file that the render read. Otherwise it is another install, and
+// drydock reads none of its settings.
 func TestSettingsFromFrontierRenderedInstallInAnotherNamespace(t *testing.T) {
-	root := t.TempDir()
-	writeLocalChartArgoCDInstall(t, root, []string{"values.yaml"})
-	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), "namespaceOverride: other\nconfigs:\n  cm:\n    application.resourceTrackingMethod: label\n")
+	for _, tc := range []struct {
+		name   string
+		params string
+		want   string
+	}{
+		{name: "reconciles its Application", params: "  params:\n    application.namespaces: argocd\n", want: "label"},
+		{name: "another install", want: "annotation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeLocalChartArgoCDInstall(t, root, []string{"values.yaml"})
+			writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), "namespaceOverride: other\nconfigs:\n  cm:\n    application.resourceTrackingMethod: label\n"+tc.params)
 
-	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
-	if got := filepath.ToSlash(result.Settings.TrackingMethod.Provenance.Path); result.Settings.TrackingMethod.Value != "label" || !strings.HasSuffix(got, "/argocd-cm.yaml") {
-		t.Fatalf("TrackingMethod = %q from %q, want label from the rendered argocd-cm", result.Settings.TrackingMethod.Value, got)
+			result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+			if got := result.Settings.TrackingMethod.Value; got != tc.want {
+				t.Fatalf("TrackingMethod = %q from %q, want %q", got, result.Settings.TrackingMethod.Provenance.Path, tc.want)
+			}
+			if tc.want == "label" && !strings.HasSuffix(filepath.ToSlash(result.Settings.TrackingMethod.Provenance.Path), "/argocd-cm.yaml") {
+				t.Fatalf("TrackingMethod from %q, want the rendered argocd-cm", result.Settings.TrackingMethod.Provenance.Path)
+			}
+		})
 	}
 }
 

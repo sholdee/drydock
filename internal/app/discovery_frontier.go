@@ -26,6 +26,9 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 
 	inputs := applicationInputsByKey(discovered)
 	renderSettings := discoveryRenderSettings{signature: settingsSig, tracking: trackingOptionsFromSettings(settings), settings: settings}
+	if len(discovered.Applications) > 0 {
+		request.renderNamespaces.record(renderSettings.tracking.ControllerNamespace)
+	}
 	parallelism, err := normalizeParallelism(request.Parallelism)
 	if err != nil {
 		return discovery.Result{}, nil, recorder.Events(), err
@@ -244,7 +247,7 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 	// (otherInstallSettings). A repo-server outside the controller
 	// namespace runs another Argo CD.
 	result = repoServersInNamespace(result, destinationNamespace, argoNamespace)
-	markArgoCDInstallSettings(&result)
+	markArgoCDInstallSettings(&result, application)
 	if install.installsArgoCD() {
 		markSettingsRenderInputs(&result, install)
 	}
