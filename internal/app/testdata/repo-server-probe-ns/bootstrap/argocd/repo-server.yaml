@@ -10,6 +10,7 @@ spec:
       containers:
       - name: argocd-repo-server
         image: x
+        args: [/usr/local/bin/argocd-repo-server]
         env:
         - name: HELM_NAMESPACE
           value: committed-ns

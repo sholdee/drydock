@@ -1323,10 +1323,17 @@ Supported:
     own directory that lists it; drydock does not search the repository for
     kustomizations further up. A file that only Applications on other
     clusters render does not count. When drydock cannot tell the namespace of a Deployment
-    or a ServiceAccount, it assumes the Argo CD namespace, and it warns for
-    the Deployment.
+    or a ServiceAccount, it assumes the Argo CD namespace. It warns for
+    the Deployment when the Helm namespace comes from that pod namespace,
+    and not when a literal `HELM_NAMESPACE` decides it.
 
-  A Deployment without containers is a patch and does not count. A
+  A Deployment without containers is a patch and does not count. Neither
+  does a committed file that a kustomization in its directory or in a
+  directory above it lists under `patches`, `patchesStrategicMerge`, or
+  `patchesJson6902`, nor a Deployment without a container whose command
+  line runs `argocd-repo-server` (see "Settings from the Argo CD
+  workloads"). drydock reads only that container, never another one, such
+  as a CMP sidecar. Earlier drydock releases read the first container. A
   repo-server counts when it comes from the same install as a discovered
   `argocd-cm`, or when it runs in the Argo CD namespace. When several
   count, drydock uses the first in this order: from the same install as an

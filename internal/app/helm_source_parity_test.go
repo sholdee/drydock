@@ -170,6 +170,7 @@ spec:
       containers:
         - name: repo-server
           image: quay.io/argoproj/argocd:v3.6.1
+          args: [/usr/local/bin/argocd-repo-server]
           env:
             - name: SECRET_LOOKING
               value: never-kept

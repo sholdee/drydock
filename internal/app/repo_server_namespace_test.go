@@ -48,6 +48,7 @@ spec:
       containers:
         - name: argocd-repo-server
           image: x
+          args: [/usr/local/bin/argocd-repo-server]
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -87,7 +88,7 @@ func TestHelmNamespaceCommittedKustomizeInstall(t *testing.T) {
 // Repo-server only (no argocd-cm) in another namespace, not the controller namespace.
 func TestHelmNamespaceIgnoresRepoServerOutsideArgoCDNamespace(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "other", "install.yaml"), "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: argocd-repo-server\n  namespace: other\nspec:\n  selector:\n    matchLabels:\n      app: r\n  template:\n    metadata:\n      labels:\n        app: r\n    spec:\n      automountServiceAccountToken: true\n      containers:\n        - name: argocd-repo-server\n          image: x\n")
+	writeTestFile(t, filepath.Join(root, "other", "install.yaml"), "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: argocd-repo-server\n  namespace: other\nspec:\n  selector:\n    matchLabels:\n      app: r\n  template:\n    metadata:\n      labels:\n        app: r\n    spec:\n      automountServiceAccountToken: true\n      containers:\n        - name: argocd-repo-server\n          image: x\n          args: [/usr/local/bin/argocd-repo-server]\n")
 	writeReviewApplication(t, root, "other", "other", "", "other")
 	ns, msgs := buildHelmNamespace(t, root)
 	t.Logf("ns=%q diags=%q", ns, msgs)
@@ -158,7 +159,7 @@ func TestHelmNamespaceRenderedChartInstallWithUnrelatedPatch(t *testing.T) {
 func TestHelmNamespaceIgnoresRenderedRepoServerOutsideArgoCDNamespace(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "other", "Chart.yaml"), "apiVersion: v2\nname: x\nversion: 1.0.0\n")
-	writeTestFile(t, filepath.Join(root, "other", "templates", "d.yaml"), "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: argocd-repo-server\n  namespace: {{ .Release.Namespace }}\nspec:\n  selector:\n    matchLabels:\n      app: r\n  template:\n    metadata:\n      labels:\n        app: r\n    spec:\n      automountServiceAccountToken: true\n      containers:\n        - name: argocd-repo-server\n          image: x\n")
+	writeTestFile(t, filepath.Join(root, "other", "templates", "d.yaml"), "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: argocd-repo-server\n  namespace: {{ .Release.Namespace }}\nspec:\n  selector:\n    matchLabels:\n      app: r\n  template:\n    metadata:\n      labels:\n        app: r\n    spec:\n      automountServiceAccountToken: true\n      containers:\n        - name: argocd-repo-server\n          image: x\n          args: [/usr/local/bin/argocd-repo-server]\n")
 	writeReviewApplication(t, root, "other", "other", "", "other")
 	ns, msgs := buildHelmNamespace(t, root)
 	t.Logf("ns=%q diags=%q", ns, msgs)
@@ -210,7 +211,7 @@ func TestHelmNamespaceWarnsAboutUnknownEnvSources(t *testing.T) {
 	root := t.TempDir()
 	writeRepoServerChartInstall(t, root, "argocd")
 	template := filepath.Join(root, "argocd", "templates", "install.yaml")
-	writeTestFile(t, template, strings.Replace(readTestFile(t, template), "        - name: argocd-repo-server\n          image: x\n", "        - name: argocd-repo-server\n          image: x\n          env:\n            - name: HELM_NAMESPACE\n              valueFrom:\n                configMapKeyRef:\n                  name: hidden-configmap\n                  key: namespace\n", 1))
+	writeTestFile(t, template, strings.Replace(readTestFile(t, template), "        - name: argocd-repo-server\n          image: x\n          args: [/usr/local/bin/argocd-repo-server]\n", "        - name: argocd-repo-server\n          image: x\n          args: [/usr/local/bin/argocd-repo-server]\n          env:\n            - name: HELM_NAMESPACE\n              valueFrom:\n                configMapKeyRef:\n                  name: hidden-configmap\n                  key: namespace\n", 1))
 	writeReviewApplication(t, root, "argocd", "argocd", "", "argocd")
 	ns, msgs := buildHelmNamespace(t, root)
 	if ns != "argocd" {

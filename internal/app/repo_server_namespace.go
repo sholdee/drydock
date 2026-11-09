@@ -52,13 +52,21 @@ type repoServerCandidate struct {
 // When several repo-servers count, drydock uses the first in this order:
 // one from the same install as an argocd-cm, then a rendered one, then by
 // path and document index. Another one that gives a different namespace
-// adds a warning.
-func repoServerHelmNamespace(workloads workloadCandidates) (*config.Value[string], []diagnostic.Diagnostic) {
+// adds a warning. As for the workload settings, a committed file that a
+// kustomization lists as a patch does not count, and drydock reads only a
+// container whose command line runs argocd-repo-server.
+func repoServerHelmNamespace(root string, workloads workloadCandidates) (*config.Value[string], []diagnostic.Diagnostic) {
 	deployments := workloads.byKind[discovery.RepoServerDeploymentKind]
 	serviceAccounts := workloads.serviceAccounts
 	diags := append([]diagnostic.Diagnostic(nil), workloads.diags...)
 	var out *config.Value[string]
 	for _, item := range deployments {
+		// The rules of the workload settings: a listed Kustomize patch is
+		// not a workload, and only a container that runs the program
+		// counts (applyComponentWorkloadSettings).
+		if !config.RepoServerRunsProgram(item.candidate.Object) || (item.candidate.Tier == discovery.SourceTierStatic && committedKustomizePatch(root, item.candidate.Path)) {
+			continue
+		}
 		var accounts []*unstructured.Unstructured
 		for _, account := range serviceAccounts {
 			if account.namespace == item.namespace && account.group == item.group {
@@ -75,8 +83,10 @@ func repoServerHelmNamespace(workloads workloadCandidates) (*config.Value[string
 			continue
 		}
 		out = &config.Value[string]{Value: namespace, Provenance: provenance}
-		if !item.namespaceKnown {
-			diags = append(diags, repoServerWarning(provenance, fmt.Sprintf("cannot tell the namespace of the Argo CD repo-server %s; drydock assumes the Argo CD namespace %q, so Helm sources and helmCharts without a namespace render in %q", name, item.namespace, namespace)))
+		// The pod namespace matters only when the Helm namespace comes
+		// from it, not from a literal HELM_NAMESPACE, for example.
+		if !item.namespaceKnown && namespace == item.namespace {
+			diags = append(diags, repoServerWarning(provenance, fmt.Sprintf("cannot tell the namespace of the Argo CD repo-server %s; drydock assumes the Argo CD namespace %q for its pod, so Helm sources and helmCharts without a namespace render in %q", name, item.namespace, namespace)))
 		}
 		for _, note := range notes {
 			diags = append(diags, repoServerWarning(provenance, fmt.Sprintf("cannot tell the Helm namespace of the Argo CD repo-server %s offline: %s; drydock uses %q for Helm sources and helmCharts without a namespace", name, note, namespace)))

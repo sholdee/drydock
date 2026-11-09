@@ -128,15 +128,18 @@ func RepoServerHelmNamespace(deployment *unstructured.Unstructured, serviceAccou
 	return podNamespace, notes
 }
 
-// repoServerContainer returns the repo-server container of a pod spec: the
-// container named argocd-repo-server (upstream install.yaml) or repo-server
-// (argo-cd Helm chart), else the first container.
+// repoServerContainer returns the container of a sanitized pod spec whose
+// command line runs argocd-repo-server (ComponentRunsProgramKey): the one
+// named argocd-repo-server (upstream install.yaml) or repo-server (argo-cd
+// Helm chart) first, else the first one that runs it. It returns nil when
+// no container runs the program, such as in a CMP sidecar patch, and
+// drydock does not read another container instead.
 func repoServerContainer(podSpec map[string]any) map[string]any {
 	containers, _, _ := unstructured.NestedSlice(podSpec, "containers")
 	var first map[string]any
 	for _, item := range containers {
 		container, ok := item.(map[string]any)
-		if !ok {
+		if !ok || container[ComponentRunsProgramKey] != true {
 			continue
 		}
 		if first == nil {
@@ -148,6 +151,13 @@ func repoServerContainer(podSpec map[string]any) map[string]any {
 		}
 	}
 	return first
+}
+
+// RepoServerRunsProgram reports whether a sanitized repo-server Deployment
+// has a container whose command line runs argocd-repo-server.
+func RepoServerRunsProgram(deployment *unstructured.Unstructured) bool {
+	podSpec, _, _ := unstructured.NestedMap(deployment.Object, "spec", "template", "spec")
+	return repoServerContainer(podSpec) != nil
 }
 
 // containerNamespaceEnv returns the env entries of container that decide
