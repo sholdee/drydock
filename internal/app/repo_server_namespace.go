@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
@@ -52,9 +53,10 @@ type repoServerCandidate struct {
 // one from the same install as an argocd-cm, then a rendered one, then by
 // path and document index. Another one that gives a different namespace
 // adds a warning.
-func repoServerHelmNamespace(root string, discovered discovery.Result, settings config.ArgoSettings) (*config.Value[string], []diagnostic.Diagnostic) {
-	deployments, serviceAccounts, diags := collectRepoServerCandidates(root, discovered, settings, discovery.RepoServerDeploymentKind)
-	sortRepoServerCandidates(deployments)
+func repoServerHelmNamespace(workloads workloadCandidates) (*config.Value[string], []diagnostic.Diagnostic) {
+	deployments := workloads.byKind[discovery.RepoServerDeploymentKind]
+	serviceAccounts := workloads.serviceAccounts
+	diags := append([]diagnostic.Diagnostic(nil), workloads.diags...)
 	var out *config.Value[string]
 	for _, item := range deployments {
 		var accounts []*unstructured.Unstructured
@@ -83,10 +85,21 @@ func repoServerHelmNamespace(root string, discovered discovery.Result, settings 
 	return out, diags
 }
 
-// collectRepoServerCandidates returns the workloads of kind that count (see
-// repoServerHelmNamespace), such as the repo-server Deployments, and the
-// repo-server ServiceAccounts, each with its pod namespace and install.
-func collectRepoServerCandidates(root string, discovered discovery.Result, settings config.ArgoSettings, kind string) ([]repoServerCandidate, []repoServerCandidate, []diagnostic.Diagnostic) {
+// workloadCandidates are the Argo CD workloads that count (see
+// repoServerHelmNamespace), by candidate kind and sorted
+// (sortRepoServerCandidates), and the repo-server ServiceAccounts, each with
+// its pod namespace and install. diags holds the warnings about the
+// namespaces of committed objects.
+type workloadCandidates struct {
+	byKind          map[string][]repoServerCandidate
+	serviceAccounts []repoServerCandidate
+	diags           []diagnostic.Diagnostic
+}
+
+// collectWorkloadCandidates collects the workloads of every kind in one
+// pass. memo keeps, for one build side, which Applications render each
+// committed file (staticFileRenders).
+func collectWorkloadCandidates(root string, discovered discovery.Result, settings config.ArgoSettings, memo *sync.Map) workloadCandidates {
 	inputs := renderedSettingsInputs(discovered.SettingsCandidates)
 	controllerNamespace := settings.ControllerNamespace("")
 	settingsGroups := map[string]bool{}
@@ -95,52 +108,37 @@ func collectRepoServerCandidates(root string, discovered discovery.Result, setti
 			settingsGroups[repoServerGroup(candidate)] = true
 		}
 	}
-	var diags []diagnostic.Diagnostic
-	var deployments, serviceAccounts []repoServerCandidate
+	out := workloadCandidates{byKind: map[string][]repoServerCandidate{}}
 	for _, candidate := range discovered.SettingsCandidates {
-		if !collectsWorkloadCandidate(candidate, kind) || supersededBySettingsRender(candidate, inputs) {
+		if !discovery.IsArgoCDWorkloadKind(candidate.Kind) || candidate.Object == nil || supersededBySettingsRender(candidate, inputs) {
 			continue
 		}
-		item := repoServerCandidate{candidate: candidate, group: repoServerGroup(candidate)}
-		item.withSettings = settingsGroups[item.group]
-		if candidate.Tier == discovery.SourceTierStatic {
-			namespace, known, remote, nsDiags := staticRepoServerNamespace(root, candidate, discovered.Applications, settings)
-			diags = append(diags, nsDiags...)
-			if remote {
-				continue
-			}
-			item.namespace, item.namespaceKnown = namespace, known
-		} else {
-			item.namespace = candidate.Object.GetNamespace()
-			item.namespaceKnown = item.namespace != ""
+		item, remote, nsDiags := placedWorkloadCandidate(root, candidate, discovered.Applications, settings, memo)
+		out.diags = append(out.diags, nsDiags...)
+		if remote {
+			continue
 		}
+		item.withSettings = settingsGroups[item.group]
 		// An object whose namespace drydock cannot tell runs in the Argo CD
 		// namespace, the ServiceAccount as its Deployment.
 		if !item.namespaceKnown {
 			item.namespace = controllerNamespace
 		}
 		if candidate.Kind == discovery.RepoServerServiceAccountKind {
-			serviceAccounts = append(serviceAccounts, item)
+			out.serviceAccounts = append(out.serviceAccounts, item)
 			continue
 		}
 		if containers, _, _ := unstructured.NestedSlice(candidate.Object.Object, "spec", "template", "spec", "containers"); len(containers) == 0 {
 			continue
 		}
 		if item.withSettings || item.namespace == controllerNamespace {
-			deployments = append(deployments, item)
+			out.byKind[candidate.Kind] = append(out.byKind[candidate.Kind], item)
 		}
 	}
-	return deployments, serviceAccounts, diags
-}
-
-// collectsWorkloadCandidate reports whether collectRepoServerCandidates
-// reads candidate for kind: a workload of kind, or a repo-server
-// ServiceAccount for the repo-server Deployment.
-func collectsWorkloadCandidate(candidate discovery.SettingsCandidate, kind string) bool {
-	if candidate.Object == nil {
-		return false
+	for kind := range out.byKind {
+		sortRepoServerCandidates(out.byKind[kind])
 	}
-	return candidate.Kind == kind || (kind == discovery.RepoServerDeploymentKind && candidate.Kind == discovery.RepoServerServiceAccountKind)
+	return out
 }
 
 // sortRepoServerCandidates orders the repo-servers that count: from the
@@ -190,6 +188,21 @@ func repoServerGroup(candidate discovery.SettingsCandidate) string {
 	return "static\x00" + path.Dir(filepath.ToSlash(candidate.Path))
 }
 
+// placedWorkloadCandidate gives a workload candidate its pod namespace and
+// install. remote reports a committed file that only Applications on other
+// clusters render.
+func placedWorkloadCandidate(root string, candidate discovery.SettingsCandidate, applications []discovery.ApplicationFile, settings config.ArgoSettings, memo *sync.Map) (repoServerCandidate, bool, []diagnostic.Diagnostic) {
+	item := repoServerCandidate{candidate: candidate, group: repoServerGroup(candidate)}
+	if candidate.Tier != discovery.SourceTierStatic {
+		item.namespace = candidate.Object.GetNamespace()
+		item.namespaceKnown = item.namespace != ""
+		return item, false, nil
+	}
+	namespace, known, remote, diags := staticRepoServerNamespace(root, candidate, applications, settings, memo)
+	item.namespace, item.namespaceKnown = namespace, known
+	return item, remote, diags
+}
+
 // staticRepoServerNamespace works out the namespace of a committed
 // repo-server object as kustomize and Argo CD place it. kustomize applies
 // the namespace of every kustomization on the way from the source root to
@@ -202,9 +215,9 @@ func repoServerGroup(candidate discovery.SettingsCandidate) string {
 // it; drydock does not search the repository for kustomizations further up.
 // remote reports a file that only Applications on other clusters render:
 // that repo-server runs another Argo CD.
-func staticRepoServerNamespace(root string, candidate discovery.SettingsCandidate, applications []discovery.ApplicationFile, settings config.ArgoSettings) (namespace string, known, remote bool, diags []diagnostic.Diagnostic) {
+func staticRepoServerNamespace(root string, candidate discovery.SettingsCandidate, applications []discovery.ApplicationFile, settings config.ArgoSettings, memo *sync.Map) (namespace string, known, remote bool, diags []diagnostic.Diagnostic) {
 	file := filepath.ToSlash(candidate.Path)
-	renders := staticFileRenders(root, file, applications, settings)
+	renders := staticFileRenders(root, file, applications, settings, memo)
 	if renders.remoteOnly {
 		return "", false, true, nil
 	}
@@ -228,7 +241,7 @@ func staticRepoServerNamespace(root string, candidate discovery.SettingsCandidat
 func pickStaticNamespace(file string, namespaces []string, what string) (string, bool, bool, []diagnostic.Diagnostic) {
 	var diags []diagnostic.Diagnostic
 	if len(namespaces) > 1 {
-		diags = append(diags, repoServerWarning(diagnostic.Provenance{Path: file}, fmt.Sprintf("Applications render the Argo CD repo-server in %s with the %s %s; drydock uses %q", file, what, strings.Join(namespaces, ", "), namespaces[0])))
+		diags = append(diags, repoServerWarning(diagnostic.Provenance{Path: file}, fmt.Sprintf("Applications render the Argo CD workload in %s with the %s %s; drydock uses %q", file, what, strings.Join(namespaces, ", "), namespaces[0])))
 	}
 	return namespaces[0], true, false, diags
 }
@@ -248,33 +261,47 @@ type staticRenders struct {
 	remoteOnly bool
 }
 
-func staticFileRenders(root, file string, applications []discovery.ApplicationFile, settings config.ArgoSettings) staticRenders {
+// staticFileRenders asks each Application whether it renders file. memo
+// keeps each answer for one build side (applicationRendersCommittedFile),
+// apart from the answers of the committed file walker, which resolves the
+// sources with the --repo-map entries of the request.
+func staticFileRenders(root, file string, applications []discovery.ApplicationFile, settings config.ArgoSettings, memo *sync.Map) staticRenders {
 	var out staticRenders
 	inCluster, remote := 0, 0
 	gates := sourceTypeGatesFromSettings(settings)
+	provider := localProvider{repoRoot: root}
+	staticMemo := staticRendersMemo(memo)
 	for _, appFile := range applications {
 		if appFile.Tier == discovery.SourceTierExternalManifest {
 			continue
 		}
-		for _, source := range applicationSources(appFile.Application) {
-			reads, kustomizeNamespace := sourceRendersCommittedFile(root, source, file, gates)
-			if !reads {
-				continue
-			}
-			server, ok := project.ResolveDestinationServer(appFile.Application.Spec.Destination, settings)
-			if ok && server != argoappv1.KubernetesInternalAPIServerAddr {
-				remote++
-				break
-			}
-			inCluster++
-			out.destinations = appendSortedUnique(out.destinations, appFile.Application.Spec.Destination.Namespace)
-			out.kustomizeNamespaces = appendSortedUnique(out.kustomizeNamespaces, kustomizeNamespace)
-			break
+		render := applicationRendersCommittedFile(provider, file, appFile.Application, gates, staticMemo)
+		if !render.reads {
+			continue
 		}
+		server, ok := project.ResolveDestinationServer(appFile.Application.Spec.Destination, settings)
+		if ok && server != argoappv1.KubernetesInternalAPIServerAddr {
+			remote++
+			continue
+		}
+		inCluster++
+		out.destinations = appendSortedUnique(out.destinations, appFile.Application.Spec.Destination.Namespace)
+		out.kustomizeNamespaces = appendSortedUnique(out.kustomizeNamespaces, render.kustomizeNamespace)
 	}
 	out.rendered = inCluster > 0
 	out.remoteOnly = inCluster == 0 && remote > 0
 	return out
+}
+
+// staticRendersMemo returns the memo of staticFileRenders inside memo, or
+// nil without one.
+func staticRendersMemo(memo *sync.Map) *sync.Map {
+	if memo == nil {
+		return nil
+	}
+	nested, _ := memo.LoadOrStore("static-file-renders", &sync.Map{})
+	staticMemo, _ := nested.(*sync.Map)
+	return staticMemo
 }
 
 func appendSortedUnique(values []string, value string) []string {
@@ -286,7 +313,7 @@ func appendSortedUnique(values []string, value string) []string {
 	return values
 }
 
-// sourceRendersCommittedFile reports whether source renders the committed
+// sourceRendersCommittedFileWith reports whether source renders the committed
 // file as it is, and for a Kustomize source the outermost kustomization
 // namespace on the way to the file. The source must render this
 // repository: not an OCI artifact, not a chart from a chart repository, and
@@ -296,13 +323,8 @@ func appendSortedUnique(values []string, value string) []string {
 // path, or below it with directory.recurse, when its include and exclude
 // globs let the file through. A Helm chart renders its templates, not a
 // committed file, and a plugin is not known.
-func sourceRendersCommittedFile(root string, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) (bool, string) {
-	return sourceRendersCommittedFileWith(localProvider{repoRoot: root}, source, file, gates)
-}
-
-// sourceRendersCommittedFileWith is sourceRendersCommittedFile with
-// provider, which tells whether the source renders this repository with
-// its --repo-map entries and self-repo facts (settingsInstallProbe).
+// provider tells whether the source renders this repository with its
+// --repo-map entries and self-repo facts (settingsInstallProbe).
 func sourceRendersCommittedFileWith(provider localProvider, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) (bool, string) {
 	root := provider.repoRoot
 	if source.Path == "" || !provider.sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {

@@ -3,8 +3,10 @@ package app
 import (
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
@@ -629,5 +631,35 @@ spec:
 				t.Errorf("workload warnings = %#v, want none", diags)
 			}
 		})
+	}
+}
+
+// drydock asks which Applications render a committed Argo CD workload once
+// for each Application and file in a build side: one pass collects the
+// repo-server for the Helm namespace and every workload for the settings,
+// and the answers are kept for every later settings load.
+func TestCommittedWorkloadRenderCheckIsMemoized(t *testing.T) {
+	var calls atomic.Int64
+	original := committedFileReader
+	committedFileReader = func(provider localProvider, source argoappv1.ApplicationSource, file string, gates sourceTypeGates) (bool, string) {
+		if file == "settings/workloads.yaml" {
+			calls.Add(1)
+		}
+		return original(provider, source, file, gates)
+	}
+	t.Cleanup(func() { committedFileReader = original })
+
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), strings.Replace(partialWorkloadParams, "metadata:\n  name: argocd-cmd-params-cm\n", "metadata:\n  name: argocd-cmd-params-cm\n  namespace: argocd\n", 1))
+	writeTestFile(t, filepath.Join(root, "settings", "workloads.yaml"), strings.ReplaceAll(vendoredArgoCDWorkloads, "spec:\n  template:", "  namespace: argocd\nspec:\n  template:"))
+	for _, name := range []string{"a", "b", "c"} {
+		writeDiffApplication(t, root, name, name, "same")
+	}
+	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+	if got := result.Settings.IncludeHiddenDirectories.Value; got != "true" {
+		t.Fatalf("IncludeHiddenDirectories = %q, want true through the committed repo-server", got)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("render checks of the committed workloads = %d, want 3 for the whole run", got)
 	}
 }

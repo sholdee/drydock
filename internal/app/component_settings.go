@@ -86,16 +86,11 @@ var componentContainerNames = map[config.ArgoCDComponent]string{
 // it cannot know a value offline (a secretKeyRef, envFrom, a $(VAR)
 // reference, a configMapKeyRef to a ConfigMap that it does not find) and
 // when the workload does not pass a key that argocd-cmd-params-cm sets.
-func applyComponentWorkloadSettings(root string, discovered discovery.Result, settings *config.ArgoSettings) []diagnostic.Diagnostic {
+func applyComponentWorkloadSettings(root string, collected workloadCandidates, settings *config.ArgoSettings) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 	base := *settings
 	for _, component := range config.ArgoCDComponents {
-		workloads, _, collectDiags := collectRepoServerCandidates(root, discovered, base, componentWorkloadKinds[component])
-		if component != config.RepoServerComponent {
-			// repoServerHelmNamespace reports these for the repo-server.
-			diags = append(diags, collectDiags...)
-		}
-		sortRepoServerCandidates(workloads)
+		workloads := collected.byKind[componentWorkloadKinds[component]]
 		var chosen []componentValue
 		chosenRendered := false
 		for _, item := range workloads {
