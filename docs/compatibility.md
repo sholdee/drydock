@@ -994,6 +994,8 @@ Important boundaries:
     first `/`, such as `https://a.example?@b.example/org/repo.git`. net/url
     reads the host `a.example` from it, and code that cuts at `/` reads
     `b.example`. The Git cache key and the clone URL use the net/url host.
+    A `?` or `#` in the user name or password of a URL is part of the host
+    part too, so it must be percent-encoded (`%3F`, `%23`).
     A cache entry whose origin names another repository than the request
     is cloned again, or is a cache miss with `--offline`, and every fetch
     goes to the URL of the request. This applies to Application sources,

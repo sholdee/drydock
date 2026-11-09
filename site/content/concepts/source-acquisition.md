@@ -801,7 +801,9 @@ stores the URL in the cache.
 
 drydock refuses a Git URL with `?`, `#`, or `\` between `://` and the first
 `/`, such as `https://git.example.com?@other.example.net/org/repo.git`.
-Parsers read another host from such a URL. drydock also checks each Git cache
+Parsers read another host from such a URL. A user name or password in the URL
+is part of that host part, so write a `?` or `#` in it percent-encoded, as
+`%3F` or `%23`. drydock also checks each Git cache
 entry before it uses it. If the origin of the entry names another repository
 than the request, drydock clones the request URL into the entry again. With
 `--offline`, the request fails as a cache miss. Every fetch goes to the URL of
