@@ -106,8 +106,65 @@ var componentBoolFlags = map[ArgoCDComponent][]string{
 	},
 }
 
+// componentValueFlags lists every flag of each program that takes a value,
+// other than the setting flags. With componentBoolFlags and the setting
+// flags, they are all the flags of the program, so any other flag stops it
+// at startup ("unknown flag"). They come from the flag calls of Argo CD
+// v3.6.1 in the command files above, util/cache/cache.go
+// (AddCacheFlagsToCmd), reposerver/cache/cache.go:74-76,
+// util/cache/appstate/cache.go:37, util/tls/tls.go (AddTLSFlagsToCmd for
+// the repo-server, AddClientTLSFlagsToCmdWithPrefix for the controllers),
+// and util/cli/cli.go:105-119 with the client-go override flags
+// (tools/clientcmd/overrides.go:147-166 at v0.37.0) for the controllers.
+var componentValueFlags = map[ArgoCDComponent][]string{
+	RepoServerComponent: append([]string{
+		"logformat", "loglevel", "parallelismlimit", "address", "port", "metrics-address", "metrics-port",
+		"otlp-address", "otlp-headers", "otlp-attrs", "plugin-tar-exclude", "streamed-manifest-max-tar-size",
+		"streamed-manifest-max-extracted-size", "helm-manifest-max-extracted-size", "helm-registry-max-index-size",
+		"oci-manifest-max-extracted-size", "oci-layer-media-types", "client-ca-path",
+		"tlsminversion", "tlsmaxversion", "tlsciphers", "tlscurvepreferences",
+		"repo-cache-expiration", "revision-cache-expiration", "revision-cache-lock-timeout",
+	}, cacheValueFlags...),
+	ApplicationControllerComponent: append(append([]string{
+		"app-resync", "app-hard-resync", "app-resync-jitter", "repo-error-grace-period-seconds", "repo-server",
+		"repo-server-timeout-seconds", "commit-server", "status-processors", "operation-processors",
+		"hydration-processors", "logformat", "loglevel", "gloglevel", "metrics-port", "metrics-cache-expiration",
+		"self-heal-timeout-seconds", "self-heal-backoff-timeout-seconds", "self-heal-backoff-factor",
+		"self-heal-backoff-cap-seconds", "self-heal-backoff-cooldown-seconds", "sync-timeout",
+		"kubectl-parallelism-limit", "metrics-application-labels", "metrics-application-conditions",
+		"metrics-cluster-labels", "otlp-address", "otlp-headers", "otlp-attrs", "sharding-method",
+		"wq-bucket-size", "wq-bucket-qps", "wq-cooldown-ns", "wq-basedelay-ns", "wq-maxdelay-ns",
+		"wq-backoff-factor", "enable-k8s-event", "app-state-cache-expiration",
+	}, cacheValueFlags...), controllerClientValueFlags...),
+	ApplicationSetControllerComponent: append([]string{
+		"metrics-addr", "probe-addr", "webhook-addr", "argocd-repo-server", "policy", "logformat", "loglevel",
+		"allowed-scm-providers", "refresh-grace-period-seconds", "repo-server-timeout-seconds",
+		"concurrent-reconciliations", "scm-root-ca-path", "scm-proxy-url", "scm-no-proxy",
+		"preserved-annotations", "preserved-labels", "webhook-parallelism-limit",
+		"metrics-applicationset-labels", "max-resources-status-count", "cache-sync-period",
+		"concurrent-application-updates", "wq-bucket-size", "wq-bucket-qps", "wq-cooldown", "wq-basedelay",
+		"wq-maxdelay", "wq-backoff-factor",
+	}, controllerClientValueFlags...),
+}
+
+// cacheValueFlags are the value flags of util/cache.AddCacheFlagsToCmd.
+var cacheValueFlags = []string{
+	"redis", "redisdb", "sentinel", "sentinelmaster", "default-cache-expiration", "redis-client-certificate",
+	"redis-client-key", "redis-ca-certificate", "redis-compress",
+}
+
+// controllerClientValueFlags are the value flags of the repo-server client
+// TLS flags and the kubectl flags of the two controllers.
+var controllerClientValueFlags = []string{
+	"repo-server-ca-cert-path", "repo-server-client-cert-path", "repo-server-client-cert-key-path",
+	"kubeconfig", "context", "request-timeout", "client-certificate", "client-key", "token", "as", "as-uid",
+	"as-group", "username", "password", "server", "certificate-authority", "tls-server-name", "proxy-url",
+	"cluster", "user", "namespace",
+}
+
 // componentValueShorthands lists the one-letter flags that take a value:
-// the kubectl -n of the two controllers. cobra adds -h, which takes none.
+// the kubectl -n of the two controllers. cobra adds -h, which prints the
+// help.
 var componentValueShorthands = map[ArgoCDComponent]string{
 	ApplicationControllerComponent:    "n",
 	ApplicationSetControllerComponent: "n",
@@ -223,6 +280,10 @@ func (p *componentArgsParser) parse(args []string) {
 		switch {
 		case arg == "--":
 			return
+		case strings.Contains(arg, "$(") && !strings.HasPrefix(arg, "--"):
+			// The kubelet fills in the reference before the program
+			// parses its flags, so it can become any flag.
+			p.notes = append(p.notes, fmt.Sprintf("the argument %q has a $(VAR) reference, which the kubelet fills in from the container environment, so it can set a flag", arg))
 		case len(arg) < 2 || arg[0] != '-':
 			continue
 		case arg[1] == '-':
@@ -233,19 +294,25 @@ func (p *componentArgsParser) parse(args []string) {
 	}
 }
 
-// parseShort skips a group of one-letter flags. Only -n takes a value: the
-// rest of the group, the text after "=", or the next argument.
+// parseShort skips a group of one-letter flags. -n of the controllers
+// takes a value: the rest of the group, the text after "=", or the next
+// argument. -h prints the help, and any other letter stops the program.
 func (p *componentArgsParser) parseShort(arg string, args []string) []string {
 	shorthands := arg[1:]
 	valueShorthand := componentValueShorthands[p.component]
 	for i := range len(shorthands) {
-		if valueShorthand == "" || shorthands[i] != valueShorthand[0] {
-			continue
-		}
-		if i+1 < len(shorthands) || len(args) == 0 {
+		switch {
+		case shorthands[i] == 'h':
+			p.notes = append(p.notes, fmt.Sprintf("flag -h prints the help of %s, so %s does not start", p.component, p.component))
 			return args
+		case valueShorthand == "" || shorthands[i] != valueShorthand[0]:
+			p.notes = append(p.notes, fmt.Sprintf("flag -%c is not a flag of %s, so %s does not start", shorthands[i], p.component, p.component))
+			return args
+		case i+1 < len(shorthands) || len(args) == 0:
+			return args
+		default:
+			return args[1:]
 		}
-		return args[1:]
 	}
 	return args
 }
@@ -254,12 +321,7 @@ func (p *componentArgsParser) parseLong(arg string, args []string) []string {
 	name, value, inline := strings.Cut(arg[2:], "=")
 	setting, isSetting := p.setting(name)
 	if !isSetting {
-		if inline || p.isBool(name) || len(args) == 0 {
-			return args
-		}
-		// Any other flag takes the next argument as its value, also one
-		// that starts with "--".
-		return args[1:]
+		return p.skipLong(name, inline, args)
 	}
 	if setting.kind == componentFlagBool {
 		if !inline {
@@ -289,8 +351,28 @@ func (p *componentArgsParser) setting(name string) (ComponentSetting, bool) {
 	return ComponentSetting{}, false
 }
 
-func (p *componentArgsParser) isBool(name string) bool {
-	return slices.Contains(componentBoolFlags[p.component], name)
+// skipLong skips a flag that sets no setting. A boolean flag takes no
+// separate value. A value flag takes the next argument, also one that
+// starts with "--". help prints the help, and an unknown flag stops the
+// program.
+func (p *componentArgsParser) skipLong(name string, inline bool, args []string) []string {
+	switch {
+	case name == "help":
+		p.notes = append(p.notes, fmt.Sprintf("flag --help prints the help of %s, so %s does not start", p.component, p.component))
+		return args
+	case strings.Contains(name, "$("):
+		p.notes = append(p.notes, fmt.Sprintf("the argument %q has a $(VAR) reference, which the kubelet fills in from the container environment, so it can set a flag", "--"+name))
+		return args
+	case slices.Contains(componentBoolFlags[p.component], name):
+		return args
+	case !slices.Contains(componentValueFlags[p.component], name):
+		p.notes = append(p.notes, fmt.Sprintf("flag --%s is not a flag of %s, so %s does not start", name, p.component, p.component))
+		return args
+	case inline || len(args) == 0:
+		return args
+	default:
+		return args[1:]
+	}
 }
 
 func (p *componentArgsParser) setBool(setting ComponentSetting, value string) {

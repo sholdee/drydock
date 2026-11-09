@@ -1819,8 +1819,12 @@ Supported:
   reads a Secret value), `envFrom`, a value with a `$(VAR)` reference, a
   `configMapKeyRef` to a ConfigMap that drydock does not find, or a
   reference that is not optional to a key that is missing. It also warns
-  when the command line does not run the program, or when a flag value
-  stops the program at startup, such as `--enable-progressive-syncs=yes`.
+  when the command line does not run the program, when a flag value
+  stops the program at startup, such as `--enable-progressive-syncs=yes`,
+  and when a flag is not a flag of the program or prints the help, which
+  stops it too. drydock knows every flag of the three programs in Argo CD
+  v3.6.1. An argument with a `$(VAR)` reference in the place of a flag
+  also warns, because the kubelet fills it in and it can become a flag.
   When `argocd-cmd-params-cm` sets a key but the workload does not pass it
   to the program, Argo CD ignores the key. drydock then uses the default
   and warns. When two workloads count and give a key different values,
