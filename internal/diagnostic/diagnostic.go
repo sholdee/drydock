@@ -66,6 +66,13 @@ const CodeSettingsIgnoreResourceUpdates = "settings.ignore-resource-updates"
 // known to be incomplete. --strict fails on it like on any warning.
 const CodeSettingsInstallRenderFailed = "settings.install-render-failed"
 
+// CodeSettingsInstallsUnsettled is the warning that the Argo CD installs
+// that drydock renders for their settings do not settle: an install counts
+// with some of the settings that the rounds find and not with others.
+// drydock then keeps the settings of each such install. --strict fails on
+// it like on any warning.
+const CodeSettingsInstallsUnsettled = "settings.installs-unsettled"
+
 type Provenance struct {
 	Path    string `json:"path,omitempty" yaml:"path,omitempty"`
 	Pointer string `json:"pointer,omitempty" yaml:"pointer,omitempty"`

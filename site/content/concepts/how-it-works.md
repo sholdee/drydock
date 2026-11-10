@@ -21,9 +21,13 @@ and reads the Argo CD settings from the rendered ConfigMaps. An install
 renders the `argo-cd` chart, or its Helm values set Argo CD settings, and it
 deploys to this cluster. Helm
 merges the values files of the install and the chart defaults, so drydock
-sees the settings that Argo CD sees in the cluster. If the install does not
-render, drydock reports a warning and reads `configs.cm` and `configs.cmp`
-from its values files on their own.
+sees the settings that Argo CD sees in the cluster. The chart can be in a
+Kustomize component that the Application adds. drydock also reads the
+environment and the flags of the repo-server and the controllers of the
+install, because a flag or a variable there can set a value that
+`argocd-cmd-params-cm` sets. If the install does not render, drydock reports
+a warning and reads `configs.cm` and `configs.cmp` from its values files on
+their own.
 
 Supported ApplicationSet generators expand offline from local files, lists,
 matrix and merge combinations, or explicit provider fixtures. Unsupported

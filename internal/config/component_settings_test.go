@@ -1,0 +1,247 @@
+package config
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// ParseComponentArgs reads the setting flags as pflag v1.0.10 parses the
+// command line of the Argo CD program.
+func TestParseComponentArgs(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		component ArgoCDComponent
+		command   []string
+		args      []string
+		want      []ComponentFlag
+		notes     []string
+	}{
+		{
+			name:      "boolean flag without a value is true",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--port=8081", "--allow-oob-symlinks"},
+			want:      []ComponentFlag{{Flag: "allow-oob-symlinks", Value: "true"}},
+		},
+		{
+			name:      "boolean flag reads its value with strconv.ParseBool",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--include-hidden-directories=0", "--allow-oob-symlinks=T"},
+			want:      []ComponentFlag{{Flag: "allow-oob-symlinks", Value: "true"}, {Flag: "include-hidden-directories", Value: "false"}},
+		},
+		{
+			name:      "boolean flag does not take the next argument",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--allow-oob-symlinks", "false"},
+			want:      []ComponentFlag{{Flag: "allow-oob-symlinks", Value: "true"}},
+		},
+		{
+			name:      "string flag takes the next argument and the last one wins",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--max-combined-directory-manifests-size", "5M", "--max-combined-directory-manifests-size=7M"},
+			want:      []ComponentFlag{{Flag: "max-combined-directory-manifests-size", Value: "7M"}},
+		},
+		{
+			name:      "another value flag takes a setting flag as its value",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--otlp-address", "--allow-oob-symlinks"},
+		},
+		{
+			name:      "another boolean flag takes no value",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--disable-tls", "--allow-oob-symlinks"},
+			want:      []ComponentFlag{{Flag: "allow-oob-symlinks", Value: "true"}},
+		},
+		{
+			name:      "double dash ends the flags",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--", "--allow-oob-symlinks"},
+		},
+		{
+			name:      "command and args make one command line",
+			component: ApplicationSetControllerComponent,
+			command:   []string{"argocd-applicationset-controller"},
+			args:      []string{"--enable-progressive-syncs", "-n", "--enable-new-git-file-globbing"},
+			want:      []ComponentFlag{{Flag: "enable-progressive-syncs", Value: "true"}},
+		},
+		{
+			name:      "server-side diff flag of the controller",
+			component: ApplicationControllerComponent,
+			args:      []string{"/usr/local/bin/argocd-application-controller", "--server-side-diff-enabled=TRUE"},
+			want:      []ComponentFlag{{Flag: "server-side-diff-enabled", Value: "true"}},
+		},
+		{
+			name:      "string slice flags add their fields",
+			component: ApplicationControllerComponent,
+			args:      []string{"/usr/local/bin/argocd-application-controller", "--application-namespaces=a,b", "--application-namespaces", "c"},
+			want:      []ComponentFlag{{Flag: "application-namespaces", Value: "a,b,c"}},
+		},
+		{
+			name:      "an invalid boolean stops the program",
+			component: ApplicationSetControllerComponent,
+			args:      []string{"/usr/local/bin/argocd-applicationset-controller", "--enable-progressive-syncs=yes"},
+			notes:     []string{`flag --enable-progressive-syncs has the value "yes", which is not a boolean, so argocd-applicationset-controller does not start`},
+		},
+		{
+			name:      "an invalid duration stops the program",
+			component: ApplicationControllerComponent,
+			args:      []string{"/usr/local/bin/argocd-application-controller", "--ignore-normalizer-jq-execution-timeout-seconds=5"},
+			notes:     []string{`flag --ignore-normalizer-jq-execution-timeout-seconds has the value "5", which is not a duration, so argocd-application-controller does not start`},
+		},
+		{
+			name:      "a $(VAR) reference is not known",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--max-combined-directory-manifests-size=$(SIZE)"},
+			notes:     []string{"flag --max-combined-directory-manifests-size has a $(VAR) reference, which the kubelet fills in from the container environment"},
+		},
+		{
+			name:      "a $(VAR) argument in flag position can become a flag",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "$(EXTRA_FLAGS)"},
+			notes:     []string{`the argument "$(EXTRA_FLAGS)" has a $(VAR) reference, which the kubelet fills in from the container environment, so it can set a flag`},
+		},
+		{
+			name:      "an unknown flag stops the program",
+			component: ApplicationSetControllerComponent,
+			args:      []string{"/usr/local/bin/argocd-applicationset-controller", "--no-such-flag", "--enable-progressive-syncs"},
+			want:      []ComponentFlag{{Flag: "enable-progressive-syncs", Value: "true"}},
+			notes:     []string{"flag --no-such-flag is not a flag of argocd-applicationset-controller, so argocd-applicationset-controller does not start"},
+		},
+		{
+			name:      "an unknown shorthand stops the program",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "-n", "argocd"},
+			notes:     []string{"flag -n is not a flag of argocd-repo-server, so argocd-repo-server does not start"},
+		},
+		{
+			name:      "-h stops the program",
+			component: ApplicationControllerComponent,
+			args:      []string{"/usr/local/bin/argocd-application-controller", "-h", "--application-namespaces=a"},
+			want:      []ComponentFlag{{Flag: "application-namespaces", Value: "a"}},
+			notes:     []string{"flag -h prints the help of argocd-application-controller, so argocd-application-controller does not start"},
+		},
+		{
+			name:      "help stops the program",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--help"},
+			notes:     []string{"flag --help prints the help of argocd-repo-server, so argocd-repo-server does not start"},
+		},
+		{
+			name:      "otlp-sample-ratio takes the next argument",
+			component: RepoServerComponent,
+			args:      []string{"/usr/local/bin/argocd-repo-server", "--otlp-sample-ratio", "0.5", "--allow-oob-symlinks"},
+			want:      []ComponentFlag{{Flag: "allow-oob-symlinks", Value: "true"}},
+		},
+		{
+			name:      "a known value flag takes the next argument",
+			component: ApplicationControllerComponent,
+			args:      []string{"/usr/local/bin/argocd-application-controller", "--kubeconfig", "--application-namespaces", "-n", "argocd"},
+		},
+		{
+			name:      "tini runs the program",
+			component: RepoServerComponent,
+			command:   []string{"/usr/bin/tini", "--", "/usr/local/bin/argocd-repo-server"},
+			args:      []string{"--allow-oob-symlinks"},
+			want:      []ComponentFlag{{Flag: "allow-oob-symlinks", Value: "true"}},
+		},
+		{
+			name:      "tini with a grouped option that takes a value",
+			component: RepoServerComponent,
+			command:   []string{"/usr/bin/tini", "-sp", "SIGTERM", "--", "/usr/local/bin/argocd-repo-server"},
+			args:      []string{"--allow-oob-symlinks"},
+			want:      []ComponentFlag{{Flag: "allow-oob-symlinks", Value: "true"}},
+		},
+		{
+			name:      "tini with options runs the program",
+			component: RepoServerComponent,
+			command:   []string{"tini", "-g", "-p", "SIGTERM", "/usr/local/bin/argocd-repo-server"},
+			args:      []string{"--include-hidden-directories"},
+			want:      []ComponentFlag{{Flag: "include-hidden-directories", Value: "true"}},
+		},
+		{
+			name:      "another program is not read",
+			component: RepoServerComponent,
+			command:   []string{"sh", "-c"},
+			args:      []string{"exec argocd-repo-server --allow-oob-symlinks"},
+			notes:     []string{`the container runs "sh", not argocd-repo-server, so drydock does not read its flags`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flags, notes := ParseComponentArgs(tc.component, tc.command, tc.args)
+			if !reflect.DeepEqual(flags, tc.want) {
+				t.Errorf("flags = %#v, want %#v", flags, tc.want)
+			}
+			if strings.Join(notes, "\n") != strings.Join(tc.notes, "\n") {
+				t.Errorf("notes = %q, want %q", notes, tc.notes)
+			}
+		})
+	}
+}
+
+// Every boolean flag of each program takes no separate value, so a setting
+// flag after it is read. The lists repeat the BoolVar flags of Argo CD
+// v3.6.1 (see componentBoolFlags) on purpose: a flag that the table misses
+// would stop the program as an unknown flag, or take the setting flag as
+// its value.
+func TestParseComponentArgsReadsEveryBooleanFlagAsBoolean(t *testing.T) {
+	cacheBool := []string{"redis-use-tls", "redis-insecure-skip-tls-verify"}
+	kubectlBool := []string{"insecure-skip-tls-verify", "disable-compression"}
+	for _, tc := range []struct {
+		component ArgoCDComponent
+		flags     []string
+		next      []string
+	}{
+		{
+			component: RepoServerComponent,
+			flags: append([]string{"otlp-insecure", "disable-oci-manifest-max-extracted-size", "disable-helm-manifest-max-extracted-size",
+				"plugin-use-manifest-generate-paths", "enable-builtin-git-config", "disable-tls"}, cacheBool...),
+			next: []string{"--allow-oob-symlinks"},
+		},
+		{
+			component: ApplicationControllerComponent,
+			flags: append(append([]string{"repo-server-plaintext", "repo-server-strict-tls", "otlp-insecure", "persist-resource-health",
+				"dynamic-cluster-distribution-enabled", "hydrator-enabled"}, cacheBool...), kubectlBool...),
+			next: []string{"--application-namespaces", "team-a"},
+		},
+		{
+			component: ApplicationSetControllerComponent,
+			flags: append([]string{"enable-leader-election", "enable-policy-override", "debug", "enable-scm-providers", "dry-run",
+				"token-ref-strict-mode", "repo-server-plaintext", "repo-server-strict-tls", "enable-github-api-metrics"}, kubectlBool...),
+			next: []string{"--enable-progressive-syncs"},
+		},
+	} {
+		for _, flag := range tc.flags {
+			t.Run(string(tc.component)+"/"+flag, func(t *testing.T) {
+				args := append([]string{"/usr/local/bin/" + string(tc.component), "--" + flag}, tc.next...)
+				got, notes := ParseComponentArgs(tc.component, nil, args)
+				if len(got) != 1 || len(notes) != 0 {
+					t.Fatalf("ParseComponentArgs(%q) = %#v, %q, want the setting flag after the boolean flag", args, got, notes)
+				}
+			})
+		}
+	}
+}
+
+// ComponentRunsProgram skips a leading tini, with its options up to --.
+func TestComponentRunsProgram(t *testing.T) {
+	for _, tc := range []struct {
+		command, args []string
+		want          bool
+	}{
+		{args: []string{"/usr/local/bin/argocd-repo-server"}, want: true},
+		{command: []string{"/usr/bin/tini", "--"}, args: []string{"/usr/local/bin/argocd-repo-server"}, want: true},
+		{command: []string{"tini", "-s", "-e", "143", "--", "argocd-repo-server"}, want: true},
+		{command: []string{"tini", "-sp", "SIGTERM", "--", "/usr/local/bin/argocd-repo-server"}, want: true},
+		{command: []string{"tini", "-se", "143", "/usr/local/bin/argocd-repo-server"}, want: true},
+		{command: []string{"tini", "-pSIGTERM", "/usr/local/bin/argocd-repo-server"}, want: true},
+		{command: []string{"tini", "-ps", "/usr/local/bin/argocd-repo-server"}, want: true},
+		{command: []string{"tini", "--", "sh", "-c"}, args: []string{"exec argocd-repo-server"}},
+		{command: []string{"sh", "-c"}, args: []string{"exec /usr/local/bin/argocd-repo-server --allow-oob-symlinks"}},
+		{command: []string{"/var/run/argocd/argocd-cmp-server"}},
+		{},
+	} {
+		if got := ComponentRunsProgram(RepoServerComponent, tc.command, tc.args); got != tc.want {
+			t.Errorf("ComponentRunsProgram(%q, %q) = %v, want %v", tc.command, tc.args, got, tc.want)
+		}
+	}
+}

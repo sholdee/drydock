@@ -214,7 +214,7 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 		}
 		return skippedRenderedDiscovery()
 	}
-	manifests := rendered.Manifests
+	manifests := resolveWorkloadConfigMapRefs(rendered.Manifests)
 	if settingsOnly {
 		manifests = settingsConfigMapManifests(manifests)
 	}

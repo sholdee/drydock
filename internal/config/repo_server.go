@@ -33,6 +33,18 @@ func (s ArgoSettings) HelmNamespace() string {
 const (
 	RepoServerUnknownSourceKey = "drydockUnknownSource"
 	RepoServerEnvFromKey       = "drydockEnvFrom"
+	// ComponentFlagsKey and ComponentArgsNotesKey hold, on a sanitized
+	// container, the setting flags of its command line and the notes about
+	// what drydock cannot know about it (ParseComponentArgs).
+	ComponentFlagsKey     = "drydockFlags"
+	ComponentArgsNotesKey = "drydockArgsNotes"
+	// ComponentRunsProgramKey marks, on a sanitized container, that its
+	// command line runs the program of the workload (ComponentRunsProgram).
+	ComponentRunsProgramKey = "drydockRunsProgram"
+	// ComponentEnvFromPrefixesKey holds, on a sanitized container, the
+	// prefix of each envFrom entry, "" for none. A prefix is part of the
+	// variable names, not a value.
+	ComponentEnvFromPrefixesKey = "drydockEnvFromPrefixes"
 	// RepoServerTokenFileKey and RepoServerNamespaceFileKey mark, on a
 	// sanitized volume, whether the volume holds a file named token and a
 	// file named namespace (discovery.sanitizedRepoServerVolumes).
@@ -116,26 +128,46 @@ func RepoServerHelmNamespace(deployment *unstructured.Unstructured, serviceAccou
 	return podNamespace, notes
 }
 
-// repoServerContainer returns the repo-server container of a pod spec: the
-// container named argocd-repo-server (upstream install.yaml) or repo-server
-// (argo-cd Helm chart), else the first container.
+// repoServerContainer returns the container of a sanitized pod spec that
+// runs helm for the repo-server: the one whose command line runs
+// argocd-repo-server (ComponentRunsProgramKey), the one named
+// argocd-repo-server (upstream install.yaml) or repo-server (argo-cd Helm
+// chart) first. Without such a container, it returns the container with
+// one of these names, because a shell can start the program and the env
+// and the service account token reach helm whatever starts it. It never
+// returns another container, such as a CMP sidecar, and returns nil
+// without one.
 func repoServerContainer(podSpec map[string]any) map[string]any {
 	containers, _, _ := unstructured.NestedSlice(podSpec, "containers")
-	var first map[string]any
+	var running, named map[string]any
 	for _, item := range containers {
 		container, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		if first == nil {
-			first = container
-		}
-		switch container["name"] {
-		case "argocd-repo-server", "repo-server":
+		isNamed := container["name"] == "argocd-repo-server" || container["name"] == "repo-server"
+		runs := container[ComponentRunsProgramKey] == true
+		switch {
+		case runs && isNamed:
 			return container
+		case runs && running == nil:
+			running = container
+		case isNamed && named == nil:
+			named = container
 		}
 	}
-	return first
+	if running != nil {
+		return running
+	}
+	return named
+}
+
+// RepoServerHelmContainer reports whether a sanitized repo-server
+// Deployment has a container that runs helm for the repo-server
+// (repoServerContainer).
+func RepoServerHelmContainer(deployment *unstructured.Unstructured) bool {
+	podSpec, _, _ := unstructured.NestedMap(deployment.Object, "spec", "template", "spec")
+	return repoServerContainer(podSpec) != nil
 }
 
 // containerNamespaceEnv returns the env entries of container that decide

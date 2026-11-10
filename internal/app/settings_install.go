@@ -584,9 +584,12 @@ func settingsConfigMapManifests(manifests []render.Manifest) []render.Manifest {
 
 // isRepoServerSettingsObject reports the repo-server Deployment and
 // ServiceAccount, which decide the namespace that helm uses
-// (config.RepoServerHelmNamespace).
+// (config.RepoServerHelmNamespace), and the Argo CD workloads whose
+// environment and flags set argocd-cmd-params-cm keys
+// (config.ComponentSettings).
 func isRepoServerSettingsObject(obj *unstructured.Unstructured) bool {
-	return discovery.IsRepoServerObject(obj, "apps", "Deployment") || discovery.IsRepoServerObject(obj, "", "ServiceAccount")
+	kind, ok := discovery.SettingsCandidateKind(obj)
+	return ok && discovery.IsArgoCDWorkloadKind(kind)
 }
 
 func isSettingsConfigMapObject(obj *unstructured.Unstructured) bool {
@@ -723,7 +726,7 @@ func settingsCandidateNamespace(candidate discovery.SettingsCandidate, destinati
 func repoServersInNamespace(result discovery.Result, destinationNamespace, namespace string) discovery.Result {
 	kept := result.SettingsCandidates[:0:0]
 	for _, candidate := range result.SettingsCandidates {
-		if !discovery.IsRepoServerKind(candidate.Kind) || settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
+		if !discovery.IsArgoCDWorkloadKind(candidate.Kind) || settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
 			kept = append(kept, candidate)
 		}
 	}
@@ -820,7 +823,7 @@ func supersededBySettingsRender(candidate discovery.SettingsCandidate, inputs se
 	case candidate.Kind == "argocd-values":
 		_, ok := inputs.valuesFiles[candidatePath]
 		return ok
-	case discovery.IsSettingsConfigMapKind(candidate.Kind), discovery.IsRepoServerKind(candidate.Kind):
+	case discovery.IsSettingsConfigMapKind(candidate.Kind), discovery.IsArgoCDWorkloadKind(candidate.Kind):
 		_, ok := inputs.files[candidatePath]
 		return ok
 	default:
@@ -833,7 +836,7 @@ func supersededBySettingsRender(candidate discovery.SettingsCandidate, inputs se
 func withoutRepoServerCandidates(result discovery.Result) discovery.Result {
 	kept := result.SettingsCandidates[:0:0]
 	for _, candidate := range result.SettingsCandidates {
-		if !discovery.IsRepoServerKind(candidate.Kind) {
+		if !discovery.IsArgoCDWorkloadKind(candidate.Kind) {
 			kept = append(kept, candidate)
 		}
 	}
@@ -851,7 +854,7 @@ func placeRepoServerCandidates(result discovery.Result, destinationNamespace str
 	}
 	for i := range result.SettingsCandidates {
 		candidate := &result.SettingsCandidates[i]
-		if discovery.IsRepoServerKind(candidate.Kind) && candidate.Object != nil && candidate.Object.GetNamespace() == "" && destinationNamespace != "" {
+		if discovery.IsArgoCDWorkloadKind(candidate.Kind) && candidate.Object != nil && candidate.Object.GetNamespace() == "" && destinationNamespace != "" {
 			candidate.Object.SetNamespace(destinationNamespace)
 			candidate.Namespace = destinationNamespace
 		}

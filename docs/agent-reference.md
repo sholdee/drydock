@@ -129,6 +129,29 @@ settings signature:
 - `reposerver.allow.oob.symlinks` decides whether a source fails while the
   tree it renders from holds an out-of-bounds symlink.
 
+The eleven `argocd-cmd-params-cm` keys that drydock applies
+(`applyCommandParameterValue`) also come from the Argo CD workloads of the
+install (`applyComponentWorkloadSettings`, `config.ComponentSettings`): the
+repo-server Deployment, the application controller StatefulSet or
+Deployment, and the ApplicationSet controller Deployment. A flag wins over
+the env variable, the kubelet keeps the last env entry of a name after
+`envFrom`, an optional `configMapKeyRef` to a missing key sets nothing, and a
+`configMapKeyRef` to `argocd-cmd-params-cm` reads the discovered value. The
+discovery sanitizer keeps only the setting env entries (a `secretKeyRef`
+becomes a source-kind marker, never a value) and the parsed setting flags
+(`config.ParseComponentArgs`), never the raw command line.
+`resolveWorkloadConfigMapRefs` resolves a `configMapKeyRef` to another
+ConfigMap of the same render before the scan. Each unknown source warns.
+
+`settleSettingsInstalls` renders the settings-only installs in rounds. Each
+round drops the earlier settings-only candidates (`SettingsCandidate.SettingsOnly`,
+`withoutSettingsOnlyRenders`, which restores the committed candidates that
+they superseded) before it merges the new renders. A round that returns to
+an earlier settled signature is a cycle: drydock keeps the last render of
+every install seen and adds `settings.installs-unsettled` (not
+strict-exempt) for each install that did not count in every round.
+Frontier renders of installs stay additive.
+
 `controller.ignore.normalizer.jq.timeout` changes only diffs: it limits how
 long one jq ignore-rule deletion may run. Keep it out of the render settings
 signature and the render cache keys. It is in the changed-only settings

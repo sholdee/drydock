@@ -441,9 +441,13 @@ Progressive syncs can be on with at least one step. Then Argo CD writes
 with an automated sync policy, because the controller starts the syncs
 itself. drydock does the same.
 
-drydock reads the switch only from `argocd-cmd-params-cm`. It does not see a
-value set only on the ApplicationSet controller Deployment, for example
-through the chart's `applicationSet.extraArgs` or `applicationSet.extraEnv`.
+drydock reads the switch from `argocd-cmd-params-cm` and from the
+ApplicationSet controller Deployment of the Argo CD install, as Argo CD does.
+The `--enable-progressive-syncs` flag, for example from the chart's
+`applicationSet.extraArgs`, wins over the environment variable. A literal
+value in `applicationSet.extraEnv` wins only when `argocd-cmd-params-cm` does
+not set the key, because the chart puts it before the reference to
+`argocd-cmd-params-cm`.
 
 An empty steps list differs from Argo CD in one way. Argo CD keeps the
 Applications that already exist and leaves them unchanged. drydock generates

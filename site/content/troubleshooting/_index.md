@@ -417,8 +417,19 @@ drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
   fails the same Application with `exceeded max combined manifest file size`.
   Narrow `include` or `exclude`, split the directory, or raise the setting in
   `argocd-cmd-params-cm` for both Argo CD and drydock. With the argo-cd Helm
-  chart, set it in `configs.params`. drydock does not read it from
-  `repoServer.extraArgs` or `repoServer.env`.
+  chart, set it in `configs.params`. drydock also reads it from the
+  repo-server Deployment of the install, so `repoServer.extraArgs` and
+  `repoServer.env` count as in Argo CD.
+- If a warning says that drydock cannot tell a setting of an Argo CD
+  workload offline, the repo-server, application controller, or
+  ApplicationSet controller of the install reads the setting from a source
+  that drydock cannot read, such as a Secret or `envFrom`. Set the value in
+  `configs.params`, as a literal value, or as a flag.
+- If a `settings.installs-unsettled` warning names an Application, that
+  Argo CD install counts as an install of this cluster only without the
+  settings that it renders. For example, its `argocd-cm` turns off the
+  in-cluster destination that the install itself uses. Fix the destination
+  or the setting.
 - When several files fail, drydock reports the file that Argo CD reports.
   Argo CD reads every file first, then splits lists and sets tracking
   metadata, and checks for a missing `kind` last. So a file that does not
