@@ -132,6 +132,12 @@ all changed paths are considered. Ignore globs are applied after includes, so
 ignore wins. When every changed path is filtered out, drydock reports an empty
 diff instead of rendering the fleet.
 
+In a diff of `--ref-orig` against the working tree (no `--ref`), the changed
+files are the changes from that ref to `HEAD` plus the tracked and staged
+changes in the working tree. A new file that Git does not track yet is not a
+changed file, so it selects no Application. Stage the file with `git add` to
+include it.
+
 Limit the diff to Applications with matching labels:
 
 ```bash
@@ -208,6 +214,15 @@ the source also owns each symlink on the way and the file where the path ends,
 so a change to the target of the symlink selects it. The same holds for the Kustomize inputs that an override
 file adds: drydock reads every source with its override files merged in, as the
 render does.
+
+An Application with `spec.sourceHydrator` owns its sync path only when the
+render reads the sync branch from the local tree. It also owns
+`drySource.path` when the dry source is the local repository, by the same
+self-repository and `--repo-map` rules. The render never reads the dry source,
+but a diff that changes a file there warns `source.hydrator-sync-source`. So a
+change only under the dry path selects the Application, also when another
+Application owns the same path. Such a change is not unowned, and
+`--strict-changed-only` passes. A dry path of `.` owns every path.
 
 An Application's `argocd.argoproj.io/manifest-generate-paths` annotation adds
 ownership that drydock cannot infer, such as the files an exec or container

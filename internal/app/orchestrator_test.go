@@ -436,8 +436,8 @@ data:
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	if !hasDiagnosticMessage(result.Diagnostics, "ignoreResourceUpdates are parsed but not applied") {
-		t.Fatalf("Diagnostics = %#v, want ignoreResourceUpdates warning", result.Diagnostics)
+	if hasDiagnosticMessage(result.Diagnostics, "ignoreResourceUpdates") {
+		t.Fatalf("Diagnostics = %#v, want no ignoreResourceUpdates warning", result.Diagnostics)
 	}
 	if hasDiagnosticMessage(result.Diagnostics, "health Lua is parsed as metadata only") {
 		t.Fatalf("Diagnostics = %#v, want no health Lua metadata-only warning", result.Diagnostics)

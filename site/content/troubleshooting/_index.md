@@ -268,21 +268,33 @@ it.
 
 ## Symptom: `source.hydrator-sync-source`
 
-An Application with `spec.sourceHydrator` gets this warning. Argo CD compares
-such an Application against its sync source only: `syncSource.path` at
-`syncSource.targetBranch`. It ignores `spec.source` and `spec.sources`.
-drydock renders the same sync source at the same branch. For the repository
-under analysis, it reads the tree of each side only when the branch is
-`HEAD`, a `--ref` or `--ref-orig` name, or the default branch. That rule is
-stricter than for other sources, which also read the tree when their path
-exists there. A `targetBranch` equal to the default branch renders the
+A diff gives this warning for an Application with `spec.sourceHydrator` when
+the diff changes a file under `drySource.path` and the dry source is the
+repository under diff:
+
+```text
+warning source.hydrator-sync-source: Application argocd/app: this diff changes the dry source path "apps/app", but drydock does not run the source hydrator; it rendered the sync source branch "env/prod", path "apps/app", so the change shows only after the hydrator commits it (path: argocd/app)
+```
+
+`build`, `test`, `get`, and `diag` never give it. A dry source in another
+repository gives no warning, because its changes are not part of the diff.
+If drydock cannot list the files that the diff changes, the warning stays
+and says so.
+
+Argo CD compares such an Application against its sync source only:
+`syncSource.path` at `syncSource.targetBranch`. It ignores `spec.source` and
+`spec.sources`. drydock renders the same sync source at the same branch. For
+the repository under analysis, it reads the tree of each side only when the
+branch is `HEAD`, a `--ref` or `--ref-orig` name, or the default branch. That
+rule is stricter than for other sources, which also read the tree when their
+path exists there. A `targetBranch` equal to the default branch renders the
 working tree, even when another branch is checked out. A `--repo-map` to the
 tree under analysis behaves as if there were no map. A `--repo-map` to another
 Git repository gives the branch from a snapshot. Otherwise drydock reads the
 branch from the Git cache or fetches it, and `--offline` fails on a cache
-miss. It cannot run the hydrator offline, so a change to the dry source
-shows in drydock only after the hydrator commits it to the sync branch.
-`--strict` does not fail on the warning.
+miss. It cannot run the hydrator offline, so a change to the dry source shows
+in drydock only after the hydrator commits it to the sync branch. `--strict`
+does not fail on the warning.
 
 ## Symptom: `discovery.namespace-not-enabled`, Or An Application Is Missing
 
@@ -367,7 +379,7 @@ Helm chart, and Helm fails without a `Chart.yaml`. Rename the file so that
 its name does not end in `Chart.yaml`. An empty `kustomize: {}` block does
 not set the type, because Argo CD removes an empty block from the spec.
 
-## Symptom: A Directory Source Skips Files Or Warns `directory.extension-filter-disabled`
+## Symptom: A Directory Source Skips Files
 
 drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
 
@@ -378,9 +390,10 @@ drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
   `spec.source.directory.disableExtensionFilter: true`. `include` and
   `exclude` are then the only filters.
 - `disableExtensionFilter` without `include` or `exclude` reads every file in
-  the directory and emits the `directory.extension-filter-disabled` warning.
-  It stays advisory under `--strict`, because Argo CD treats the setting as
-  valid. Add an `include` pattern that names the manifest files to silence it.
+  the directory. Argo CD treats the setting as valid and only logs a warning,
+  so drydock reports nothing. Earlier drydock releases gave the
+  `directory.extension-filter-disabled` warning. To read only the manifest
+  files, add an `include` pattern that names them.
 - A file ending in `.json` must hold one JSON object with a `kind`. An empty
   file, YAML content, a JSON array, or several concatenated objects fail the
   source, as in Argo CD.

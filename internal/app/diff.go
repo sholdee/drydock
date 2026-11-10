@@ -234,6 +234,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (resu
 	rightBuild.result.CacheEvents = append(append([]cacheevent.Event(nil), rightList.result.CacheEvents...), rightBuild.result.CacheEvents...)
 	diagnostics = append(diagnostics, leftBuild.result.Diagnostics...)
 	diagnostics = append(diagnostics, rightBuild.result.Diagnostics...)
+	diagnostics = append(diagnostics, request.hydratorDryChangeDiagnostics(ctx, leftBuildRequest, rightBuildRequest, leftBuild.result, rightBuild.result)...)
 	cacheEvents := cacheEventsFromBuilds(leftBuild.result, rightBuild.result)
 	if err := errors.Join(leftBuild.err, rightBuild.err); err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, err
@@ -767,9 +768,7 @@ func diffDocumentsWith(build BuildResult, normalizationOf func(ApplicationManife
 // each side is one finding, reported once as build and test report it. Other
 // diagnostics stay per side: a source-resolution warning, for example, is
 // about how that side resolved, and TestDiffRefSelfRepoForkNearMissWarnsOncePerSide
-// pins that. The settings.ignore-resource-updates advisory is collapsed the
-// same way: each side reports it in its list and build phases, and an
-// identical one is one fact about the settings.
+// pins that.
 func dedupeProjectDiagnostics(input []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 	if len(input) == 0 {
 		return nil
@@ -777,7 +776,7 @@ func dedupeProjectDiagnostics(input []diagnostic.Diagnostic) []diagnostic.Diagno
 	out := make([]diagnostic.Diagnostic, 0, len(input))
 	seen := map[string]struct{}{}
 	for _, diag := range input {
-		if diag.Code != diagnostic.CodeSettingsIgnoreResourceUpdates && diagnostic.ClassifyProjectDiagnostic(diag) == diagnostic.ProjectDiagnosticClassNonProject {
+		if diagnostic.ClassifyProjectDiagnostic(diag) == diagnostic.ProjectDiagnosticClassNonProject {
 			out = append(out, diag)
 			continue
 		}

@@ -81,9 +81,11 @@ default branch). That is stricter than for other sources, which also read the
 local tree when their path exists there. A `targetBranch` equal to the
 default branch renders the working tree, even when another branch is checked
 out. Any other branch comes from a `--repo-map` Git repository, the Git
-cache, or a fetch. drydock cannot run the hydrator offline, so it warns
-`source.hydrator-sync-source`: a change to the dry source shows only after
-the hydrator commits it.
+cache, or a fetch. drydock cannot run the hydrator offline, so a change to
+the dry source shows only after the hydrator commits it. A diff warns
+`source.hydrator-sync-source` when it changes a file under the dry source
+path and the dry source is the repository under diff. Other commands and
+other diffs do not warn.
 
 drydock uses one Argo CD controller namespace for instance names
 (`ARGOCD_APP_NAME`, `.argocd-source-<app>.yaml`, and resource tracking), the

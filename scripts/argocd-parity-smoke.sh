@@ -276,8 +276,8 @@ COMPONENTS_DROPPED_APPLICATION="parity-kustomize-generators"
 # prepare_fixture_git_image commits the hydrated content on
 # SOURCE_HYDRATOR_BRANCH, where it differs from main at the same path. The
 # drydock capture maps the fixture URL to FIXTURE_GIT_WORK, which has main
-# checked out, so drydock must read the branch from Git. It also warns
-# source.hydrator-sync-source.
+# checked out, so drydock must read the branch from Git. The capture is not a
+# diff, so drydock gives no source.hydrator-sync-source warning.
 SOURCE_HYDRATOR_APPLICATION="parity-source-hydrator"
 SOURCE_HYDRATOR_BRANCH="parity-hydrated"
 SOURCE_HYDRATOR_BRANCH_CONFIGMAP="parity-source-hydrator-hydrated-branch"
@@ -2294,10 +2294,6 @@ capture_drydock_manifest() {
     grep -qF "name: ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" "${output_dir}/${stem}.yaml" \
       || fail "drydock did not render ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP} from branch ${SOURCE_HYDRATOR_BRANCH} for ${app_ref}"
     # The manifest comparison proves that drydock renders the sync source.
-    # The warning tells users that drydock does not run the hydrator.
-    require_drydock_capture_warning "${app_ref}" "${stderr_file}" \
-      source.hydrator-sync-source \
-      "an Application with spec.sourceHydrator must warn that drydock renders the sync source"
   fi
   if [[ "${stem}" == "${COMPONENTS_DROPPED_APPLICATION}" ]]; then
     # The manifest comparison proves that drydock drops the later valid

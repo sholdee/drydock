@@ -10,40 +10,155 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/change"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/gitref"
-	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
 )
 
-// sourceHydratorCode identifies the advisory for an Application with
-// spec.sourceHydrator. The Argo CD v3.6.1 controller compares such an
-// Application against its sync source only: the hydrated branch and path
-// (ApplicationSpec.GetSources, pkg/apis/application/v1alpha1/types.go:278).
-// drydock renders the same source at the same branch
-// (resolveHydratorSyncSource), so its output matches the comparison whether
-// or not the advisory fires. It cannot run the hydrator offline, so
-// a change to the dry source shows only after the hydrator commits it to
-// the sync branch. The code is strict-exempt (strictExemptDiagnostic): the
-// render is the one Argo CD compares, so --strict has nothing to protect.
+// sourceHydratorCode identifies the warning that a diff changes the dry
+// source of an Application with spec.sourceHydrator. The Argo CD v3.6.1
+// controller compares such an Application against its sync source only: the
+// hydrated branch and path (ApplicationSpec.GetSources,
+// pkg/apis/application/v1alpha1/types.go:278). drydock renders the same
+// source at the same branch (resolveHydratorSyncSource). It cannot run the
+// hydrator offline, so a change to the dry source shows only after the
+// hydrator commits it to the sync branch. Only a diff gives the warning
+// (hydratorDryChangeDiagnostics), and only when the dry source is in the
+// local repository and the diff changes a file under its path. The code is
+// strict-exempt (strictExemptDiagnostic): the render is the one Argo CD
+// compares, so --strict has nothing to protect.
 const sourceHydratorCode = "source.hydrator-sync-source"
 
-// sourceHydratorDiagnostic reports the advisory for an Application with
-// spec.sourceHydrator.
-func sourceHydratorDiagnostic(application argoappv1.Application) (diagnostic.Diagnostic, bool) {
-	hydrator := application.Spec.SourceHydrator
-	if hydrator == nil {
-		return diagnostic.Diagnostic{}, false
+// diffChangedFiles is the set of files that a diff changes, relative to the
+// repository root. unknown is not empty when drydock could not list the
+// files, and says why.
+type diffChangedFiles struct {
+	paths   []string
+	unknown string
+}
+
+// hydratorDiffSide is one side of a diff for the dry source check: the
+// build request of the side and the Applications that the side rendered.
+type hydratorDiffSide struct {
+	request      BuildRequest
+	applications []argoappv1.Application
+}
+
+// hydratorDryChangeDiagnostics returns one sourceHydratorCode warning for
+// each Application with spec.sourceHydrator that a diff renders, when its
+// dry source is in the local repository on that side
+// (hydratorDryIsLocalTree) and the diff changes a file under the dry source
+// path. A dry source in another repository gives no warning, because its
+// changes are not part of the diff. changedFiles is called at most once,
+// and only when an Application has a local dry source. When it cannot list
+// the files, the warning stays, so drydock never hides a dry source change.
+func hydratorDryChangeDiagnostics(sides []hydratorDiffSide, changedFiles func() diffChangedFiles) []diagnostic.Diagnostic {
+	var out []diagnostic.Diagnostic
+	warned := map[string]struct{}{}
+	var files *diffChangedFiles
+	for _, side := range sides {
+		var tree *selectionTree
+		for _, application := range side.applications {
+			hydrator := application.Spec.SourceHydrator
+			if hydrator == nil {
+				continue
+			}
+			if _, ok := warned[applicationDisplayName(application)]; ok {
+				continue
+			}
+			if tree == nil {
+				tree = newSelectionTree(side.request.Path, side.request.RepoMaps, side.request.selfRepo)
+			}
+			if !hydratorDryIsLocalTree(tree, hydrator.DrySource) {
+				continue
+			}
+			if files == nil {
+				listed := changedFiles()
+				files = &listed
+			}
+			if diag, ok := hydratorDryChangeDiagnostic(application, *files); ok {
+				warned[applicationDisplayName(application)] = struct{}{}
+				out = append(out, diag)
+			}
+		}
 	}
+	return out
+}
+
+// hydratorDryIsLocalTree reports whether a dry source is the repository
+// under analysis at a revision that tracks the local tree, by the self-repo
+// rule that every source of the local repository follows. It mirrors
+// hydratorSyncRendersFromRoot: a --repo-map to this tree names the local
+// repository, and a map to another directory never does.
+func hydratorDryIsLocalTree(tree *selectionTree, dry argoappv1.DrySource) bool {
+	if toRoot, mapped := tree.repoMapped(dry.RepoURL); mapped {
+		return toRoot && tree.selfRepo.tracksRevision(dry.TargetRevision)
+	}
+	return tree.selfRepo.matches(dry.RepoURL, dry.TargetRevision)
+}
+
+// hydratorDryChangeDiagnostic returns the warning for one Application when
+// files lists a file under its dry source path, or when files is unknown.
+// The dry source options (directory, helm, kustomize) do not matter: any
+// change under the path can change what the hydrator commits.
+func hydratorDryChangeDiagnostic(application argoappv1.Application, files diffChangedFiles) (diagnostic.Diagnostic, bool) {
+	hydrator := application.Spec.SourceHydrator
 	syncSource := hydrator.GetSyncSource()
-	return diagnostic.Diagnostic{
-		Code:     sourceHydratorCode,
-		Severity: diagnostic.SeverityWarning,
-		Category: "source",
-		Message: fmt.Sprintf("Application %s uses spec.sourceHydrator: drydock renders the sync source %s at branch %q, path %q, as Argo CD compares it, and ignores spec.source and spec.sources; it reads the branch from the local tree only when the self-repo rule tracks that branch there, else from a --repo-map Git repository, the Git cache, or a fetch; drydock does not run the hydrator, so changes to the dry source %q show only after the hydrator commits them",
-			applicationDisplayName(application), remote.RedactGitRepoURL(syncSource.RepoURL), syncSource.TargetRevision, syncSource.Path, hydrator.DrySource.Path),
+	dryPath := normalizeSelectPath(hydrator.DrySource.Path)
+	shownPath := dryPath
+	if shownPath == "" {
+		shownPath = "."
+	}
+	diag := diagnostic.Diagnostic{
+		Code:       sourceHydratorCode,
+		Severity:   diagnostic.SeverityWarning,
+		Category:   "source",
 		Provenance: diagnostic.Provenance{Path: applicationDisplayName(application)},
-	}, true
+	}
+	if files.unknown != "" {
+		diag.Message = fmt.Sprintf("Application %s: drydock could not list the files that this diff changes (%s), so it cannot tell whether the dry source path %q changed; drydock does not run the source hydrator and rendered the sync source branch %q, path %q",
+			applicationDisplayName(application), files.unknown, shownPath, syncSource.TargetRevision, syncSource.Path)
+		return diag, true
+	}
+	for _, changed := range files.paths {
+		if pathIntersects(dryPath, normalizeSelectPath(changed)) {
+			diag.Message = fmt.Sprintf("Application %s: this diff changes the dry source path %q, but drydock does not run the source hydrator; it rendered the sync source branch %q, path %q, so the change shows only after the hydrator commits it",
+				applicationDisplayName(application), shownPath, syncSource.TargetRevision, syncSource.Path)
+			return diag, true
+		}
+	}
+	return diagnostic.Diagnostic{}, false
+}
+
+// diffChangedFiles lists the files that the diff changes: the changed-only
+// set when the diff already has it, the Git changes between --ref-orig and
+// --ref (or the working tree), or else a compare of the two side trees, as
+// changed-only does for a path diff (filteredChangedOnlyPaths). The list is
+// not filtered by the changed-only include and ignore globs.
+func (request DiffRequest) diffChangedFiles(ctx context.Context) diffChangedFiles {
+	if request.changedPaths != nil {
+		return diffChangedFiles{paths: request.changedPaths}
+	}
+	paths, ok, err := gitRefChangedPaths(ctx, request, request.Repo)
+	if err == nil && !ok {
+		paths, err = change.Detect(request.LeftPath, request.RightPath)
+	}
+	if err != nil {
+		return diffChangedFiles{unknown: err.Error()}
+	}
+	return diffChangedFiles{paths: paths}
+}
+
+// hydratorDryChangeDiagnostics returns the dry source warnings for the two
+// rendered sides of the diff (see the function of the same name).
+func (request DiffRequest) hydratorDryChangeDiagnostics(ctx context.Context, leftRequest, rightRequest BuildRequest, leftBuild, rightBuild BuildResult) []diagnostic.Diagnostic {
+	return hydratorDryChangeDiagnostics([]hydratorDiffSide{
+		{request: rightRequest, applications: rightBuild.Applications},
+		{request: leftRequest, applications: leftBuild.Applications},
+	}, func() diffChangedFiles {
+		return request.diffChangedFiles(ctx)
+	})
 }
 
 // resolveHydratorSyncSource resolves the tree of a source hydrator sync

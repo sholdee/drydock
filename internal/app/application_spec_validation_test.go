@@ -312,23 +312,16 @@ func TestBuildRendersHydratorSyncSource(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("Build() error = %v; the hydrator advisory must not fail --strict", err)
+				t.Fatalf("Build() error = %v", err)
 			}
 			if len(result.Manifests) != 1 {
 				t.Fatalf("Manifests = %d, want only the sync source's ConfigMap", len(result.Manifests))
 			}
 			assertManifestNamed(t, result.Manifests, testCase.want)
-			advisories := 0
-			for _, diag := range result.Diagnostics {
-				if diag.Code == sourceHydratorCode {
-					advisories++
-					if !strings.Contains(diag.Message, `branch "`+testCase.branch+`", path "`+testCase.syncPath+`"`) {
-						t.Fatalf("hydrator advisory = %q, want the sync branch and path", diag.Message)
-					}
-				}
-			}
-			if advisories != 1 {
-				t.Fatalf("hydrator advisories = %d in %#v, want 1", advisories, result.Diagnostics)
+			// Only a diff that changes the dry source gives the hydrator
+			// warning. A build never does.
+			if hasDiagnosticCode(result.Diagnostics, sourceHydratorCode) {
+				t.Fatalf("Diagnostics = %#v, want no %s on a build", result.Diagnostics, sourceHydratorCode)
 			}
 		})
 	}

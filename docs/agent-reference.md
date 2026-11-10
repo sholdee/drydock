@@ -157,6 +157,13 @@ long one jq ignore-rule deletion may run. Keep it out of the render settings
 signature and the render cache keys. It is in the changed-only settings
 signature as the parsed duration.
 
+`resource.customizations` `ignoreResourceUpdates` rules are parsed and
+validated, and a malformed rule is an error diagnostic. A valid rule gives no
+diagnostic: Argo CD v3.6.1 uses these rules only to skip reconciles on live
+updates, so they never change desired output, diffs, or sync status. The
+argo-cd chart sets eight of them by default, so an advisory for them is noise
+on every run.
+
 `controller.diff.server.side` changes only diffs too: it turns on server-side
 diff for every Application without the `ServerSideDiff=false` compare option,
 as `shouldUseServerSideDiff` does (`applicationServerSideDiff` in
@@ -516,6 +523,23 @@ replaces `--path`, and `--repo` defaults to `--path`. Do not add shellouts,
 `git worktree add`, checkout mutation, or top-level remote `--repo` URL
 support without an approved design update.
 
+An Application with `spec.sourceHydrator` renders its sync source. Only a
+diff gives `source.hydrator-sync-source` (strict-exempt), from
+`hydratorDryChangeDiagnostics` in `internal/app/source_hydrator.go`. It fires
+when the dry source is the local repository by the self-repo and `--repo-map`
+rules, and the changed files of the diff include a path under
+`drySource.path`. The changed files come from `request.changedPaths`, from
+`gitRefChangedPaths`, or from `change.Detect` for a path diff, without the
+changed-only globs. When they are unknown, the warning stays. Build, test,
+get, and diag never give it. Changed-only selection owns the local dry path
+too (`hydratorDrySelectionPaths` in `internal/app/select_kustomize.go`), so
+a dry-only change selects the Application as the full diff reports it.
+
+drydock has no info severity and no diagnostic list that only `diag` shows.
+Every diagnostic is a warning or an error. `diag` reports the diagnostics of
+discovery, settings, and project validation, and `diag --render` reports the
+diagnostics of a build.
+
 Changed-only include and ignore globs apply before ownership mapping for
 `diff apps` and `diff images`. Patterns are repository-relative and
 slash-normalized; ignore wins over include. No include globs means all changed
@@ -608,7 +632,8 @@ path must not shell out.
 
 Directory rendering selects files with the repo-server's case-sensitive
 extension filter (skipped under `directory.disableExtensionFilter`, leaving
-include/exclude as the only filters), parses YAML/JSON files, flattens any document with an
+include/exclude as the only filters, and with neither of them every file is
+read with no diagnostic, as the repo-server only logs it), parses YAML/JSON files, flattens any document with an
 `items` array into its items regardless of kind (matching Argo CD's
 shape-based detection) and drops `items: null` documents as no-ops, renders
 Jsonnet with native Go libraries, honors Argo CD's

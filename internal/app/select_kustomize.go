@@ -39,7 +39,9 @@ type selectionSide struct {
 // source also owns the $ref value files and file parameters whose ref root
 // is this tree (selfRepo identifies the repository under diff). Each
 // source is read with its .argocd-source*.yaml files merged in, as the
-// render reads it (selectionSourceWithOverrides).
+// render reads it (selectionSourceWithOverrides). An Application with
+// spec.sourceHydrator also owns its local dry source path
+// (hydratorDrySelectionPaths).
 // It exists for changed-only ownership only: ApplicationSelectionInput.Paths
 // from discovery also key the persistent render cache, so the listed inputs
 // are never mutated. applicationSourcePaths feeds the same key as required
@@ -99,6 +101,7 @@ func withSelectionOnlyPathsIn(ctx context.Context, root string, repoMaps []sourc
 		// Not behind the locality gate below: a $ref consumer is usually a
 		// chart-repository source.
 		out[i].Paths = append(out[i].Paths, helmRefSelectionPaths(tree, input.Application)...)
+		out[i].Paths = append(out[i].Paths, hydratorDrySelectionPaths(tree, input.Application)...)
 		for _, specSource := range applicationSources(input.Application) {
 			if !sourceRendersFromRoot(tree, input.Application, specSource) {
 				continue
@@ -404,6 +407,22 @@ func pathSourceRendersFromRoot(tree *selectionTree, source argoappv1.Application
 	}
 	exists, err := sourcePathExists(tree.root, source.Path)
 	return err == nil && exists
+}
+
+// hydratorDrySelectionPaths returns the dry source path of an Application
+// with spec.sourceHydrator when the dry source is the local repository
+// (hydratorDryIsLocalTree). The render never reads the dry source, but a
+// diff warns when a file under its path changes
+// (hydratorDryChangeDiagnostics). Owning the path selects the Application
+// as the full diff reports it, so a change there is neither unowned nor
+// lost to another Application that owns the same path. The dry path "."
+// owns every path.
+func hydratorDrySelectionPaths(tree *selectionTree, application argoappv1.Application) []string {
+	hydrator := application.Spec.SourceHydrator
+	if hydrator == nil || !hydratorDryIsLocalTree(tree, hydrator.DrySource) {
+		return nil
+	}
+	return []string{normalizeSelectPath(hydrator.DrySource.Path)}
 }
 
 // sourceRendersFromRoot reports whether the render reads source from the

@@ -78,53 +78,32 @@ func appendParsedResourceOverrides(settings *ArgoSettings, values map[string]str
 		return diags
 	}
 
-	return appendResourceCustomizations(settings, build, path, basePointer, diags)
+	return appendResourceCustomizations(settings, build, diags)
 }
 
 // appendResourceCustomizations converts the built overrides into settings,
-// in key order, and reports the ignoreResourceUpdates keys once.
-func appendResourceCustomizations(settings *ArgoSettings, build *resourceOverrideBuild, path, basePointer string, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+// in key order. drydock parses and validates ignoreResourceUpdates rules but
+// reports nothing for a valid one: Argo CD v3.6.1 uses them only to skip
+// reconciles when a live resource changes (controller/cache), so they never
+// change desired output, a desired-vs-desired diff, or sync status.
+func appendResourceCustomizations(settings *ArgoSettings, build *resourceOverrideBuild, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 	keys := make([]string, 0, len(build.overrides))
 	for key := range build.overrides {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	var ignoreResourceUpdatesKeys []string
 	for _, key := range keys {
 		customization, ok, next := resourceCustomizationFromOverride(key, build.overrides[key], build)
 		diags = append(diags, next...)
 		if !ok {
 			continue
 		}
-		if hasOverrideSection(customization.IgnoreResourceUpdates) {
-			ignoreResourceUpdatesKeys = append(ignoreResourceUpdatesKeys, key)
-		}
 		if settings.ResourceCustomizations == nil {
 			settings.ResourceCustomizations = map[string]ResourceCustomization{}
 		}
 		settings.ResourceCustomizations[key] = customization
 	}
-	if len(ignoreResourceUpdatesKeys) > 0 {
-		diags = append(diags, ignoreResourceUpdatesAdvisory(ignoreResourceUpdatesKeys, diagnostic.Provenance{Path: path, Pointer: basePointer}))
-	}
 	return diags
-}
-
-// ignoreResourceUpdatesAdvisory reports, once for one settings source, the
-// resource customization keys that set ignoreResourceUpdates. Argo CD uses
-// these rules only to skip reconciles when a live resource changes. They
-// never change desired output or a desired-vs-desired diff, so the advisory
-// has its own code that --strict does not fail on. The argo-cd Helm chart
-// sets eight such keys by default.
-func ignoreResourceUpdatesAdvisory(keys []string, provenance diagnostic.Provenance) diagnostic.Diagnostic {
-	return diagnostic.Diagnostic{
-		Code:     diagnostic.CodeSettingsIgnoreResourceUpdates,
-		Severity: diagnostic.SeverityWarning,
-		Category: "settings",
-		Message: fmt.Sprintf("resource customizations ignoreResourceUpdates are parsed but not applied to desired-vs-desired diffs; they never change desired output (keys: %s)",
-			strings.Join(keys, ", ")),
-		Provenance: provenance,
-	}
 }
 
 // decodeResourceOverrides decodes the resource.customizations block into

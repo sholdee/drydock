@@ -1244,10 +1244,6 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // The known-type-skipped advisory is the same kind: Argo CD only logs a
 // knownTypeFields error and compares the field as written, and drydock does
 // the same, so the diff matches Argo CD whether or not the advisory fires.
-// The ignoreResourceUpdates advisory is the same kind: Argo CD uses those
-// rules only to skip reconciles on live updates, so desired output and
-// desired-vs-desired diffs are identical whether or not they are set, and
-// the argo-cd Helm chart sets eight of them by default.
 // The ApplicationSet invalid-rollout-config lint is the same kind of advisory:
 // with progressive syncs on, Argo CD v3.6.1 reports InvalidRolloutConfig as a
 // condition that never stops Applications from being created or updated
@@ -1267,7 +1263,7 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // drydock uses one of the namespaces that they name.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, namespaceNotEnabledCode, outsideControllerNamespaceCode, controllerNamespaceAmbiguousCode, controllerNamespaceUnsettledCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode, SelectorNoMatchCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, namespaceNotEnabledCode, outsideControllerNamespaceCode, controllerNamespaceAmbiguousCode, controllerNamespaceUnsettledCode, diffKnownTypeSkippedCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, SelectorNoMatchCode:
 		return true
 	}
 	return false

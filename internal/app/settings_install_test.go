@@ -447,14 +447,10 @@ func listArgoCDInstallSettings(t *testing.T, root string, shape argoCDInstallSha
 	return result
 }
 
-// settingsDiagnostics returns the settings diagnostics, without the
-// ignoreResourceUpdates advisory that the chart defaults always give.
+// settingsDiagnostics returns the settings diagnostics.
 func settingsDiagnostics(diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 	var out []diagnostic.Diagnostic
 	for _, diag := range diags {
-		if diag.Code == diagnostic.CodeSettingsIgnoreResourceUpdates {
-			continue
-		}
 		if diag.Category == "settings" || strings.Contains(diag.Message, "argocd-cm") {
 			out = append(out, diag)
 		}
@@ -821,8 +817,8 @@ func (acquirer perRepoChartAcquirer) Acquire(ctx context.Context, request chart.
 }
 
 // The default chart sets eight ignoreResourceUpdates customizations. They
-// never change desired output, so they give one advisory that --strict does
-// not fail on, not one promotable warning per key.
+// never change desired output, so they give no diagnostic and --strict
+// passes.
 func TestBuildStrictPassesForDefaultArgoCDChartInstall(t *testing.T) {
 	root := t.TempDir()
 	writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
@@ -842,18 +838,28 @@ func TestBuildStrictPassesForDefaultArgoCDChartInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build(--strict) error = %v, diagnostics = %#v", err, result.Diagnostics)
 	}
-	var advisories []diagnostic.Diagnostic
+	if !hasArgoCDChartIgnoreResourceUpdates(result.Settings) {
+		t.Fatalf("ResourceCustomizations = %#v, want the chart ignoreResourceUpdates defaults", result.Settings.ResourceCustomizations)
+	}
 	for _, diag := range result.Diagnostics {
-		if diag.Code == "settings.metadata-only" {
-			t.Fatalf("diagnostic = %#v, want no per-key metadata-only warning", diag)
-		}
-		if diag.Code == diagnostic.CodeSettingsIgnoreResourceUpdates {
-			advisories = append(advisories, diag)
+		if diag.Category == "settings" || strings.Contains(diag.Message, "ignoreResourceUpdates") {
+			t.Fatalf("diagnostic = %#v, want no settings diagnostic for the chart defaults", diag)
 		}
 	}
-	if len(advisories) != 1 || advisories[0].Severity != diagnostic.SeverityWarning || !strings.Contains(advisories[0].Message, "argoproj.io/Application") {
-		t.Fatalf("ignoreResourceUpdates advisories = %#v, want one warning that lists the keys", advisories)
+}
+
+// hasArgoCDChartIgnoreResourceUpdates reports whether the settings keep the
+// eight ignoreResourceUpdates defaults of the fake argo-cd chart, so a test
+// that wants no diagnostic for them proves they were read.
+func hasArgoCDChartIgnoreResourceUpdates(settings config.ArgoSettings) bool {
+	count := 0
+	for _, customization := range settings.ResourceCustomizations {
+		ignore := customization.IgnoreResourceUpdates
+		if len(ignore.JSONPointers) > 0 || len(ignore.JQPathExpressions) > 0 || len(ignore.ManagedFieldsManagers) > 0 {
+			count++
+		}
 	}
+	return count == 8
 }
 
 // The install reads ../shared as a Kustomize resource. A values file in that
@@ -1050,7 +1056,7 @@ spec:
 		return []sourcepkg.RepoMap{{URL: argoCDValuesRepoURL, Path: root}}
 	}}, fakeArgoCDChartAcquirer(t))
 	for _, diag := range result.Diagnostics {
-		if diag.Category == "settings" && diag.Code != diagnostic.CodeSettingsIgnoreResourceUpdates {
+		if diag.Category == "settings" {
 			t.Fatalf("settings diagnostic = %#v, want no conflict", diag)
 		}
 	}
@@ -1299,7 +1305,7 @@ func TestLocalChartIsArgoCD(t *testing.T) {
 }
 
 // An actions customization still gives a metadata-only warning that
-// --strict fails on: only the ignoreResourceUpdates advisory is exempt.
+// --strict fails on.
 func TestBuildStrictStillFailsOnActionsCustomization(t *testing.T) {
 	root := t.TempDir()
 	writeDiffApplication(t, root, "other", "other", "same")
@@ -1540,7 +1546,7 @@ spec:
 		return []sourcepkg.RepoMap{{URL: argoCDValuesRepoURL, Path: root}}
 	}}, fakeArgoCDChartAcquirer(t))
 	for _, diag := range result.Diagnostics {
-		if diag.Category == "settings" && diag.Code != diagnostic.CodeSettingsIgnoreResourceUpdates {
+		if diag.Category == "settings" {
 			t.Fatalf("settings diagnostic = %#v, want no conflict", diag)
 		}
 	}
@@ -1611,9 +1617,9 @@ func TestSettingsFromDiscoverKustomizeArgoCDInstall(t *testing.T) {
 	}
 }
 
-// A diff reports one ignoreResourceUpdates advisory, not one per side and
-// phase.
-func TestDiffAppsReportsIgnoreResourceUpdatesAdvisoryOnce(t *testing.T) {
+// A diff of two sides that both install the default chart reports no
+// ignoreResourceUpdates diagnostic on either side.
+func TestDiffAppsReportsNoIgnoreResourceUpdatesDiagnostic(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
 	right := filepath.Join(root, "right")
@@ -1630,14 +1636,10 @@ func TestDiffAppsReportsIgnoreResourceUpdatesAdvisoryOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
 	}
-	count := 0
 	for _, diag := range result.Diagnostics {
-		if diag.Code == diagnostic.CodeSettingsIgnoreResourceUpdates {
-			count++
+		if diag.Category == "settings" || strings.Contains(diag.Message, "ignoreResourceUpdates") {
+			t.Fatalf("diagnostic = %#v, want no settings diagnostic for the chart defaults", diag)
 		}
-	}
-	if count != 1 {
-		t.Fatalf("ignoreResourceUpdates advisories = %d, want 1: %#v", count, result.Diagnostics)
 	}
 }
 
