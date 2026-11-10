@@ -319,6 +319,7 @@ strict-exempt (`strictExemptDiagnostic`); `appset.rollout-no-steps` is not. Each
 Canonical references:
 
 - `internal/source`
+- `internal/gitlfs` (Git LFS batch API client and object store)
 - `internal/chart`
 - `internal/remote`
 - `internal/ociartifact`
@@ -387,6 +388,20 @@ identity resolution:
   rule. Fail before any fetch when an HTTP Git credential is set without
   `--git-auth-host`. Send URL userinfo only to the host of that URL. SSH keys
   need no entry.
+- Git LFS (`enableLfs`): send the `--git-*` HTTP credentials only to a
+  batch endpoint whose scheme, host, and port match a `--git-auth-host`
+  entry, also when `.lfsconfig` names it. Send an object download only the
+  headers of its batch action, never the `--git-*` credentials. Drop those
+  headers on a redirect to another scheme, host, or port, and refuse a
+  plain `http` download or redirect from `https`. Verify the size and the
+  SHA-256 of an object before it is stored or used. Fail the source online
+  when the server is the cause (`gitlfs.ErrFetch`), and warn
+  `render.lfs-unsupported` when drydock is the limit (`gitlfs.IsUnsupported`).
+  `--offline` reads only `.git/lfs` and `<git cache>/lfs`, and a miss is the
+  `render.lfs-pointer` warning. For an SSH remote, run
+  `git-lfs-authenticate` with the gitauth SSH auth and send its header only
+  to the batch request, never the `--git-*` HTTP credentials. Check dialed
+  addresses: never link-local, loopback only for a loopback batch host.
 - Refuse a Git URL with `?`, `#`, or `\` before the first `/` after `://`.
   Do not use a Git cache entry whose origin names another repository than
   the request, and fetch only the URL of the request.
@@ -455,6 +470,9 @@ invariants:
   re-digest with the run-scoped memo bypassed. The sabotage-validated tests in
   `internal/app/render_cache_verify_test.go` pin this wiring — never weaken
   them.
+- A fetched Git source that holds Git LFS pointer files and a `--ref`
+  snapshot key on the pointer files that are still pointers
+  (`lfsMissingDigest`), never on where an object came from.
 - Engine fingerprint module paths live only in `internal/rendercache`
   (`FingerprintFromBuildInfo`); dev builds without VCS stamping or ldflags
   disable persistence by design.

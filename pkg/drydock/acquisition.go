@@ -27,9 +27,10 @@ type RepoMap struct {
 // like the --git-auth-host flag: host[:port] or https://host[:port] for
 // HTTPS, and http://host[:port] to allow plain HTTP. The default Git
 // acquirers send them only to a Git URL whose scheme, host, and port match
-// an entry: Application sources, remote Kustomize Git bases, and
-// submodules. go-git removes them on a redirect that leaves that scheme,
-// host, and port. A run with Username, Password, or BearerToken and no
+// an entry: Application sources, remote Kustomize Git bases, submodules,
+// and the batch requests to a Git LFS server. An object download from a Git
+// LFS server never gets them. drydock removes them on a redirect that leaves
+// that scheme, host, and port. A run with Username, Password, or BearerToken and no
 // Hosts entry fails before it fetches anything. The SSH fields ignore
 // Hosts. A custom GitAcquirer or RemoteResourceAcquirer receives Hosts and
 // must apply the same rule itself.

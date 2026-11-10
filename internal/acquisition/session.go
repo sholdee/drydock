@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/filecopy"
+	"github.com/sholdee/drydock/internal/gitlfs"
 	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/source"
@@ -41,8 +43,12 @@ type TargetLocks struct {
 }
 
 type SnapshotCache struct {
-	mu          sync.Mutex
-	gits        map[string]source.GitResult
+	mu   sync.Mutex
+	gits map[string]source.GitResult
+	// gitFailures holds the Git LFS fetch failures (gitlfs.ErrFetch) of
+	// the run, so each Application of a repository and revision does not
+	// run the same failing fill again, up to its deadline each.
+	gitFailures map[string]error
 	charts      map[string]chart.Result
 	ociResolves map[string]string
 	ociExtracts map[string]string
@@ -65,6 +71,7 @@ func NewTargetLocks() *TargetLocks {
 func NewSnapshotCache() *SnapshotCache {
 	return &SnapshotCache{
 		gits:           map[string]source.GitResult{},
+		gitFailures:    map[string]error{},
 		charts:         map[string]chart.Result{},
 		ociResolves:    map[string]string{},
 		ociExtracts:    map[string]string{},
@@ -95,6 +102,27 @@ func (cache *SnapshotCache) git(key string) (source.GitResult, bool) {
 	defer cache.mu.Unlock()
 	result, ok := cache.gits[key]
 	return result, ok
+}
+
+// gitFailure returns the Git LFS fetch failure that the run recorded for
+// key.
+func (cache *SnapshotCache) gitFailure(key string) error {
+	if cache == nil {
+		return nil
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return cache.gitFailures[key]
+}
+
+// storeGitFailure records err for key when it is a Git LFS fetch failure.
+func (cache *SnapshotCache) storeGitFailure(key string, err error) {
+	if cache == nil || !errors.Is(err, gitlfs.ErrFetch) {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.gitFailures[key] = err
 }
 
 func (cache *SnapshotCache) storeGit(key string, result source.GitResult) {
@@ -322,9 +350,15 @@ func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source
 		if result, ok := acquirer.snapshotCache.git(memoKey); ok {
 			return result, nil
 		}
+		if err := acquirer.snapshotCache.gitFailure(memoKey); err != nil {
+			return source.GitResult{}, err
+		}
 	}
 
 	result, err := acquirer.delegate.Acquire(ctx, request, opts)
+	if err != nil && acquirer.snapshot {
+		acquirer.snapshotCache.storeGitFailure(memoKey, err)
+	}
 	if err != nil || !acquirer.snapshot {
 		return result, err
 	}

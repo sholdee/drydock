@@ -4,15 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"path/filepath"
-	"slices"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/gitlfs"
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/pathsafety"
@@ -24,26 +24,48 @@ import (
 // drydock renders where the Argo CD repo-server renders their content.
 const lfsPointerCode = "render.lfs-pointer"
 
-// lfsRepositoryKeys returns the URL keys of the repository Secrets that
-// set enableLfs. The Argo CD repo-server then fetches Git LFS objects and
-// runs `git lfs checkout` after each checkout (util/git/client.go:710-719
-// and 799-811), so the checkout holds the content of each pointer file.
-func lfsRepositoryKeys(settings config.ArgoSettings) map[string]bool {
-	var out map[string]bool
-	for key, repository := range settings.HelmRepositories {
+// lfsUnsupportedCode identifies the warning for Git LFS pointer files that
+// drydock renders as pointers because it does not support them, such as
+// an object over a size limit or a Git LFS server that drydock refuses.
+const lfsUnsupportedCode = "render.lfs-unsupported"
+
+// lfsRepositoryKeys maps the URL keys of the repository Secrets that set
+// enableLfs to their URLs. The Argo CD repo-server then fetches Git LFS
+// objects and runs `git lfs checkout` after each checkout
+// (util/git/client.go:710-719 and 799-811), so the checkout holds the
+// content of each pointer file. When two Secrets share a key, an http or
+// https URL wins, then the first in order.
+func lfsRepositoryKeys(settings config.ArgoSettings) map[string]string {
+	var out map[string]string
+	keys := make([]string, 0, len(settings.HelmRepositories))
+	for key := range settings.HelmRepositories {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		repository := settings.HelmRepositories[key]
 		if !repository.EnableLFS {
 			continue
 		}
 		if out == nil {
-			out = map[string]bool{}
+			out = map[string]string{}
 		}
-		url := repository.URL
+		url := strings.TrimSpace(repository.URL)
 		if url == "" {
 			url = key
 		}
-		out[lfsURLKey(url)] = true
+		urlKey := lfsURLKey(url)
+		if existing, ok := out[urlKey]; ok && (isHTTPURL(existing) || !isHTTPURL(url)) {
+			continue
+		}
+		out[urlKey] = url
 	}
 	return out
+}
+
+func isHTTPURL(url string) bool {
+	lower := strings.ToLower(url)
+	return strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://")
 }
 
 // lfsURLKey compares repository URLs without letter case, scheme, user, or
@@ -55,7 +77,29 @@ func lfsURLKey(url string) string {
 // lfsEnabled reports whether the repository Secret of repoURL sets
 // enableLfs.
 func (p localProvider) lfsEnabled(repoURL string) bool {
-	return len(p.lfsRepositories) > 0 && p.lfsRepositories[lfsURLKey(repoURL)]
+	if len(p.lfsRepositories) == 0 {
+		return false
+	}
+	_, ok := p.lfsRepositories[lfsURLKey(repoURL)]
+	return ok
+}
+
+// lfsMissingHint is the end of a Git LFS warning for reasons.
+func lfsMissingHint(reasons []string) string {
+	if len(reasons) == 0 {
+		return "drydock could not get their Git LFS objects"
+	}
+	return "drydock could not get their Git LFS objects: " + strings.Join(reasons, "; ")
+}
+
+// lfsResultDiagnostics warns for the pointers that a fill left: the
+// render.lfs-pointer warning for those that a run with the network can
+// fill, and the render.lfs-unsupported warning for those that drydock does
+// not support.
+func lfsResultDiagnostics(repoURL string, result gitlfs.Result) []diagnostic.Diagnostic {
+	diags := lfsPointerDiagnostics(lfsPointerCode, repoURL, result.Missing, lfsMissingHint(result.Reasons))
+	unsupportedHint := "drydock does not support them: " + strings.Join(result.UnsupportedReasons, "; ")
+	return append(diags, lfsPointerDiagnostics(lfsUnsupportedCode, repoURL, result.Unsupported, unsupportedHint)...)
 }
 
 // rootLFSState is the Git LFS state of the tree at a provider root whose
@@ -63,8 +107,11 @@ func (p localProvider) lfsEnabled(repoURL string) bool {
 // Argo CD holds their content.
 type rootLFSState struct {
 	snapshot bool
-	missing  []string
-	err      error
+	// missing are the pointers of a working tree.
+	missing []string
+	// result is the fill of a snapshot.
+	result gitlfs.Result
+	err    error
 }
 
 // snapshotLFSStates keeps, per snapshot root, the result of replacing its
@@ -80,10 +127,14 @@ type snapshotLFSEntry struct {
 // its repository sets enableLfs:
 //
 //   - a snapshot of a Git ref (drydock's own temporary tree) gets the
-//     content of each pointer from the local repository's .git/lfs store,
-//     as `git lfs checkout` does; a pointer whose object is missing stays,
-//     and the render cache keys the root on the missing objects, so a later
-//     `git lfs fetch` renders again;
+//     content of each pointer, as `git lfs fetch` and `git lfs checkout`
+//     give it: from the local repository's .git/lfs store, then from the
+//     Git LFS store of the drydock Git cache, then, unless drydock runs
+//     offline, from the Git LFS server of the repository
+//     (sourcepkg.FillLFS). A pointer whose object drydock cannot get
+//     stays, and the render cache keys the root on the missing objects,
+//     whatever store filled the others, so a later run that gets them
+//     renders again;
 //   - a working tree is the user's, which drydock never writes, so a file
 //     that still holds the pointer of HEAD stays as it is.
 func prepareRootLFS(ctx context.Context, root string, request BuildRequest, provider *localProvider) *rootLFSState {
@@ -100,10 +151,10 @@ func prepareRootLFS(ctx context.Context, root string, request BuildRequest, prov
 	value, _ := snapshotLFSStates.LoadOrStore(filepath.Clean(root), &snapshotLFSEntry{})
 	entry, _ := value.(*snapshotLFSEntry)
 	entry.once.Do(func() {
-		entry.state = snapshotLFSState(ctx, root, request.rootRepo, request.rootRevision)
+		entry.state = snapshotLFSState(ctx, root, request, provider.rootLFSURL())
 	})
-	if len(entry.state.missing) > 0 {
-		provider.rootIdentity.Digest = lfsMissingDigest(entry.state.missing)
+	if pointers := entry.state.result.Pointers(); len(pointers) > 0 {
+		provider.rootIdentity.Digest = lfsMissingDigest(pointers)
 	}
 	return &entry.state
 }
@@ -111,27 +162,51 @@ func prepareRootLFS(ctx context.Context, root string, request BuildRequest, prov
 // rootRepositoryLFS reports whether a remote of the root's repository
 // names a repository that sets enableLfs.
 func (p *localProvider) rootRepositoryLFS() bool {
-	return slices.ContainsFunc(gitref.RemoteURLs(p.rootGitRepo), p.lfsEnabled)
+	return p.rootLFSURL() != ""
 }
 
-func snapshotLFSState(ctx context.Context, root, repo, revision string) rootLFSState {
+// rootLFSURL returns the URL of the repository Secret that sets enableLfs
+// for a remote of the root's repository: origin first, then the remotes in
+// order. The Argo CD repo-server fetches that URL, which the user's remote
+// can name in another form, such as SSH for an https Secret. It returns ""
+// when no remote matches.
+func (p *localProvider) rootLFSURL() string {
+	remotes := gitref.RemoteURLs(p.rootGitRepo)
+	if origin := gitref.DefaultRemoteURL(p.rootGitRepo); origin != "" {
+		remotes = append([]string{origin}, remotes...)
+	}
+	for _, remote := range remotes {
+		if url, ok := p.lfsRepositories[lfsURLKey(remote)]; ok {
+			return url
+		}
+	}
+	return ""
+}
+
+func snapshotLFSState(ctx context.Context, root string, request BuildRequest, repoURL string) rootLFSState {
 	state := rootLFSState{snapshot: true}
-	pointers, err := gitref.LFSPointers(ctx, repo, revision)
+	repo, revision := request.rootRepo, request.rootRevision
+	pointers, lfsconfig, err := gitref.LFSTree(ctx, repo, revision)
+	if err != nil || len(pointers) == 0 {
+		state.err = err
+		return state
+	}
+	result, err := sourcepkg.FillLFS(ctx, sourcepkg.LFSFill{
+		Root:        root,
+		RepoURL:     repoURL,
+		Pointers:    pointers,
+		LFSConfig:   lfsconfig,
+		LocalStores: gitref.LFSStoreDirs(repo),
+	}, sourcepkg.GitOptions{
+		AllowNetwork: !request.Offline,
+		CacheDir:     request.GitCacheDir,
+		Credentials:  request.GitCredentials,
+	})
 	if err != nil {
 		state.err = err
 		return state
 	}
-	stores := gitref.LFSStoreDirs(repo)
-	for _, pointer := range pointers {
-		err := gittree.ReplaceLFSPointer(root, pointer, stores)
-		switch {
-		case errors.Is(err, gittree.ErrLFSObjectMissing):
-			state.missing = append(state.missing, pointer.Path)
-		case err != nil:
-			state.err = err
-			return state
-		}
-	}
+	state.result = result
 	return state
 }
 
@@ -155,8 +230,9 @@ func worktreeLFSState(ctx context.Context, root string) rootLFSState {
 	return state
 }
 
-// lfsMissingDigest keys a snapshot root on the pointer files it still
-// holds.
+// lfsMissingDigest keys a checkout on the pointer files it still holds. It
+// depends on those paths alone, so an object from the network keys the
+// same as one from a local store.
 func lfsMissingDigest(missing []string) string {
 	sum := sha256.Sum256([]byte(strings.Join(missing, "\x00")))
 	return "lfs-missing:" + hex.EncodeToString(sum[:])
@@ -180,12 +256,8 @@ func (p localProvider) lfsRenderDiagnostics(source render.ResolvedSource) ([]dia
 	if !ok {
 		return nil, nil
 	}
-	pointers, _ := value.([]gittree.LFSPointer)
-	paths := make([]string, 0, len(pointers))
-	for _, pointer := range pointers {
-		paths = append(paths, pointer.Path)
-	}
-	return lfsPointerDiagnostics(source.RepoURL, paths, "drydock does not download Git LFS objects"), nil
+	result, _ := value.(gitlfs.Result)
+	return lfsResultDiagnostics(source.RepoURL, result), nil
 }
 
 func (p localProvider) rootLFSDiagnostics(source render.ResolvedSource) ([]diagnostic.Diagnostic, error) {
@@ -195,14 +267,13 @@ func (p localProvider) rootLFSDiagnostics(source render.ResolvedSource) ([]diagn
 	if p.rootLFS.err != nil {
 		return nil, fmt.Errorf("check Git LFS pointers of repository %s: %w", source.RepoURL, p.rootLFS.err)
 	}
-	hint := "run git lfs pull in the working tree"
 	if p.rootLFS.snapshot {
-		hint = "their objects are not in the repository's .git/lfs store; run git lfs fetch"
+		return lfsResultDiagnostics(source.RepoURL, p.rootLFS.result), nil
 	}
-	return lfsPointerDiagnostics(source.RepoURL, p.rootLFS.missing, hint), nil
+	return lfsPointerDiagnostics(lfsPointerCode, source.RepoURL, p.rootLFS.missing, "run git lfs pull in the working tree"), nil
 }
 
-func lfsPointerDiagnostics(repoURL string, paths []string, hint string) []diagnostic.Diagnostic {
+func lfsPointerDiagnostics(code, repoURL string, paths []string, hint string) []diagnostic.Diagnostic {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -211,7 +282,7 @@ func lfsPointerDiagnostics(repoURL string, paths []string, hint string) []diagno
 		shown = shown[:3]
 	}
 	return []diagnostic.Diagnostic{{
-		Code:     lfsPointerCode,
+		Code:     code,
 		Severity: diagnostic.SeverityWarning,
 		Category: "render",
 		Message: fmt.Sprintf("repository %s sets enableLfs, so the Argo CD repo-server renders the content of its Git LFS files, but drydock renders %d of them as pointer files (%s); %s",
@@ -236,4 +307,16 @@ func (p localProvider) gitContentDiagnostics(ctx context.Context, source render.
 	}
 	lfsDiags, err := p.lfsRenderDiagnostics(source)
 	return append(diags, lfsDiags...), err
+}
+
+// fetchedLFSDigest keys a fetched Git checkout that holds Git LFS pointer
+// files on the ones that it still holds (lfsMissingDigest), also when it
+// holds none: a key without it is one that drydock wrote before it
+// downloaded Git LFS objects, for a render of every pointer as a pointer.
+// A checkout without pointer files keeps its key.
+func fetchedLFSDigest(acquired sourcepkg.GitResult) string {
+	if len(acquired.LFSPointers) == 0 {
+		return ""
+	}
+	return lfsMissingDigest(acquired.LFS.Pointers())
 }

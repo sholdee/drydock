@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/cache"
+	"github.com/sholdee/drydock/internal/credhost"
 )
 
 type DefaultAcquirer struct {
@@ -94,7 +95,7 @@ func (acquirer DefaultAcquirer) fetch(ctx context.Context, normalizedURL string,
 	}
 	if credentials.authorizes(req.URL) {
 		applyHTTPAuth(req, credentials)
-		client = withCredentialRedirectPolicy(client)
+		client = credhost.ScopeRedirects(client)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

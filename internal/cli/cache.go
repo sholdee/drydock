@@ -423,6 +423,9 @@ func versionRecordsSuffix(result cache.OperationResult) string {
 	if result.StaleClonesRemoved > 0 {
 		suffix += fmt.Sprintf(" and %d stale submodule store clones", result.StaleClonesRemoved)
 	}
+	if result.StaleLFSTempsRemoved > 0 {
+		suffix += fmt.Sprintf(" and %d stale Git LFS download files", result.StaleLFSTempsRemoved)
+	}
 	return suffix
 }
 

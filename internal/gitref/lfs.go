@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/sholdee/drydock/internal/gitlfs"
 	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/source"
 )
@@ -42,4 +43,31 @@ func LFSStoreDirs(repoPath string) []string {
 		out = append(out, filepath.Join(dir, "lfs"))
 	}
 	return out
+}
+
+// LFSTree lists the Git LFS pointer files of the commit that revision
+// names in the local repository at repoPath, as LFSPointers does, and
+// returns the .lfsconfig file of that commit, or nil.
+func LFSTree(ctx context.Context, repoPath, revision string) ([]gittree.LFSPointer, []byte, error) {
+	repo, displayRepoPath, err := openLocalRepository(repoPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	hash, err := source.ResolveGitRevision(repo, revision)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve Git ref %q in %q: %w", revision, displayRepoPath, err)
+	}
+	commit, err := repo.CommitObject(*hash)
+	if err != nil {
+		return nil, nil, err
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, nil, err
+	}
+	pointers, err := gittree.ScanLFSPointers(ctx, tree)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pointers, gittree.ReadLFSConfig(tree, gitlfs.MaxLFSConfigSize), nil
 }
