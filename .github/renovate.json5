@@ -25,6 +25,11 @@
   // globs, so it must be the version the selected Argo CD requires: releases
   // parse some patterns differently, such as {c,[a,b]}.yaml. The post-upgrade
   // sync helper owns it, and TestDoublestarMatchesSelectedArgoCD checks it.
+  // pflag parses the kustomize edit and kustomize build arguments the way
+  // the kustomize CLI reads them, so it must be the version the selected
+  // kustomize builds with: releases change the error text, such as v1.1.0 for
+  // a bad boolean value. A kustomize upgrade moves it through MVS, and
+  // TestParseKustomizeEditArgsMatchesCobra fails when the text changes.
   ignoreDeps: [
     'github.com/bmatcuk/doublestar/v4',
     'github.com/argoproj/argo-cd/gitops-engine',
@@ -32,6 +37,7 @@
     'github.com/argoproj/pkg',
     'github.com/itchyny/gojq',
     'github.com/itchyny/timefmt-go',
+    'github.com/spf13/pflag',
   ],
   postUpdateOptions: ['gomodTidy'],
   postUpgradeTasks: {
@@ -140,6 +146,13 @@
       description: 'structured-merge-diff major line is pinned by argo-cd (util/argo/managedfields.Normalize takes its typed.ParseableType); migrate only inside an argo-cd upgrade that moves it',
       matchManagers: ['gomod'],
       matchPackageNames: ['/^sigs\\.k8s\\.io\\/structured-merge-diff\\//'],
+      matchUpdateTypes: ['major'],
+      enabled: false,
+    },
+    {
+      description: 'go.yaml.in/yaml majors are new module paths that parse YAML differently; drydock parses YAML with the lines that kustomize and Argo CD use, so move only when they move',
+      matchManagers: ['gomod'],
+      matchPackageNames: ['/^go\\.yaml\\.in\\/yaml\\//'],
       matchUpdateTypes: ['major'],
       enabled: false,
     },
