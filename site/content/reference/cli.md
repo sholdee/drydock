@@ -647,8 +647,10 @@ entries list with source `oci` and kind `image`, keyed by repository URL and
 resolved digest.
 
 The Git LFS objects that drydock downloads are in the `lfs` directory of the
-Git cache root that `drydock cache path` prints. The cache commands do not
-list, prune, or delete them. To free that space, remove the directory. See
+Git cache root that `drydock cache path` prints. `drydock cache list` shows
+each object as a `git` entry of kind `lfs`, keyed by its SHA-256, with its
+size and last use. `cache prune` removes objects by last use or by size,
+and `cache delete --source git` removes them. See
 [Git LFS](/concepts/source-acquisition/#git-lfs).
 
 Report stale entries without deleting them:

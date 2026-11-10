@@ -1169,50 +1169,72 @@ repo-server runs `git lfs fetch --all` after each fetch and
 `git lfs checkout` after each checkout, so the checkout holds the content
 (`util/git/client.go:710-719` and `799-811`). It fetches only when the
 revision is not in its checkout yet (`checkoutRevision`,
-`reposerver/repository/repository.go:3158-3202`). Without `enableLfs`,
-every git command runs with `GIT_LFS_SKIP_SMUDGE=1`, so the checkout holds
-the pointer files. drydock reads `enableLfs` from a repository Secret like
-`enableOCI`.
+`reposerver/repository/repository.go:3158-3202`). When `git lfs fetch`
+fails, the manifest request fails. Without `enableLfs`, every git command
+runs with `GIT_LFS_SKIP_SMUDGE=1`, so the checkout holds the pointer files.
+drydock reads `enableLfs` from a repository Secret like `enableOCI`.
 
 drydock does not run git-lfs. It has its own Git LFS client, which uses the
 download operation of the Git LFS batch API with the basic transfer adapter
 over `http` and `https`, as `docs/api/batch.md` and
-`docs/api/basic-transfers.md` of git-lfs 3.x describe them. It fills the
-pointer files of fetched Git sources and of `--ref` and `--ref-orig`
-snapshots. For each pointer file, drydock reads the object from these
-places, in this order:
+`docs/api/basic-transfers.md` of git-lfs 3.x describe them. drydock checked
+its rules against git-lfs 3.8.1, the version that Argo CD v3.6.1 installs.
+It fills the pointer files of fetched Git sources and of `--ref` and
+`--ref-orig` snapshots. For each pointer file, drydock reads the object
+from these places, in this order:
 
-1. The local repository's `.git/lfs/objects` store. Only a snapshot has
+1. The file itself, when it already holds content whose size and SHA-256
+   match the pointer. drydock does not write it again.
+2. The local repository's `.git/lfs/objects` store. Only a snapshot has
    one. drydock never writes it.
-2. The Git LFS store of the drydock Git cache, `<git cache>/lfs/objects`.
+3. The Git LFS store of the drydock Git cache, `<git cache>/lfs/objects`.
    It is content-addressed: an object has one path for its SHA-256, which
-   every repository shares.
-3. Unless `--offline` is set, the Git LFS server of the repository.
+   every repository shares. drydock marks an object as used each time it
+   reads it.
+4. Unless `--offline` is set, the Git LFS server of the repository.
    drydock downloads the object into the Git LFS store of the Git cache.
 
 drydock makes sure that the size and the SHA-256 of each object match the
 pointer before it uses or stores the object. A download goes to a temporary
-file in the store first, and it moves into place only after that check. A
-process downloads each object once, and processes that share a cache write
-their own temporary files. A pointer that uses Git LFS extensions stays a
-pointer.
+file in `<git cache>/lfs/tmp` first, and it moves into place only after
+that check. A process downloads each object once, and processes that share
+a cache write their own temporary files.
 
-drydock finds the Git LFS server as git-lfs 3.x finds it for the remote
-`origin` (`lfsapi/endpoint_finder.go`):
+A fetched Git source keeps its checkout in the Git cache, and drydock does
+not check out `HEAD` again. So before drydock fills a pointer there, it
+writes `.git/drydock-lfs-filled` in the checkout. A later run without
+`enableLfs` that finds this file writes every pointer back and removes the
+file. A diff in which only one side sets `enableLfs` therefore renders the
+content on that side and the pointer on the other, as the repo-server does.
+
+#### Git LFS Server
+
+drydock finds the Git LFS server as git-lfs 3.8.1 finds it for the remote
+`origin` (`lfsapi/endpoint_finder.go`), and as `git lfs env` prints it:
 
 1. `lfs.url` in the `.lfsconfig` file of the commit.
 2. `remote.origin.lfsurl` in the same file.
 3. The repository URL with `/info/lfs` added. When the URL does not end in
-   `.git`, drydock adds `.git/info/lfs`. A `git://` URL becomes `https://`
-   on the same host, as in git-lfs.
+   `.git`, drydock adds `.git/info/lfs`.
 
-drydock reads no Git config file for this. The cache clone of the
-repo-server has neither key. For a fetched Git source, the repository URL
-is the `repoURL` of the source. For a snapshot, it is the URL of the
-repository Secret that sets `enableLfs` and matches a remote of the local
-repository, because the repo-server fetches that URL. drydock reads at most
-64 KiB of `.lfsconfig`. It refuses an `lfs.url` with a user, a password, a
-query, or a fragment, and one that is not `http` or `https`.
+These rules also apply:
+
+- A `git://` URL becomes `https://` on the same host and port. When
+  `.lfsconfig` sets `lfs.gitprotocol`, drydock uses that scheme instead.
+- A key that is set but empty, such as `lfs.url =`, gives git-lfs no
+  server, also when the other key is set. The fetch then fails, in git-lfs
+  and in drydock. A `.lfsconfig` file that is not a valid Git config file
+  fails the same way.
+- For an SSH repository URL or an SSH `lfs.url`, drydock runs
+  `git-lfs-authenticate` as described below.
+- For a fetched Git source, the repository URL is the `repoURL` of the
+  source. For a snapshot, it is the URL of the repository Secret that sets
+  `enableLfs` and matches a remote of the local repository, because the
+  repo-server fetches that URL.
+- drydock reads at most 64 KiB of `.lfsconfig`. It reads no Git config
+  file, because the cache clone of the repo-server sets none of these keys.
+
+#### Git LFS Credentials
 
 drydock sends credentials as follows:
 
@@ -1222,7 +1244,8 @@ drydock sends credentials as follows:
   host. A user and password in the repository URL go only to the scheme,
   host, and port of that URL.
 - A redirect of the batch request that leaves the scheme, host, and port of
-  the first request loses the credentials.
+  the first request loses the credentials. This includes another port of
+  the same host, where the Go HTTP client keeps them.
 - The batch response gives a download URL for each object, often on
   another host, such as an object store. That request gets only the
   headers that the batch response gives for it, and never the `--git-*`
@@ -1234,37 +1257,110 @@ drydock sends credentials as follows:
   download URL, which can hold a signed token. drydock never stores a
   header or a token.
 
+#### Git LFS Over SSH
+
+For an SSH repository URL, git-lfs gets the Git LFS server and an auth
+header over SSH. git-lfs 3.8.1 first tries the pure SSH protocol
+(`git-lfs-transfer`), and then runs `git-lfs-authenticate <path> download`.
+drydock runs only `git-lfs-authenticate`:
+
+- It connects with the SSH key that drydock uses for Git
+  (`--git-ssh-key-file`, the agent, or the `~/.ssh` identities), and it
+  checks the host key against known_hosts.
+- It passes the path as git-lfs does: as written after the colon of an
+  `scp` form such as `git@host:org/repo.git`, and with its leading `/` for
+  an `ssh://` URL. drydock quotes it for the remote shell.
+- It reads at most 64 KiB of the answer, and the connection and the
+  command must end in 1 minute.
+- The answer gives the server URL (`href`), the headers, and an expiry
+  (`expires_in` or `expires_at`). drydock uses the `href` only when it is an
+  `https` URL without a user, a password, a query, or a fragment. Otherwise
+  it uses the URL that git-lfs derives: `https://<host>/<path>` with
+  `.git/info/lfs`, without the SSH port.
+- The headers go only to the batch request, and a redirect to another
+  scheme, host, or port loses them. The `--git-*` HTTP credentials never go
+  to the server of an SSH remote.
+- drydock reuses an answer for the same user, host, port, and path until 5
+  seconds before it expires, or for the whole run when it has no expiry.
+- With `--offline`, drydock never connects over SSH.
+
+When `git-lfs-authenticate` fails, the fetch fails, as in git-lfs. git-lfs
+tries the command 6 times first, and drydock tries it once.
+
+#### Git LFS Addresses
+
+A `.lfsconfig` file and a batch response come from the repository and its
+server, so they can make drydock connect to any host. drydock sends no
+credentials to such a host, but the connection itself can reach a service
+of the machine or of its network. So drydock checks the address that it
+connects to, after name resolution:
+
+- It never connects to a link-local address (`169.254.0.0/16` and
+  `fe80::/10`), where cloud metadata services listen.
+- It connects to a loopback address only when the batch host is on
+  loopback. For a server that `.lfsconfig` names, the repository host must
+  be on loopback too.
+- Through an HTTP proxy from the environment, drydock checks the addresses
+  of the target host, because the proxy connects to it.
+
+#### Git LFS Limits
+
 These limits apply:
 
-- One object: 100 MiB. A larger object stays a pointer.
+- One object: 100 MiB.
 - All downloads for one tree: 512 MiB, the default size of the render
-  cache. Objects are counted in path order, and the rest stay pointers.
+  cache. Objects are counted in path order.
 - 100 objects in one batch request, and 8 downloads at a time, as the
   defaults of git-lfs (`lfs.transfer.batchSize` and
   `lfs.concurrenttransfers`).
-- 2 minutes for a batch request and 10 minutes for one object. A
-  connection must open in 30 seconds and send response headers in 1
-  minute.
-- A batch response of at most 10 MiB.
+- 15 minutes for all the network work of one tree, 2 minutes for a batch
+  request, and 10 minutes for one object. A connection must open in 30
+  seconds and send response headers in 1 minute. A download that sends
+  nothing for 1 minute stops.
+- A batch response of at most 10 MiB, and at most 32 headers or 16 KiB of
+  headers for one download.
 
 drydock uses the HTTP proxy from the environment (`HTTPS_PROXY`,
 `HTTP_PROXY`, and `NO_PROXY`).
 
-A pointer file that drydock cannot fill stays a pointer, and drydock warns
-`render.lfs-pointer`. The warning names the reason, such as `--offline`,
-an object that the server does not have, a refused batch request, or a
-limit. This also happens for a working-tree file that still holds the
-pointer of `HEAD`. With `--offline`, a missing object also gives this
-warning, not an offline cache miss error. `git lfs checkout` in the
-repo-server also leaves a pointer whose object is not in its store. A
-source still renders when only some of its files are missing.
+#### Git LFS Results
 
-In a fetched Git source, a pointer that drydock cannot fill gets the
-pointer blob back, also when an earlier run filled it. The render cache
-keys a fetched Git source that holds pointer files, and a snapshot, on the
-pointer files that are still pointers. The key does not depend on the place
-where an object came from. So a run that loses an object never reuses the
-render of a run that had it, and a run that gets it later renders again.
+drydock sorts each pointer that it cannot fill by its cause. The Git LFS
+server is the cause in these cases:
+
+- A batch request fails, or the server refuses it.
+- The batch response gives an object error, such as 404, 403, or 401.
+- A download fails, stops, or times out.
+- The size or the SHA-256 of a download does not match the pointer.
+- `git-lfs-authenticate` fails.
+- An empty `lfs.url` gives no server.
+
+Online, the source then fails with an error that names the reason, as the
+manifest request of the repo-server fails. For a snapshot, every source
+that renders from it fails. drydock itself is the limit in these cases:
+
+- The pointer uses Git LFS extensions.
+- The object is over a size limit.
+- The batch response asks for a transfer adapter other than basic.
+- drydock refuses the server, such as a `file` URL, a local path, or a URL
+  with a user or a query.
+- The download is plain `http` from an `https` server.
+- drydock refuses the address.
+
+The pointer then stays, and drydock warns `render.lfs-unsupported` with
+the reason. With `--offline`, a pointer whose object is not in a local
+store stays, and drydock warns `render.lfs-pointer`. This is not an
+offline cache miss error. `git lfs checkout` in the repo-server also
+leaves a pointer whose object is not in its store. drydock also warns
+`render.lfs-pointer` for a working-tree file that still holds the pointer
+of `HEAD`.
+
+The render cache keys a fetched Git source that holds pointer files, and a
+snapshot, on the pointer files that are still pointers. The key does not
+depend on the place where an object came from. So a run that loses an
+object never reuses the render of a run that had it, and a run that gets
+it later renders again. A source that fails stores nothing in the render
+cache.
 
 The render cache keys a working-tree file on its bytes on disk when they
 differ from the committed blob. `git status` reports a file that git-lfs
@@ -1275,37 +1371,47 @@ from `git lfs pull` renders that content also without `enableLfs`, where
 the repo-server renders the pointer. This is a working-tree preview
 difference.
 
+The `drydock cache` commands list each object of the Git LFS store as a
+`git` entry of kind `lfs`, keyed by its SHA-256, with its size and last
+use. `cache prune --older-than` removes objects by last use, `--max-size`
+counts their bytes and removes the least recently used ones first, and
+`cache delete --source git` removes them. Prune and delete also remove
+temporary downloads that nothing changed for an hour.
+
+#### Git LFS Differences
+
 These are recorded differences from the repo-server:
 
 - The repo-server downloads every object of every ref (`--all`). drydock
   downloads only the objects of the commit that it renders. The rendered
-  content is the same.
+  content is the same. But the repo-server also fails when an object of
+  another ref is missing on the server, and drydock does not.
 - The repo-server gives the repository credentials to git-lfs for every
   Git LFS request, through its askpass helper and `http.extraHeader`.
   drydock scopes them as above.
-- When `git lfs fetch` fails, the repo-server fails the manifest request.
-  drydock renders the pointer with a warning.
-- For an SSH repository URL, git-lfs authenticates with
-  `git-lfs-authenticate` over SSH. drydock has no Git LFS client for SSH,
-  so the pointer files stay, with a warning that says so. An `https`
-  `lfs.url` in `.lfsconfig` works for an SSH repository.
+- drydock does not use `git-lfs-transfer`, and it tries
+  `git-lfs-authenticate` once, not 6 times.
 - The repo-server runs `git lfs fetch` before it checks out the new
   revision, so git-lfs can read the `.lfsconfig` file of the commit that
   was checked out before. drydock reads the one of the commit that it
   renders.
-- git-lfs has no size limits. drydock leaves an object over a limit as a
-  pointer.
+- git-lfs reads `.lfsconfig` with `git config --includes`, so it follows
+  `[include]` sections. drydock does not.
+- git-lfs uses a `file` URL, a local path, and a URL with a user or a query
+  as the server. drydock refuses them as unsupported.
+- git-lfs has no size limits and no address checks.
 - drydock does not read `url.<base>.insteadOf`, `lfs.<url>.access`, or
   custom transfer adapters, and it sends no `ref` in the batch request.
-- `drydock cache` commands do not list or prune the Git LFS store. To free
-  the space, remove the `lfs` directory of the Git cache.
+
+#### Render Parity Smoke
 
 The render parity smoke renders a directory in a submodule and a Kustomize
 overlay whose base is in a submodule. It has no Git LFS case. Its git
 daemon cannot serve Git LFS, and its fixtures reach drydock as local trees
 through `--repo-map`, which drydock never fills. Tests with a local Git LFS
-server, which serves the batch API and the objects on two hosts, cover the
-Git LFS cases.
+server, which serves the batch API and the objects on two hosts, and with
+an in-process SSH server for `git-lfs-authenticate`, cover the Git LFS
+cases.
 
 ## Rendering
 

@@ -371,9 +371,14 @@ identity resolution:
   headers of its batch action, never the `--git-*` credentials. Drop those
   headers on a redirect to another scheme, host, or port, and refuse a
   plain `http` download or redirect from `https`. Verify the size and the
-  SHA-256 of an object before it is stored or used. `--offline` reads only
-  `.git/lfs` and `<git cache>/lfs`, and a miss is the `render.lfs-pointer`
-  warning. SSH endpoints are not supported.
+  SHA-256 of an object before it is stored or used. Fail the source online
+  when the server is the cause (`gitlfs.ErrFetch`), and warn
+  `render.lfs-unsupported` when drydock is the limit (`gitlfs.IsUnsupported`).
+  `--offline` reads only `.git/lfs` and `<git cache>/lfs`, and a miss is the
+  `render.lfs-pointer` warning. For an SSH remote, run
+  `git-lfs-authenticate` with the gitauth SSH auth and send its header only
+  to the batch request, never the `--git-*` HTTP credentials. Check dialed
+  addresses: never link-local, loopback only for a loopback batch host.
 - Refuse a Git URL with `?`, `#`, or `\` before the first `/` after `://`.
   Do not use a Git cache entry whose origin names another repository than
   the request, and fetch only the URL of the request.
