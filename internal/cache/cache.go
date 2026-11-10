@@ -92,6 +92,10 @@ type OperationResult struct {
 	// a killed process left and that nothing changed for an hour, which
 	// the command removed, or would remove on a dry run.
 	StaleClonesRemoved int `json:"staleClonesRemoved,omitempty" yaml:"staleClonesRemoved,omitempty"`
+	// StaleLFSTempsRemoved counts the temporary Git LFS download files that
+	// a killed process left and that nothing changed for an hour, which
+	// the command removed, or would remove on a dry run.
+	StaleLFSTempsRemoved int `json:"staleLfsTempsRemoved,omitempty" yaml:"staleLfsTempsRemoved,omitempty"`
 }
 
 func List(opts Options) ([]Entry, error) {
@@ -110,6 +114,11 @@ func List(opts Options) ([]Entry, error) {
 			return nil, err
 		}
 		entries = append(entries, gitEntries...)
+		lfsEntries, err := listLFSEntries(opts.GitCacheDir, opts.ForbiddenRoots)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, lfsEntries...)
 	}
 	if enabled[SourceRemote] {
 		remoteEntries, err := listRemoteEntries(opts.RemoteCacheDir, opts.ForbiddenRoots)
@@ -148,7 +157,7 @@ func Prune(opts OperationOptions) (OperationResult, error) {
 		return OperationResult{}, err
 	}
 	selected, result := buildPruneResult(entries, opts)
-	if result.StaleClonesRemoved, err = removeStaleClones(opts, nil); err != nil {
+	if err := removeStaleFiles(opts, nil, &result); err != nil {
 		return OperationResult{}, err
 	}
 	if opts.DryRun {
@@ -380,7 +389,7 @@ func Delete(opts OperationOptions) (OperationResult, error) {
 	}
 	selected := selectDeleteEntries(entries, opts)
 	result := OperationResult{Entries: selected, DryRun: opts.DryRun}
-	if result.StaleClonesRemoved, err = removeStaleClones(opts, deleteCloneKeys(opts)); err != nil {
+	if err := removeStaleFiles(opts, deleteCloneKeys(opts), &result); err != nil {
 		return OperationResult{}, err
 	}
 	if opts.DryRun {
