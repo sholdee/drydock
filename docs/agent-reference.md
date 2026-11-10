@@ -630,6 +630,16 @@ Canonical references:
 Renderers implement `internal/render.Renderer`. The default implementation
 path must not shell out.
 
+Keep `sigs.k8s.io/kustomize/kustomize/v5` and `helm.sh/helm/v4` at the
+versions of the kustomize and helm binaries in the selected Argo CD image
+(`KUSTOMIZE_VERSION` and `HELM_VERSION` in its `hack/tool-versions.sh`).
+Keep `github.com/spf13/pflag`, `github.com/spf13/cobra`, and kustomize `api`
+and `kyaml` at the versions that the go.mod files of those binaries require.
+drydock reads kustomize and helm arguments as their command lines do, and a
+pflag release can change the error text. Renovate ignores these modules, and
+`scripts/sync-argocd-gitops-engine.go` sets them after an Argo CD upgrade.
+`TestArgoToolModulesMatchSelectedArgoCD` fails when they differ.
+
 Directory rendering selects files with the repo-server's case-sensitive
 extension filter (skipped under `directory.disableExtensionFilter`, leaving
 include/exclude as the only filters, and with neither of them every file is

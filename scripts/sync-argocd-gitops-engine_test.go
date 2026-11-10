@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -191,5 +192,64 @@ func TestDoublestarMatchesSelectedArgoCD(t *testing.T) {
 	}
 	if got.Version != want {
 		t.Fatalf("%s is %s, but Argo CD %s requires %s; run go run ./scripts/sync-argocd-gitops-engine.go", doublestarModule, got.Version, argo.Version, want)
+	}
+}
+
+// TestArgoToolModulesMatchSelectedArgoCD keeps the kustomize and helm
+// modules at the versions of the kustomize and helm binaries in the Argo CD
+// image, and the modules they share with drydock (pflag, cobra, kustomize
+// api and kyaml) at the versions those binaries build with. drydock reads
+// kustomize and helm arguments as those binaries do, and a newer pflag
+// changes the error text. Renovate ignores these modules, and the
+// post-upgrade sync helper sets them after an Argo CD upgrade.
+func TestArgoToolModulesMatchSelectedArgoCD(t *testing.T) {
+	argo, err := goListModule(argoCDModule)
+	if err != nil {
+		t.Fatalf("goListModule(%s) error = %v", argoCDModule, err)
+	}
+	requirements, err := argoToolRequirements(argo.Dir)
+	if err != nil {
+		t.Fatalf("argoToolRequirements() error = %v", err)
+	}
+	for _, tool := range argoToolModules {
+		for _, module := range append([]string{tool.module}, tool.pinned...) {
+			got, err := goListModule(module)
+			if err != nil {
+				t.Fatalf("goListModule(%s) error = %v", module, err)
+			}
+			if got.Version == requirements[module] {
+				continue
+			}
+			source := fmt.Sprintf("%s %s requires it", tool.module, requirements[tool.module])
+			if module == tool.module {
+				source = fmt.Sprintf("Argo CD %s sets %s in %s", argo.Version, tool.variable, argoToolVersionsFile)
+			}
+			t.Errorf("%s is %s, but %s at %s; run go run ./scripts/sync-argocd-gitops-engine.go", module, got.Version, source, requirements[module])
+		}
+	}
+}
+
+func TestArgoToolVersionsReadsToolVersionsFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "hack"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "#!/bin/sh\n# renovate: datasource=github-releases\nHELM_VERSION=4.3.1\nKUSTOMIZE_VERSION=5.8.3\nprotoc_version=29.3\n"
+	if err := os.WriteFile(filepath.Join(dir, argoToolVersionsFile), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	versions, err := argoToolVersions(dir)
+	if err != nil {
+		t.Fatalf("argoToolVersions() error = %v", err)
+	}
+	if versions["HELM_VERSION"] != "v4.3.1" || versions["KUSTOMIZE_VERSION"] != "v5.8.3" {
+		t.Fatalf("argoToolVersions() = %v, want HELM_VERSION v4.3.1 and KUSTOMIZE_VERSION v5.8.3", versions)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, argoToolVersionsFile), []byte("HELM_VERSION=4.3.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := argoToolVersions(dir); err == nil || !strings.Contains(err.Error(), "KUSTOMIZE_VERSION") {
+		t.Fatalf("argoToolVersions() error = %v, want missing KUSTOMIZE_VERSION error", err)
 	}
 }

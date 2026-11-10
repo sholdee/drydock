@@ -25,6 +25,13 @@
   // globs, so it must be the version the selected Argo CD requires: releases
   // parse some patterns differently, such as {c,[a,b]}.yaml. The post-upgrade
   // sync helper owns it, and TestDoublestarMatchesSelectedArgoCD checks it.
+  // kustomize and helm must be the versions of the binaries in the selected
+  // Argo CD image (its hack/tool-versions.sh). pflag, cobra, and kustomize api
+  // and kyaml must be the versions those binaries build with: drydock reads
+  // kustomize and helm arguments as their command lines do, and pflag
+  // releases change the error text, such as v1.1.0 for a bad boolean value.
+  // The post-upgrade sync helper owns them, and
+  // TestArgoToolModulesMatchSelectedArgoCD checks them.
   ignoreDeps: [
     'github.com/bmatcuk/doublestar/v4',
     'github.com/argoproj/argo-cd/gitops-engine',
@@ -32,6 +39,12 @@
     'github.com/argoproj/pkg',
     'github.com/itchyny/gojq',
     'github.com/itchyny/timefmt-go',
+    'github.com/spf13/cobra',
+    'github.com/spf13/pflag',
+    'helm.sh/helm/v4',
+    'sigs.k8s.io/kustomize/api',
+    'sigs.k8s.io/kustomize/kustomize/v5',
+    'sigs.k8s.io/kustomize/kyaml',
   ],
   postUpdateOptions: ['gomodTidy'],
   postUpgradeTasks: {
@@ -131,16 +144,17 @@
       enabled: false,
     },
     {
-      description: 'kustomize api and kyaml release in lockstep and bump each other through MVS; update them in one PR',
-      matchManagers: ['gomod'],
-      matchPackageNames: ['/^sigs\\.k8s\\.io\\/kustomize\\//'],
-      groupName: 'kustomize',
-    },
-    {
       description: 'structured-merge-diff major line is pinned by argo-cd (util/argo/managedfields.Normalize takes its typed.ParseableType); migrate only inside an argo-cd upgrade that moves it',
       matchManagers: ['gomod'],
       matchPackageNames: ['/^sigs\\.k8s\\.io\\/structured-merge-diff\\//'],
       matchUpdateTypes: ['major'],
+      enabled: false,
+    },
+    {
+      description: 'Allow only patch updates of go.yaml.in/yaml: a major is a new module path, and a minor can change how YAML parses; drydock stays on the lines that kustomize and Argo CD use',
+      matchManagers: ['gomod'],
+      matchPackageNames: ['/^go\\.yaml\\.in\\/yaml\\//'],
+      matchUpdateTypes: ['major', 'minor'],
       enabled: false,
     },
     {
