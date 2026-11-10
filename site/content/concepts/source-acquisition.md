@@ -153,7 +153,9 @@ gets only the headers that the server gives for it, never the `--git-*`
 credentials. drydock refuses a plain `http` download from an `https`
 server, and it never connects to a link-local address. For an SSH
 repository URL, drydock runs `git-lfs-authenticate` over SSH with the Git
-SSH key and known_hosts, as git-lfs does.
+SSH key and known_hosts, as git-lfs does. An SSH `lfs.url` in `.lfsconfig`
+can name any host that known_hosts holds, and drydock then logs in there
+with your SSH keys, as for SSH submodule URLs.
 
 When the Git LFS server does not give an object, the source fails, as the
 manifest request of the repo-server fails. When drydock itself cannot fill

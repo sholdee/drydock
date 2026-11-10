@@ -1198,13 +1198,17 @@ drydock makes sure that the size and the SHA-256 of each object match the
 pointer before it uses or stores the object. A download goes to a temporary
 file in `<git cache>/lfs/tmp` first, and it moves into place only after
 that check. A process downloads each object once, and processes that share
-a cache write their own temporary files.
+a cache write their own temporary files. When a cache prune of another
+process removes an object between its download and its use, drydock
+downloads it once more. A file that already holds the content still marks
+its store object as used.
 
 A fetched Git source keeps its checkout in the Git cache, and drydock does
 not check out `HEAD` again. So before drydock fills a pointer there, it
 writes `.git/drydock-lfs-filled` in the checkout. A later run without
-`enableLfs` that finds this file writes every pointer back and removes the
-file. A diff in which only one side sets `enableLfs` therefore renders the
+`enableLfs` that finds this file writes every pointer back. The file stays,
+because another process with `enableLfs` can fill the checkout at the same
+time. A diff in which only one side sets `enableLfs` therefore renders the
 content on that side and the pointer on the other, as the repo-server does.
 
 #### Git LFS Server
@@ -1267,6 +1271,11 @@ drydock runs only `git-lfs-authenticate`:
 - It connects with the SSH key that drydock uses for Git
   (`--git-ssh-key-file`, the agent, or the `~/.ssh` identities), and it
   checks the host key against known_hosts.
+- An SSH `lfs.url` in `.lfsconfig` can name any host. drydock then logs in
+  to that host with the same SSH keys, when known_hosts holds its key. SSH
+  submodule URLs work the same way. SSH never sends the private key, but
+  the host learns which keys you have.
+
 - It passes the path as git-lfs does: as written after the colon of an
   `scp` form such as `git@host:org/repo.git`, and with its leading `/` for
   an `ssh://` URL. drydock quotes it for the remote shell.
@@ -1280,8 +1289,9 @@ drydock runs only `git-lfs-authenticate`:
 - The headers go only to the batch request, and a redirect to another
   scheme, host, or port loses them. The `--git-*` HTTP credentials never go
   to the server of an SSH remote.
-- drydock reuses an answer for the same user, host, port, and path until 5
-  seconds before it expires, or for the whole run when it has no expiry.
+- drydock reuses an answer for the same user, host, port, path, and SSH
+  credentials until 5 seconds before it expires, or for the whole run when
+  it has no expiry.
 - With `--offline`, drydock never connects over SSH.
 
 When `git-lfs-authenticate` fails, the fetch fails, as in git-lfs. git-lfs
@@ -1296,12 +1306,21 @@ of the machine or of its network. So drydock checks the address that it
 connects to, after name resolution:
 
 - It never connects to a link-local address (`169.254.0.0/16` and
-  `fe80::/10`), where cloud metadata services listen.
+  `fe80::/10`), where cloud metadata services listen. It also refuses the
+  metadata addresses `fd00:ec2::254` (AWS) and `100.100.100.200` (Alibaba
+  Cloud), and a NAT64 address (`64:ff9b::/96`) that holds a refused IPv4
+  address.
 - It connects to a loopback address only when the batch host is on
   loopback. For a server that `.lfsconfig` names, the repository host must
-  be on loopback too.
-- Through an HTTP proxy from the environment, drydock checks the addresses
-  of the target host, because the proxy connects to it.
+  be on loopback too. So a remote repository whose `.lfsconfig` names
+  `localhost`, or a name that resolves to `127.0.0.1`, gets the
+  `render.lfs-unsupported` warning.
+- Through an HTTP proxy from the environment, drydock checks the target
+  host: an IP address, `localhost`, or the addresses that the name resolves
+  to on this machine. A name that does not resolve here goes to the proxy,
+  which then decides. The proxy resolves the name again, so through a proxy
+  drydock cannot stop a name that resolves to another address there (DNS
+  rebinding).
 
 #### Git LFS Limits
 
@@ -1337,7 +1356,9 @@ server is the cause in these cases:
 
 Online, the source then fails with an error that names the reason, as the
 manifest request of the repo-server fails. For a snapshot, every source
-that renders from it fails. drydock itself is the limit in these cases:
+that renders from it fails, and the render cache does not serve the
+snapshot. drydock keeps the failure for the rest of the run, so the other
+Applications of that repository and revision fail at once. drydock itself is the limit in these cases:
 
 - The pointer uses Git LFS extensions.
 - The object is over a size limit.
