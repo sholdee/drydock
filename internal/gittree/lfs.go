@@ -167,24 +167,53 @@ func LFSObjectPath(lfsDir, oid string) string {
 var ErrLFSObjectMissing = errors.New("git LFS object not found")
 
 // ReplaceLFSPointer writes, at the pointer's path below root, the content
-// that the first of lfsDirs holds for it, as `git lfs checkout` does. The
-// content must match the pointer's size and SHA-256. It never writes
-// through a symlink, and it fails with ErrLFSObjectMissing when no store
-// holds a matching object.
+// that the first of lfsDirs holds for it, as `git lfs checkout` does
+// (ReplaceLFSPointerFrom).
 func ReplaceLFSPointer(root string, pointer LFSPointer, lfsDirs []string) error {
+	_, err := ReplaceLFSPointerFrom(root, pointer, lfsDirs)
+	return err
+}
+
+// ReplaceLFSPointerFrom writes, at the pointer's path below root, the
+// content that the first of lfsDirs holds for it, as `git lfs checkout`
+// does, and returns that store. The content must match the pointer's size
+// and SHA-256. A file there that already holds matching content stays as
+// it is, and the store is "". It never writes through a symlink, and it
+// fails with ErrLFSObjectMissing when no store holds a matching object.
+func ReplaceLFSPointerFrom(root string, pointer LFSPointer, lfsDirs []string) (string, error) {
 	if pointer.Extensions {
-		return fmt.Errorf("%s: pointer uses Git LFS extensions: %w", pointer.Path, ErrLFSObjectMissing)
+		return "", fmt.Errorf("%s: pointer uses Git LFS extensions: %w", pointer.Path, ErrLFSObjectMissing)
 	}
 	if !ValidRelPath(pointer.Path) {
-		return fmt.Errorf("unsafe Git LFS pointer path %q", pointer.Path)
+		return "", fmt.Errorf("unsafe Git LFS pointer path %q", pointer.Path)
+	}
+	target := filepath.Join(root, filepath.FromSlash(pointer.Path))
+	if err := validateWriteParent(root, filepath.Dir(target)); err != nil {
+		return "", err
+	}
+	if contentMatches(target, pointer) {
+		return "", nil
 	}
 	for _, dir := range lfsDirs {
 		ok, err := replaceFromStore(root, pointer, dir)
-		if err != nil || ok {
-			return err
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return dir, nil
 		}
 	}
-	return fmt.Errorf("%s: %w", pointer.Path, ErrLFSObjectMissing)
+	return "", fmt.Errorf("%s: %w", pointer.Path, ErrLFSObjectMissing)
+}
+
+// contentMatches reports whether the regular file at target already holds
+// the content of pointer: its size and SHA-256 match.
+func contentMatches(target string, pointer LFSPointer) bool {
+	info, err := os.Lstat(target)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != pointer.Size {
+		return false
+	}
+	return lfsObjectMatches(target, pointer.OID)
 }
 
 func replaceFromStore(root string, pointer LFSPointer, lfsDir string) (bool, error) {
@@ -202,9 +231,6 @@ func replaceFromStore(root string, pointer LFSPointer, lfsDir string) (bool, err
 	}
 	defer func() { _ = in.Close() }()
 	target := filepath.Join(root, filepath.FromSlash(pointer.Path))
-	if err := validateWriteParent(root, filepath.Dir(target)); err != nil {
-		return false, err
-	}
 	mode := os.FileMode(0o644)
 	if current, err := os.Lstat(target); err == nil {
 		if !current.Mode().IsRegular() {
