@@ -132,6 +132,12 @@ all changed paths are considered. Ignore globs are applied after includes, so
 ignore wins. When every changed path is filtered out, drydock reports an empty
 diff instead of rendering the fleet.
 
+In a diff of `--ref-orig` against the working tree (no `--ref`), the changed
+files are the changes from that ref to `HEAD` plus the tracked and staged
+changes in the working tree. A new file that Git does not track yet is not a
+changed file, so it selects no Application. Stage the file with `git add` to
+include it.
+
 Limit the diff to Applications with matching labels:
 
 ```bash

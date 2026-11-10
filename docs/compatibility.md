@@ -191,7 +191,10 @@ Supported:
   or the working tree, from the changed-only set, or from a compare of the
   two trees for a path diff. The changed-only include and ignore globs do
   not apply to this list. If drydock cannot list the files, the warning
-  stays and says so. A dry source in another repository gives no warning,
+  stays and says so. In a diff of `--ref-orig` against the working tree,
+  the list holds tracked and staged changes only, as for changed-only
+  selection. A new file that Git does not track yet gives no warning. Stage
+  it with `git add` to include it. A dry source in another repository gives no warning,
   because its changes are not part of the diff. `build`, `test`, `get`, and
   `diag` never give the warning. `--strict` does not fail on it, because the
   render is the one that Argo CD compares. Earlier drydock releases gave the
