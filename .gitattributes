@@ -1,0 +1,5 @@
+# GitHub Actions downloads this repository as an archive when a workflow uses
+# setup-action or pr-action. The runner fails to unpack an archive that holds a
+# dangling symlink, and the test fixtures hold symlinks on purpose. The actions
+# do not read testdata, so keep it out of the archive.
+/testdata export-ignore
