@@ -604,6 +604,12 @@ func sourceReadsAppRevision(source argoappv1.ApplicationSource) bool {
 }
 
 func rootSourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, provider localProvider, plan PlanResult, sourcePlan SourcePlan, identity SourceIdentity) (SourceIdentity, string, bool) {
+	// A root whose Git LFS fill failed has no key: a cache hit would skip
+	// the error of rootLFSDiagnostics and serve a render that had the
+	// objects.
+	if provider.rootLFS != nil && provider.rootLFS.err != nil {
+		return identity, renderCacheReasonIneligibleSource, false
+	}
 	switch provider.rootInputMode {
 	case rootInputModeSnapshot:
 		if strings.TrimSpace(identity.Revision) == "" {
