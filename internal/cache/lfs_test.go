@@ -118,3 +118,40 @@ func TestDeleteRemovesGitLFSObjects(t *testing.T) {
 		t.Fatalf("List() after delete = %+v, want none", entries)
 	}
 }
+
+// TestPruneKeepsFreshAndForeignLFSDownloads pins the rules of the sweep
+// of temporary Git LFS downloads: it keeps a file that changed within the
+// hour, and it runs only when the command covers the Git cache.
+func TestPruneKeepsFreshAndForeignLFSDownloads(t *testing.T) {
+	gitRoot := filepath.Join(t.TempDir(), "git")
+	tmpDir := filepath.Join(gitRoot, "lfs", "tmp")
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fresh := filepath.Join(tmpDir, "fresh.1.tmp")
+	stale := filepath.Join(tmpDir, "stale.2.tmp")
+	for _, path := range []string{fresh, stale} {
+		if err := os.WriteFile(path, []byte("partial"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * staleCloneAge)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{GitCacheDir: gitRoot}
+	result, err := Prune(OperationOptions{Options: options, Source: SourceChart, OlderThan: time.Hour, Yes: true})
+	if err != nil || result.StaleLFSTempsRemoved != 0 {
+		t.Fatalf("Prune(--source chart) = %+v, %v; want no Git LFS sweep", result, err)
+	}
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatal("prune --source chart removed a Git LFS download")
+	}
+	result, err = Prune(OperationOptions{Options: options, Source: SourceGit, OlderThan: time.Hour, Yes: true})
+	if err != nil || result.StaleLFSTempsRemoved != 1 {
+		t.Fatalf("Prune(--source git) = %+v, %v; want the stale download removed", result, err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatal("prune removed a download that changed within the hour")
+	}
+}
