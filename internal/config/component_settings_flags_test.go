@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"maps"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -80,14 +81,107 @@ func TestComponentFlagTablesMatchArgoCD(t *testing.T) {
 	}
 }
 
+// moduleDir returns the directory of module in the module cache. Without
+// it the test skips, but in CI (the CI environment variable is set) it
+// fails, so the check never goes silent there.
 func moduleDir(t *testing.T, module string) string {
 	t.Helper()
 	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", module).Output()
 	dir := strings.TrimSpace(string(out))
 	if err != nil || dir == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("module %s is not in the module cache: %v", module, err)
+		}
 		t.Skipf("module %s is not in the module cache: %v", module, err)
 	}
 	return dir
+}
+
+// componentFlagHelpers lists, for each program, the calls of its command
+// file that register flags through a helper, as package.Func, which
+// componentFlagSources covers.
+var componentFlagHelpers = map[ArgoCDComponent][]string{
+	RepoServerComponent:               {"tls.AddTLSFlagsToCmd", "reposervercache.AddCacheFlagsToCmd"},
+	ApplicationControllerComponent:    {"cli.AddKubectlFlagsToCmd", "tls.AddClientTLSFlagsToCmdWithPrefix", "appstatecache.AddCacheFlagsToCmd"},
+	ApplicationSetControllerComponent: {"cli.AddKubectlFlagsToCmd", "tls.AddClientTLSFlagsToCmdWithPrefix"},
+}
+
+// A command file passes its cobra command or its flag set to a helper only
+// to register flags, apart from the pflag and util/cli flag calls that
+// registeredFlags reads. Each such helper must be one that the flag table
+// test covers, so a new one fails here until componentFlagSources reads it.
+func TestComponentFlagHelpersAreCovered(t *testing.T) {
+	dir := moduleDir(t, "github.com/argoproj/argo-cd/v3")
+	for component, sources := range componentFlagSources {
+		t.Run(string(component), func(t *testing.T) {
+			got := commandFlagHelpers(t, filepath.Join(dir, filepath.FromSlash(sources[0].file)))
+			want := append([]string(nil), componentFlagHelpers[component]...)
+			sort.Strings(want)
+			if !slices.Equal(got, want) {
+				t.Fatalf("flag helpers of %s = %q, want %q: cover each helper in componentFlagSources", component, got, want)
+			}
+		})
+	}
+}
+
+// commandFlagHelpers returns, sorted, the package.Func calls in file that
+// take the command (command or &command) or its flag set (command.Flags()
+// or command.PersistentFlags()) and are not pflag or util/cli flag calls.
+func commandFlagHelpers(t *testing.T, file string) []string {
+	t.Helper()
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	found := map[string]struct{}{}
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || flagMethod.MatchString(selector.Sel.Name) {
+			return true
+		}
+		pkg, ok := selector.X.(*ast.Ident)
+		if !ok || pkg.Name == "command" {
+			return true
+		}
+		for _, arg := range call.Args {
+			if commandArgument(arg) {
+				found[pkg.Name+"."+selector.Sel.Name] = struct{}{}
+				break
+			}
+		}
+		return true
+	})
+	out := make([]string, 0, len(found))
+	for name := range found {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// commandArgument reports command, &command, command.Flags(), or
+// command.PersistentFlags().
+func commandArgument(expr ast.Expr) bool {
+	if unary, ok := expr.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+		expr = unary.X
+	}
+	if ident, ok := expr.(*ast.Ident); ok {
+		return ident.Name == "command"
+	}
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	receiver, ok := selector.X.(*ast.Ident)
+	return ok && receiver.Name == "command" && (selector.Sel.Name == "Flags" || selector.Sel.Name == "PersistentFlags")
 }
 
 // registeredFlags returns the flags that the calls in file register, in
