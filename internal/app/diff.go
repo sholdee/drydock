@@ -767,9 +767,7 @@ func diffDocumentsWith(build BuildResult, normalizationOf func(ApplicationManife
 // each side is one finding, reported once as build and test report it. Other
 // diagnostics stay per side: a source-resolution warning, for example, is
 // about how that side resolved, and TestDiffRefSelfRepoForkNearMissWarnsOncePerSide
-// pins that. The settings.ignore-resource-updates advisory is collapsed the
-// same way: each side reports it in its list and build phases, and an
-// identical one is one fact about the settings.
+// pins that.
 func dedupeProjectDiagnostics(input []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 	if len(input) == 0 {
 		return nil
@@ -777,7 +775,7 @@ func dedupeProjectDiagnostics(input []diagnostic.Diagnostic) []diagnostic.Diagno
 	out := make([]diagnostic.Diagnostic, 0, len(input))
 	seen := map[string]struct{}{}
 	for _, diag := range input {
-		if diag.Code != diagnostic.CodeSettingsIgnoreResourceUpdates && diagnostic.ClassifyProjectDiagnostic(diag) == diagnostic.ProjectDiagnosticClassNonProject {
+		if diagnostic.ClassifyProjectDiagnostic(diag) == diagnostic.ProjectDiagnosticClassNonProject {
 			out = append(out, diag)
 			continue
 		}

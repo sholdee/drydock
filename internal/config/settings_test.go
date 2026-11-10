@@ -743,14 +743,13 @@ data:
 
 func TestLoadConfigMapAdvancedResourceCustomizations(t *testing.T) {
 	settings, diags := loadAdvancedResourceCustomizations(t)
-	// Two actions warnings, and one ignoreResourceUpdates advisory for the
-	// whole ConfigMap that names both keys.
-	if len(diags) != 3 {
-		t.Fatalf("len(diags) = %d, want 3 warnings: %#v", len(diags), diags)
+	// Two actions warnings. The valid ignoreResourceUpdates rules give no
+	// diagnostic: they never change desired output.
+	if len(diags) != 2 {
+		t.Fatalf("len(diags) = %d, want 2 warnings: %#v", len(diags), diags)
 	}
-	advisory := diags[len(diags)-1]
-	if advisory.Code != diagnostic.CodeSettingsIgnoreResourceUpdates || !strings.Contains(advisory.Message, "keys: apps/Deployment, batch/Job") {
-		t.Fatalf("ignoreResourceUpdates advisory = %#v, want one advisory naming both keys", advisory)
+	if hasDiagnosticMessage(diags, "ignoreResourceUpdates") {
+		t.Fatalf("diagnostics = %#v, want none about ignoreResourceUpdates", diags)
 	}
 	if settings.IgnoreResourceUpdatesEnabled.Value {
 		t.Fatalf("IgnoreResourceUpdatesEnabled = true, want false")
@@ -872,7 +871,9 @@ data:
 	assertJSONDoesNotContain(t, settings, "SUPER_SECRET_ACTION_TOKEN")
 }
 
-func TestLoadConfigMapIgnoreResourceUpdatesMetadataOnlyDiagnostic(t *testing.T) {
+// A valid ignoreResourceUpdates rule is parsed and kept, and gives no
+// diagnostic. Argo CD uses it only to skip reconciles on live updates.
+func TestLoadConfigMapIgnoreResourceUpdatesGivesNoDiagnostic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
 kind: ConfigMap
@@ -890,8 +891,8 @@ data:
 	if err != nil {
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
-	if len(diags) != 1 || diags[0].Code != diagnostic.CodeSettingsIgnoreResourceUpdates {
-		t.Fatalf("diagnostics = %#v, want one %s advisory", diags, diagnostic.CodeSettingsIgnoreResourceUpdates)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
 	}
 	customization := settings.ResourceCustomizations["apps/Deployment"]
 	if len(customization.IgnoreResourceUpdates.JSONPointers) != 1 || customization.IgnoreResourceUpdates.JSONPointers[0] != "/status" {
@@ -899,7 +900,7 @@ data:
 	}
 }
 
-func TestSplitActionsAndIgnoreResourceUpdatesEmitMetadataOnlyDiagnostics(t *testing.T) {
+func TestSplitActionsEmitMetadataOnlyDiagnosticAndIgnoreResourceUpdatesNone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
 kind: ConfigMap
@@ -925,7 +926,9 @@ data:
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
 	assertDiagnosticStableCode(t, diags, "resource customizations actions", "settings.metadata-only")
-	assertDiagnosticStableCode(t, diags, "resource customizations ignoreResourceUpdates", diagnostic.CodeSettingsIgnoreResourceUpdates)
+	if hasDiagnosticMessage(diags, "ignoreResourceUpdates") {
+		t.Fatalf("diagnostics = %#v, want none about ignoreResourceUpdates", diags)
+	}
 }
 
 func TestLoadConfigMapSplitResourceCustomizationRetainsHealthLuaWithoutWarning(t *testing.T) {
@@ -1254,6 +1257,58 @@ data:
 	}
 	if !hasDiagnosticMessage(diags, "invalid resource customization ignoreResourceUpdates settings") {
 		t.Fatalf("diagnostics = %#v, want ignoreResourceUpdates parse diagnostic", diags)
+	}
+}
+
+// A malformed ignoreResourceUpdates rule still gives exactly one error, with
+// the same message and pointer as before the advisory was removed, in the
+// split-key form and in the resource.customizations block form.
+func TestLoadConfigMapMalformedIgnoreResourceUpdatesStillErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		data    string
+		message string
+		pointer string
+	}{
+		{
+			name:    "split key bad YAML",
+			data:    "  resource.customizations.ignoreResourceUpdates.apps_Deployment: |\n    jsonPointers: [\n",
+			message: `invalid resource customization ignoreResourceUpdates settings: error converting YAML to JSON: yaml: line 1: did not find expected node content (split key "resource.customizations.ignoreResourceUpdates.apps_Deployment")`,
+			pointer: "data.resource.customizations.ignoreResourceUpdates.apps_Deployment",
+		},
+		{
+			name:    "split key wrong type",
+			data:    "  resource.customizations.ignoreResourceUpdates.apps_Deployment: |\n    jsonPointers: /status\n",
+			message: `invalid resource customization ignoreResourceUpdates settings: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal string into Go struct field .jsonPointers of type []string (split key "resource.customizations.ignoreResourceUpdates.apps_Deployment")`,
+			pointer: "data.resource.customizations.ignoreResourceUpdates.apps_Deployment",
+		},
+		{
+			name:    "block",
+			data:    "  resource.customizations: |\n    apps/Deployment:\n      ignoreResourceUpdates: |\n        jsonPointers: [\n",
+			message: "invalid resource.customizations settings: error unmarshaling JSON: while decoding JSON: error converting YAML to JSON: yaml: line 1: did not find expected node content",
+			pointer: "data.resource.customizations",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+			if err := os.WriteFile(path, []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argocd-cm\ndata:\n"+tc.data), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			settings, diags, err := LoadFromConfigMap(path)
+			if err != nil {
+				t.Fatalf("LoadFromConfigMap() error = %v", err)
+			}
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %#v, want one error", diags)
+			}
+			got := diags[0]
+			if got.Severity != diagnostic.SeverityError || got.Category != "settings" || got.Message != tc.message || got.Provenance.Pointer != tc.pointer {
+				t.Fatalf("diagnostic = %#v, want error %q at %q", got, tc.message, tc.pointer)
+			}
+			if len(settings.ResourceCustomizations) != 0 {
+				t.Fatalf("ResourceCustomizations = %#v, want none kept", settings.ResourceCustomizations)
+			}
+		})
 	}
 }
 

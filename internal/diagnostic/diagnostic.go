@@ -54,12 +54,6 @@ const (
 	CodeSettingsResourceSelectorMismatch = "settings.resource-selector-mismatch"
 )
 
-// CodeSettingsIgnoreResourceUpdates is the advisory that one settings source
-// sets ignoreResourceUpdates customizations. Argo CD uses them only to skip
-// reconciles on live updates. They never change desired output or a
-// desired-vs-desired diff, so --strict does not fail on the advisory.
-const CodeSettingsIgnoreResourceUpdates = "settings.ignore-resource-updates"
-
 // CodeSettingsInstallRenderFailed is the warning that drydock cannot render
 // an Application that installs Argo CD on this cluster, so it reads the
 // settings of that install from its values files on their own, which is
