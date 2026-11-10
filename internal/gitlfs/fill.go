@@ -164,14 +164,59 @@ func Fill(ctx context.Context, root string, pointers []gittree.LFSPointer, opts 
 		f.leave(pending, reason, unsupported)
 		return f.result.finish(), nil
 	}
-	if err := f.download(ctx, pending); err != nil {
-		return f.result.finish(), err
-	}
-	pending, err = f.fillFromStores(pending, []string{opts.CacheDir})
+	pending, err = f.fetch(ctx, pending)
 	if err != nil {
 		return f.result.finish(), err
 	}
 	return f.settle(pending)
+}
+
+// afterDownload runs after each download pass. Only tests set it.
+var afterDownload = func() {}
+
+// fetch downloads the objects of pending within limits.FillTimeout and
+// fills their pointers from the drydock store. An object that downloaded
+// but is gone from the store again, because a cache prune of another
+// process removed it, gets one more download. It returns the pointers that
+// the store still lacks. When the caller's context ends, it returns that
+// error.
+func (f *filler) fetch(ctx context.Context, pending []gittree.LFSPointer) ([]gittree.LFSPointer, error) {
+	limits := f.opts.Limits.withDefaults()
+	fetchCtx, cancel := context.WithTimeout(ctx, limits.FillTimeout)
+	defer cancel()
+	c := newClient(f.opts)
+	for pass := 0; pass < 2 && len(pending) > 0; pass++ {
+		f.download(fetchCtx, c, f.withoutOutcome(pending))
+		afterDownload()
+		var err error
+		if pending, err = f.fillFromStores(pending, []string{f.opts.CacheDir}); err != nil {
+			return nil, err
+		}
+		if len(f.withoutOutcome(pending)) == 0 || fetchCtx.Err() != nil {
+			break
+		}
+	}
+	switch {
+	case ctx.Err() != nil:
+		return nil, ctx.Err()
+	case fetchCtx.Err() != nil:
+		f.failures = addReason(f.failures, fmt.Sprintf("the Git LFS downloads took longer than %s", limits.FillTimeout))
+	}
+	return pending, nil
+}
+
+// withoutOutcome lists the pointers of pending whose object the network
+// gave no outcome for yet.
+func (f *filler) withoutOutcome(pending []gittree.LFSPointer) []gittree.LFSPointer {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []gittree.LFSPointer
+	for _, pointer := range pending {
+		if _, done := f.outcomes[pointer.OID]; !done {
+			out = append(out, pointer)
+		}
+	}
+	return out
 }
 
 // filler is the state of one Fill.
@@ -217,9 +262,11 @@ func (f *filler) fillFromStores(pointers []gittree.LFSPointer, stores []string) 
 			pending = append(pending, pointer)
 		case err != nil:
 			return nil, err
-		case used != "" && used == f.opts.CacheDir:
+		case f.opts.CacheDir != "" && (used == "" || used == f.opts.CacheDir):
+			// A file that already held the content ("") still uses the
+			// object, so a cache prune keeps it.
 			now := time.Now()
-			_ = os.Chtimes(gittree.LFSObjectPath(used, pointer.OID), now, now)
+			_ = os.Chtimes(gittree.LFSObjectPath(f.opts.CacheDir, pointer.OID), now, now)
 		}
 	}
 	return pending, nil
@@ -253,36 +300,20 @@ func (f *filler) leave(pending []gittree.LFSPointer, reason string, unsupported 
 	}
 }
 
-// download downloads the objects of pending into the drydock store within
-// limits.FillTimeout, and records the outcome of each object.
-func (f *filler) download(ctx context.Context, pending []gittree.LFSPointer) error {
+// download downloads the objects of pending into the drydock store, and
+// records the outcome of each object.
+func (f *filler) download(ctx context.Context, c *client, pending []gittree.LFSPointer) {
 	if f.opts.EndpointErr != nil {
 		f.recordAll(pending, f.opts.EndpointErr)
-		return nil
+		return
 	}
-	c := newClient(f.opts)
-	ctx, cancel := context.WithTimeout(ctx, c.limits.FillTimeout)
-	defer cancel()
 	wanted := f.selectObjects(c.limits, pending)
 	for start := 0; start < len(wanted); start += c.limits.BatchSize {
 		if ctx.Err() != nil {
-			break
+			return
 		}
 		f.fetchChunk(ctx, c, wanted[start:min(start+c.limits.BatchSize, len(wanted))])
 	}
-	if ctx.Err() != nil && parentDone(ctx) {
-		return ctx.Err()
-	}
-	if ctx.Err() != nil {
-		f.failures = addReason(f.failures, fmt.Sprintf("the Git LFS downloads took longer than %s", c.limits.FillTimeout))
-	}
-	return nil
-}
-
-// parentDone reports whether the caller's context ended, not only the
-// deadline of the Fill.
-func parentDone(ctx context.Context) bool {
-	return errors.Is(context.Cause(ctx), context.Canceled)
 }
 
 // recordAll records err for the objects of every pending pointer.

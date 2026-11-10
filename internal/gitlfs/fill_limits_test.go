@@ -18,6 +18,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/gitauth"
 	"github.com/sholdee/drydock/internal/gitlfs/lfstest"
+	"github.com/sholdee/drydock/internal/gittree"
 )
 
 // TestFillDropsCredentialsOnBatchRedirectToAnotherPort pins that a batch
@@ -226,6 +227,15 @@ func TestFillKeepsAFileThatAlreadyMatches(t *testing.T) {
 	if info, _ := os.Stat(object); !info.ModTime().After(old) {
 		t.Fatal("the store object keeps its old time after a hit, want it marked as used")
 	}
+
+	// A file that already matches still marks its store object as used.
+	if err := os.Chtimes(object, old, old); err != nil {
+		t.Fatal(err)
+	}
+	c.fill(t, Options{CacheDir: c.store})
+	if info, _ := os.Stat(object); !info.ModTime().After(old) {
+		t.Fatal("the store object keeps its old time when the file already matched, want it marked as used")
+	}
 }
 
 // TestDialGuardRefusesLinkLocalAndForeignLoopback pins the addresses that
@@ -338,5 +348,41 @@ func TestDialGuardChecksProxiedTargets(t *testing.T) {
 	}
 	if _, ok := guard.proxies.Load("proxy.example.test:3128"); !ok {
 		t.Fatal("the proxy address was not recorded, so its dial would be checked")
+	}
+}
+
+// TestFillDownloadsAgainWhenAPruneRemovesTheObject pins that an object
+// that a cache prune of another process removes between the download and
+// the fill is downloaded once more, not reported as a server failure.
+func TestFillDownloadsAgainWhenAPruneRemovesTheObject(t *testing.T) {
+	server := lfstest.New(t, false, false)
+	server.Add(testContent)
+	c := newFillCase(t, testContent)
+	passes := 0
+	afterDownload = func() {
+		passes++
+		if passes == 1 {
+			_ = os.RemoveAll(filepath.Join(c.store, "objects"))
+		}
+	}
+	t.Cleanup(func() { afterDownload = func() {} })
+	result := c.fill(t, c.options(server, gitauth.Credentials{}))
+	if len(result.Pointers()) != 0 || result.Downloaded != 2 || len(server.RequestsTo("objects")) != 2 || c.file(t) != testContent {
+		t.Fatalf("Fill() = %+v, object requests = %d; want a second download", result, len(server.RequestsTo("objects")))
+	}
+}
+
+// TestFillReportsTheCallersDeadline pins that a Fill whose caller's
+// context ends returns that error, not its own deadline.
+func TestFillReportsTheCallersDeadline(t *testing.T) {
+	server := lfstest.New(t, false, false)
+	server.Add(testContent)
+	server.ObjectDelay = 2 * time.Second
+	c := newFillCase(t, testContent)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err := Fill(ctx, c.root, []gittree.LFSPointer{c.pointer}, c.options(server, gitauth.Credentials{}))
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrFetch) {
+		t.Fatalf("Fill() error = %v, want the caller's deadline", err)
 	}
 }
