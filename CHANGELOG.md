@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/sholdee/drydock/compare/v0.4.1...v0.4.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **diagnostics:** drop warnings that cannot change a result and narrow the hydrator warning ([#524](https://github.com/sholdee/drydock/issues/524)) ([fc34c26](https://github.com/sholdee/drydock/commit/fc34c26f722bf2cd08aa3c76fd617271c59da705))
+
 ## [0.4.1](https://github.com/sholdee/drydock/compare/v0.4.0...v0.4.1) (2026-11-10)
 
 
