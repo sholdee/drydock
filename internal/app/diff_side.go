@@ -47,6 +47,12 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 	if request.ChangedOnly || selectsByLabels(request.LabelSelector) {
 		var changedPaths []string
 		if request.ChangedOnly {
+			// List the changed files once: the dry source check
+			// (hydratorDryChangeDiagnostics) reads the same list.
+			request, err = request.withDetectedChangedPaths()
+			if err != nil {
+				return BuildResult{}, BuildResult{}, diagnostics, err
+			}
 			changedPaths, err = filteredChangedOnlyPaths(request)
 			if err != nil {
 				return BuildResult{}, BuildResult{}, diagnostics, err
@@ -400,6 +406,26 @@ func projectFingerprints(projects []argoappv1.AppProject) map[string]string {
 		}{proj.Namespace, proj.Spec})
 	}
 	return fingerprints
+}
+
+// withDetectedChangedPaths keeps the changed files of the diff in
+// request.changedPaths. A ref diff already holds them
+// (resolveEmptyChangedOnlyRefDiff). Otherwise drydock compares the two side
+// trees once, so filteredChangedOnlyPaths and diffChangedFiles read one
+// list instead of each comparing the trees.
+func (request DiffRequest) withDetectedChangedPaths() (DiffRequest, error) {
+	if request.changedPaths != nil {
+		return request, nil
+	}
+	paths, err := change.Detect(request.LeftPath, request.RightPath)
+	if err != nil {
+		return request, err
+	}
+	if paths == nil {
+		paths = []string{}
+	}
+	request.changedPaths = paths
+	return request, nil
 }
 
 func filteredChangedOnlyPaths(request DiffRequest) ([]string, error) {

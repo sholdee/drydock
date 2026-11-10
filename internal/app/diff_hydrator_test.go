@@ -563,3 +563,34 @@ func TestDiffRefHydratorChangeListIgnoresChangedOnlyGlobs(t *testing.T) {
 		t.Fatalf("Diagnostics = %#v, want the dry source warning despite the include glob", result.Diagnostics)
 	}
 }
+
+// TestWithDetectedChangedPathsListsTheTreesOnce pins that a changed-only
+// path diff compares its two trees once: after withDetectedChangedPaths,
+// diffChangedFiles reads the kept list and never compares the trees again,
+// so it still answers after the baseline tree is gone.
+func TestWithDetectedChangedPathsListsTheTreesOnce(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	writeTestFile(t, filepath.Join(left, "dry", "cm.yaml"), "a: 1\n")
+	writeTestFile(t, filepath.Join(right, "dry", "cm.yaml"), "a: 2\n")
+	request, err := DiffRequest{LeftPath: left, RightPath: right, ChangedOnly: true}.withDetectedChangedPaths()
+	if err != nil {
+		t.Fatalf("withDetectedChangedPaths() error = %v", err)
+	}
+	if err := os.RemoveAll(left); err != nil {
+		t.Fatal(err)
+	}
+	filtered, err := filteredChangedOnlyPaths(request)
+	if err != nil || !slices.Equal(filtered, []string{"dry/cm.yaml"}) {
+		t.Fatalf("filteredChangedOnlyPaths() = %v, %v, want the kept list", filtered, err)
+	}
+	files := request.diffChangedFiles(context.Background())
+	if files.unknown != "" || !slices.Equal(files.paths, []string{"dry/cm.yaml"}) {
+		t.Fatalf("diffChangedFiles() = %#v, want the kept list", files)
+	}
+
+	unchanged, err := DiffRequest{LeftPath: right, RightPath: right}.withDetectedChangedPaths()
+	if err != nil || unchanged.changedPaths == nil || len(unchanged.changedPaths) != 0 {
+		t.Fatalf("withDetectedChangedPaths() = %#v, %v, want an empty kept list", unchanged.changedPaths, err)
+	}
+}
