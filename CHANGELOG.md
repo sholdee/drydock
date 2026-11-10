@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/sholdee/drydock/compare/v0.4.0...v0.4.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **action:** keep symlinked test fixtures out of the action download ([#522](https://github.com/sholdee/drydock/issues/522)) ([bed21f0](https://github.com/sholdee/drydock/commit/bed21f0d9fe04a489989ec174356e138709346bc))
+
 ## [0.4.0](https://github.com/sholdee/drydock/compare/v0.3.8...v0.4.0) (2026-11-10)
 
 
