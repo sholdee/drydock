@@ -1,6 +1,8 @@
 package gitlfs
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -246,6 +248,12 @@ func TestDialGuardRefusesLinkLocalAndForeignLoopback(t *testing.T) {
 		{foreign, "0.0.0.0:80", false},
 		{foreign, "192.0.2.10:443", true},
 		{chosen, "127.0.0.1:8080", false},
+		{loopback, "[fd00:ec2::254]:80", false},
+		{loopback, "100.100.100.200:80", false},
+		{loopback, "[64:ff9b::a9fe:a9fe]:80", false},
+		{foreign, "[64:ff9b::7f00:1]:80", false},
+		{foreign, "[64:ff9b::c000:20a]:443", true},
+		{foreign, "100.100.100.201:443", true},
 	} {
 		err := tc.guard.control("tcp", tc.address, nil)
 		if (err == nil) != tc.allowed {
@@ -301,5 +309,34 @@ func TestProxyAddressUsesTheDefaultPorts(t *testing.T) {
 		if got := proxyAddress(parsed); got != want {
 			t.Errorf("proxyAddress(%s) = %s, want %s", raw, got, want)
 		}
+	}
+}
+
+// TestDialGuardChecksProxiedTargets pins the check of a proxied request:
+// an IP address or localhost that the guard refuses fails, and a name that
+// does not resolve here goes to the proxy, which is then the policy point.
+func TestDialGuardChecksProxiedTargets(t *testing.T) {
+	guard := newDialGuard(Endpoint{URL: "https://lfs.example.test/x", RepoHost: "git.example.test"})
+	guard.resolver = &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("no DNS here")
+	}}
+	proxyURL, _ := url.Parse("http://proxy.example.test:3128")
+	guard.fromEnvironment = func(*http.Request) (*url.URL, error) { return proxyURL, nil }
+	for target, allowed := range map[string]bool{
+		"https://only-the-proxy-knows.example.test/x": true,
+		"https://127.0.0.1/x":                         false,
+		"https://localhost/x":                         false,
+		"https://api.localhost/x":                     false,
+		"https://[fd00:ec2::254]/x":                   false,
+		"https://192.0.2.10/x":                        true,
+	} {
+		request, _ := http.NewRequest(http.MethodGet, target, nil)
+		got, err := guard.proxy(request)
+		if (err == nil) != allowed || (allowed && got != proxyURL) {
+			t.Errorf("proxy(%s) = %v, %v; want allowed %t", target, got, err, allowed)
+		}
+	}
+	if _, ok := guard.proxies.Load("proxy.example.test:3128"); !ok {
+		t.Fatal("the proxy address was not recorded, so its dial would be checked")
 	}
 }

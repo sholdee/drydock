@@ -285,9 +285,11 @@ func hostOfURL(raw string) string {
 	return parsed.Hostname()
 }
 
-// isLoopbackHost reports whether host is localhost or a loopback IP.
+// isLoopbackHost reports whether host is localhost, a name below
+// localhost, or a loopback IP.
 func isLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return true
 	}
 	ip := net.ParseIP(strings.Trim(host, "[]"))
