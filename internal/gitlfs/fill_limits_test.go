@@ -263,6 +263,10 @@ func TestDialGuardRefusesLinkLocalAndForeignLoopback(t *testing.T) {
 		{loopback, "[64:ff9b::a9fe:a9fe]:80", false},
 		{foreign, "[64:ff9b::7f00:1]:80", false},
 		{foreign, "[64:ff9b::c000:20a]:443", true},
+		{loopback, "[64:ff9b:1::a9fe:a9fe]:80", false},
+		{foreign, "[64:ff9b:1:7f00:1:0:c000:20a]:80", false},
+		{foreign, "[64:ff9b:1:a9fe:a9:fe00:c000:20a]:80", false},
+		{foreign, "[64:ff9b:1:c000:2:a00:c000:20a]:443", true},
 		{foreign, "100.100.100.201:443", true},
 	} {
 		err := tc.guard.control("tcp", tc.address, nil)

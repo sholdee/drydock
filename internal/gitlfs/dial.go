@@ -25,7 +25,8 @@ var errRefusedAddress = errors.New("refused address")
 //
 //   - a link-local address (169.254.0.0/16, fe80::/10) or another cloud
 //     metadata address (fd00:ec2::254 of AWS, 100.100.100.200 of Alibaba
-//     Cloud) never, also inside a NAT64 address (64:ff9b::/96);
+//     Cloud) never, also inside a NAT64 address (64:ff9b::/96, or the
+//     local-use prefix 64:ff9b:1::/48 of RFC 8215);
 //   - a loopback or unspecified address only when the batch host itself is
 //     loopback, and, for a batch URL from .lfsconfig, the repository host
 //     too.
@@ -54,6 +55,12 @@ var metadataAddresses = []net.IP{
 // IPv4 address.
 var nat64Prefix = net.IPNet{IP: net.ParseIP("64:ff9b::"), Mask: net.CIDRMask(96, 128)}
 
+// nat64LocalPrefix is the local-use NAT64 prefix of RFC 8215. A network can
+// use a /48 of it, with the IPv4 address in bytes 6-7 and 9-10 (RFC 6052),
+// or a /96 inside it, with the IPv4 address in the last 4 bytes, so the
+// guard checks both.
+var nat64LocalPrefix = net.IPNet{IP: net.ParseIP("64:ff9b:1::"), Mask: net.CIDRMask(48, 128)}
+
 func newDialGuard(endpoint Endpoint) *dialGuard {
 	batchHost := ""
 	if parsed, err := url.Parse(endpoint.URL); err == nil {
@@ -72,6 +79,11 @@ func (g *dialGuard) check(ip net.IP) error {
 	case ip == nil:
 		return fmt.Errorf("%w: not an IP address", errRefusedAddress)
 	case ip.To4() == nil && nat64Prefix.Contains(ip):
+		return g.check(ip[12:16])
+	case ip.To4() == nil && nat64LocalPrefix.Contains(ip):
+		if err := g.check(net.IP{ip[6], ip[7], ip[9], ip[10]}); err != nil {
+			return err
+		}
 		return g.check(ip[12:16])
 	case slices.ContainsFunc(metadataAddresses, ip.Equal):
 		return fmt.Errorf("%w: a cloud metadata address", errRefusedAddress)
