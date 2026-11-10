@@ -285,3 +285,69 @@ func TestFillChecksTheSSHHostKey(t *testing.T) {
 		t.Fatalf("SSH commands = %q, want none on an unknown host key", server.Commands())
 	}
 }
+
+// TestFillRefusesALargeSSHAnswer pins that drydock reads at most 64 KiB of
+// the answer of git-lfs-authenticate.
+func TestFillRefusesALargeSSHAnswer(t *testing.T) {
+	server := startSSHServer(t, func(string) (string, uint32) {
+		return `{"href":"https://lfs.example.test/r","header":{"X":"` + strings.Repeat("a", maxSSHOutput) + `"}}`, 0
+	})
+	endpoint, err := FindEndpoint(sshRepoURL(server), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newFillCase(t, testContent)
+	if message := c.fail(t, Options{CacheDir: c.store, AllowNetwork: true, Endpoint: endpoint, SSH: server.options}); !strings.Contains(message, "wrote more than") {
+		t.Fatalf("error %q, want the output limit", message)
+	}
+}
+
+// TestFillRenewsAnExpiredSSHAnswer pins that an answer that expires within
+// 5 seconds is not reused, and that other SSH credentials get their own
+// answer.
+func TestFillRenewsAnExpiredSSHAnswer(t *testing.T) {
+	lfs := lfstest.New(t, true, true)
+	lfs.Add(testContent)
+	expiresIn := "1"
+	server := startSSHServer(t, func(string) (string, uint32) {
+		return `{"href":"` + lfs.Batch.URL + `/lfs","expires_in":` + expiresIn + `}`, 0
+	})
+	endpoint, err := FindEndpoint(sshRepoURL(server), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(options SSHOptions) {
+		c := newFillCase(t, testContent)
+		c.fill(t, Options{CacheDir: c.store, AllowNetwork: true, Endpoint: endpoint, SSH: options, TLSConfig: lfs.TLSConfig()})
+	}
+	run(server.options)
+	run(server.options)
+	if len(server.Commands()) != 2 {
+		t.Fatalf("SSH commands = %d, want the expired answer renewed", len(server.Commands()))
+	}
+	expiresIn = "3600"
+	run(server.options)
+	run(server.options)
+	if len(server.Commands()) != 3 {
+		t.Fatalf("SSH commands = %d, want the fresh answer reused", len(server.Commands()))
+	}
+	other := server.options
+	other.Credentials.KnownHostsPath = copyFile(t, other.Credentials.KnownHostsPath)
+	run(other)
+	if len(server.Commands()) != 4 {
+		t.Fatalf("SSH commands = %d, want other credentials to get their own answer", len(server.Commands()))
+	}
+}
+
+func copyFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), filepath.Base(path))
+	if err := os.WriteFile(target, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return target
+}

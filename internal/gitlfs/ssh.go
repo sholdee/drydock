@@ -3,6 +3,8 @@ package gitlfs
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,7 +50,8 @@ type sshAnswer struct {
 }
 
 // sshAuthCache keeps the answers of git-lfs-authenticate per user, host,
-// port, and path until they expire, as git-lfs does within a process. An
+// port, path, and SSH credentials (credentialFingerprint) until they
+// expire, as git-lfs does within a process. An
 // answer without an expiry lasts for the process.
 var sshAuthCache sync.Map
 
@@ -64,7 +67,7 @@ type sshCacheEntry struct {
 // derives for the remote. A failure of the command fails the fetch, as in
 // git-lfs, which retries it first.
 func authenticateSSH(ctx context.Context, remote SSHRemote, fallback string, opts SSHOptions, guard *dialGuard) (sshAuth, error) {
-	key := remote.User + "\x00" + remote.Host + "\x00" + strconv.Itoa(remote.Port) + "\x00" + remote.Path
+	key := remote.User + "\x00" + remote.Host + "\x00" + strconv.Itoa(remote.Port) + "\x00" + remote.Path + "\x00" + credentialFingerprint(opts.Credentials)
 	if cached, ok := sshAuthCache.Load(key); ok {
 		entry, _ := cached.(sshCacheEntry)
 		if entry.auth.expires.IsZero() || time.Now().Add(sshExpiryLeeway).Before(entry.auth.expires) {
@@ -171,27 +174,43 @@ func parseSSHAnswer(output []byte, fallback string, now time.Time) (sshAuth, err
 	return auth, nil
 }
 
+// credentialFingerprint is a SHA-256 of the SSH credentials and the
+// known_hosts path, so an answer is reused only with the same key. It
+// never holds a key in clear.
+func credentialFingerprint(creds gitauth.SSHCredentials) string {
+	sum := sha256.Sum256([]byte(creds.PrivateKeyPath + "\x00" + creds.PrivateKey + "\x00" + creds.Passphrase + "\x00" + creds.KnownHostsPath))
+	return hex.EncodeToString(sum[:])
+}
+
 // shellQuote quotes value for a POSIX shell, as git quotes the path of
 // git-upload-pack.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-// limitedBuffer keeps at most limit bytes and records an overflow.
+// limitedBuffer keeps at most limit bytes and records an overflow. It
+// does not embed bytes.Buffer: io.Copy would then use its ReadFrom, which
+// reads without the limit.
 type limitedBuffer struct {
-	bytes.Buffer
+	buffer   bytes.Buffer
 	limit    int
 	overflow bool
 }
 
 func (b *limitedBuffer) Write(data []byte) (int, error) {
-	room := b.limit - b.Len()
+	room := b.limit - b.buffer.Len()
 	if len(data) > room {
 		b.overflow = true
 		if room > 0 {
-			b.Buffer.Write(data[:room])
+			b.buffer.Write(data[:room])
 		}
 		return len(data), nil
 	}
-	return b.Buffer.Write(data)
+	return b.buffer.Write(data)
 }
+
+// Bytes returns the bytes that the buffer kept.
+func (b *limitedBuffer) Bytes() []byte { return b.buffer.Bytes() }
+
+// String returns the text that the buffer kept.
+func (b *limitedBuffer) String() string { return b.buffer.String() }
