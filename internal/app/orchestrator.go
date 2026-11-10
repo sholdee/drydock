@@ -1263,7 +1263,7 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // drydock uses one of the namespaces that they name.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, namespaceNotEnabledCode, outsideControllerNamespaceCode, controllerNamespaceAmbiguousCode, controllerNamespaceUnsettledCode, diffKnownTypeSkippedCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode, SelectorNoMatchCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, sourceHydratorCode, namespaceNotEnabledCode, outsideControllerNamespaceCode, controllerNamespaceAmbiguousCode, controllerNamespaceUnsettledCode, diffKnownTypeSkippedCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, changedOnlyAppRevisionCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, SelectorNoMatchCode:
 		return true
 	}
 	return false

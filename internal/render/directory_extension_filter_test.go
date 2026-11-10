@@ -67,15 +67,10 @@ func TestDirectoryRendererDisableExtensionFilterReadsEveryFile(t *testing.T) {
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("rendered names = %#v, want %#v", names, want)
 	}
-	if len(diags) != 1 {
-		t.Fatalf("diagnostics = %#v, want one extension-filter warning", diags)
-	}
-	diag := diags[0]
-	if diag.Code != DirectoryExtensionFilterDisabledCode || diag.Severity != diagnostic.SeverityWarning || diag.Category != "directory" {
-		t.Fatalf("diagnostic = %#v, want %s warning", diag, DirectoryExtensionFilterDisabledCode)
-	}
-	if !strings.Contains(diag.Message, "without include or exclude") {
-		t.Fatalf("diagnostic message = %q", diag.Message)
+	// Argo CD renders every file too and only logs a warning, so drydock
+	// reports nothing for this valid setting.
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
 	}
 }
 

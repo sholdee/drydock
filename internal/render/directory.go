@@ -29,13 +29,6 @@ type DirectoryRenderer struct{}
 const (
 	argocdSkipFileRenderingMarker = "+argocd:skip-file-rendering"
 	drydockCacheMetadataDirName   = ".drydock-cache"
-
-	// DirectoryExtensionFilterDisabledCode identifies the warning for a
-	// directory source that sets disableExtensionFilter with neither include
-	// nor exclude. Argo CD's repo-server logs the same condition as a warning
-	// and renders every file (getPotentiallyValidManifests,
-	// reposerver/repository/repository.go at v3.6.1).
-	DirectoryExtensionFilterDisabledCode = "directory.extension-filter-disabled"
 )
 
 // directoryManifestFile is Argo CD's built-in directory extension filter
@@ -65,21 +58,26 @@ var directoryManifestFile = regexp.MustCompile(`^.*\.(yaml|yml|json|jsonnet)$`)
 //
 // So a file that fails in an earlier stage is reported before a file that
 // fails in a later stage, whatever their order in the directory.
+//
+// A source that sets disableExtensionFilter with neither include nor exclude
+// reads every file. The repo-server logs a warning for that and renders every
+// file (getPotentiallyValidManifests). drydock renders every file too and
+// reports nothing, because the setting is valid and the output matches Argo
+// CD.
 func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	root, err := sourceRoot(source)
 	if err != nil {
 		return nil, nil, err
 	}
-	diags := directoryRenderDiagnostics(opts)
 	files, err := directoryCandidateFiles(ctx, root, source, opts)
 	if err != nil {
-		return nil, diags, err
+		return nil, nil, err
 	}
 	var objects []generatedObject
 	jsonnetVars := newJsonnetVarPasses(opts.Jsonnet, opts.ArgoEnv)
 	for index := range files {
 		if err := ctx.Err(); err != nil {
-			return nil, diags, err
+			return nil, nil, err
 		}
 		file := files[index]
 		// Release the file text once it is decoded.
@@ -101,18 +99,18 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			fileObjects, err = directoryStreamObjects(file.manifestPath, file.data)
 		}
 		if err != nil {
-			return nil, diags, err
+			return nil, nil, err
 		}
 		objects = append(objects, fileObjects...)
 	}
 	targets, err := generateManifests(objects, opts.TrackManifest)
 	if err != nil {
-		return nil, diags, err
+		return nil, nil, err
 	}
 	if err := checkManifestKinds(targets); err != nil {
-		return nil, diags, err
+		return nil, nil, err
 	}
-	return targetManifests(targets), diags, nil
+	return targetManifests(targets), nil, nil
 }
 
 // directoryCandidateFile is one file that the repo-server's
@@ -300,18 +298,6 @@ func (r *directorySymlinkResolver) resolve(appPath, path, manifestPath string) (
 // file. drydock names the file that went over the limit.
 func directorySizeLimitError(manifestPath string, limit int64) error {
 	return fmt.Errorf("%s: the directory source files are larger in sum than %d bytes, the limit that argocd-cmd-params-cm reposerver.max.combined.directory.manifests.size sets, so Argo CD fails with \"exceeded max combined manifest file size\"", manifestPath, limit)
-}
-
-func directoryRenderDiagnostics(opts RenderOptions) []diagnostic.Diagnostic {
-	if !opts.DirectoryDisableExtensionFilter || opts.DirectoryInclude != "" || opts.DirectoryExclude != "" {
-		return nil
-	}
-	return []diagnostic.Diagnostic{{
-		Code:     DirectoryExtensionFilterDisabledCode,
-		Severity: diagnostic.SeverityWarning,
-		Category: "directory",
-		Message:  "directory.disableExtensionFilter is enabled without include or exclude; every file in the directory is read and considered as a manifest",
-	}}
 }
 
 // decodeDirectoryFileText decodes a directory file's bytes the way the
