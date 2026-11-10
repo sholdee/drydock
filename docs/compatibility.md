@@ -1291,7 +1291,10 @@ drydock runs only `git-lfs-authenticate`:
   to the server of an SSH remote.
 - drydock reuses an answer for the same user, host, port, path, and SSH
   credentials until 5 seconds before it expires, or for the whole run when
-  it has no expiry.
+  it has no expiry. The SSH credentials in this key are the
+  `--git-ssh-*` values and the known_hosts file. The ambient identities of
+  the agent and `~/.ssh` are not part of the key, so an answer can outlive
+  a change of the agent keys within one run.
 - With `--offline`, drydock never connects over SSH.
 
 When `git-lfs-authenticate` fails, the fetch fails, as in git-lfs. git-lfs
@@ -1308,8 +1311,8 @@ connects to, after name resolution:
 - It never connects to a link-local address (`169.254.0.0/16` and
   `fe80::/10`), where cloud metadata services listen. It also refuses the
   metadata addresses `fd00:ec2::254` (AWS) and `100.100.100.200` (Alibaba
-  Cloud), and a NAT64 address (`64:ff9b::/96`) that holds a refused IPv4
-  address.
+  Cloud), and a NAT64 address (`64:ff9b::/96`, or `64:ff9b:1::/48` of RFC
+  8215) that holds a refused IPv4 address.
 - It connects to a loopback address only when the batch host is on
   loopback. For a server that `.lfsconfig` names, the repository host must
   be on loopback too. So a remote repository whose `.lfsconfig` names
@@ -1321,6 +1324,13 @@ connects to, after name resolution:
   which then decides. The proxy resolves the name again, so through a proxy
   drydock cannot stop a name that resolves to another address there (DNS
   rebinding).
+- drydock allows private addresses, such as `10.0.0.0/8` and the other RFC
+  1918 ranges, and `fc00::/7` other than `fd00:ec2::254`, because Git LFS
+  servers often have one. So a repository can make drydock send the batch
+  request to an internal host, and the object requests with headers that
+  the batch response chooses. These requests carry no `--git-*`
+  credentials. This also applies to an internal name that only the proxy
+  can resolve.
 
 #### Git LFS Limits
 
