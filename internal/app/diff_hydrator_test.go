@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -481,5 +482,84 @@ func TestDiffRefChangedOnlySelectsHydratorOnADryOnlyChange(t *testing.T) {
 				t.Fatalf("Results = %#v, want no diff", result.Results)
 			}
 		})
+	}
+}
+
+// TestDiffRefHydratorWarnsForAnApplicationOnlyOnTheBaselineSide pins that
+// the dry source check reads the baseline side too: the change deletes the
+// hydrator Application and its dry directory, so only the baseline side
+// renders it.
+func TestDiffRefHydratorWarnsForAnApplicationOnlyOnTheBaselineSide(t *testing.T) {
+	for _, changedOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("changed-only %t", changedOnly), func(t *testing.T) {
+			root, fixture := initSelfRepoDiffGitRepo(t, selfRepoRemoteURL)
+			writeDiffHydratorApp(t, root)
+			writeDiffHydratedConfigMap(t, root, "same")
+			writeTestFile(t, filepath.Join(root, "dry", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry\n")
+			commitDiffGitRepo(t, fixture.repo, fixture.wt, "baseline")
+			checkoutDiffGitBranch(t, fixture.wt, "feature")
+			for _, path := range []string{filepath.Join(root, "apps", "hyd.yaml"), filepath.Join(root, "dry")} {
+				if err := os.RemoveAll(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			commitDiffGitRepo(t, fixture.repo, fixture.wt, "feature deletes the hydrator Application")
+
+			result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+				Repo:        root,
+				RefOrig:     "master",
+				Ref:         "feature",
+				Unified:     3,
+				Parallelism: 1,
+				ChangedOnly: changedOnly,
+				Offline:     true,
+			})
+			if err != nil {
+				t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
+			}
+			if !hasDiagnosticMessage(result.Diagnostics, `Application argocd/hyd: this diff changes the dry source path "dry"`) {
+				t.Fatalf("Diagnostics = %#v, want the dry source warning for the baseline Application", result.Diagnostics)
+			}
+		})
+	}
+}
+
+// TestDiffRefHydratorChangeListIgnoresChangedOnlyGlobs pins that the
+// changed-only include and ignore globs narrow the selection, not the
+// change list of the dry source check: an include glob that leaves out the
+// dry path still warns for a selected hydrator Application.
+func TestDiffRefHydratorChangeListIgnoresChangedOnlyGlobs(t *testing.T) {
+	root, fixture := initSelfRepoDiffGitRepo(t, selfRepoRemoteURL)
+	writeDiffHydratorApp(t, root)
+	writeDiffHydratedConfigMap(t, root, "same")
+	writeTestFile(t, filepath.Join(root, "dry", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry\n")
+	commitDiffGitRepo(t, fixture.repo, fixture.wt, "baseline")
+	checkoutDiffGitBranch(t, fixture.wt, "feature")
+	// The Application file selects the Application through the include
+	// glob. The dry file is outside the glob.
+	hydPath := filepath.Join(root, "apps", "hyd.yaml")
+	body, err := os.ReadFile(hydPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, hydPath, strings.Replace(string(body), "  namespace: argocd\n", "  namespace: argocd\n  labels:\n    team: demo\n", 1))
+	writeTestFile(t, filepath.Join(root, "dry", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry-changed\n")
+	commitDiffGitRepo(t, fixture.repo, fixture.wt, "feature")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		Repo:                    root,
+		RefOrig:                 "master",
+		Ref:                     "feature",
+		Unified:                 3,
+		Parallelism:             1,
+		ChangedOnly:             true,
+		ChangedOnlyIncludeGlobs: []string{"apps/**"},
+		Offline:                 true,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, `this diff changes the dry source path "dry"`) {
+		t.Fatalf("Diagnostics = %#v, want the dry source warning despite the include glob", result.Diagnostics)
 	}
 }
