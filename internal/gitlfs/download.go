@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/sholdee/drydock/internal/credhost"
 )
@@ -26,14 +28,15 @@ const (
 // batch response into the store, after it makes sure that its size and
 // SHA-256 match. The request carries only the headers of the action:
 // never the --git-* credentials. It refuses a plain-http href when the
-// batch endpoint is https.
-func (c *client) download(ctx context.Context, endpoint *url.URL, want objectRef, action batchAction) error {
+// batch endpoint is https. A body that sends nothing for
+// limits.IdleTimeout stops the download.
+func (c *client) download(ctx context.Context, batchURL *url.URL, want objectRef, action batchAction) error {
 	href, err := url.Parse(strings.TrimSpace(action.Href))
 	if err != nil || href.Host == "" || (href.Scheme != "http" && href.Scheme != "https") {
 		return errors.New("the batch response gives no valid http or https download URL")
 	}
-	if endpoint.Scheme == "https" && href.Scheme == "http" {
-		return fmt.Errorf("the batch response points the download at plain http (%s), which drydock refuses for an https Git LFS server", hostOf(href))
+	if batchURL.Scheme == "https" && href.Scheme == "http" {
+		return unsupportedf("the batch response points the download at plain http (%s), which drydock refuses for an https Git LFS server", hostOf(href))
 	}
 	if err := checkActionHeaders(action.Header); err != nil {
 		return err
@@ -50,14 +53,60 @@ func (c *client) download(ctx context.Context, endpoint *url.URL, want objectRef
 	httpClient := &http.Client{Transport: c.transport, CheckRedirect: actionRedirectPolicy}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("the download from %s failed: %s", hostOf(href), transportError(err))
+		return classifyTransport(fmt.Errorf("the download from %s failed: %s", hostOf(href), transportError(err)), err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("the download from %s answered HTTP %d", hostOf(href), response.StatusCode)
 	}
-	return c.store.put(want, response.Body)
+	body := newIdleReader(response.Body, c.limits.IdleTimeout, cancel)
+	defer body.stop()
+	if err := c.store.put(want, body); err != nil {
+		if body.stalled() {
+			return fmt.Errorf("the download from %s sent nothing for %s", hostOf(href), c.limits.IdleTimeout)
+		}
+		return err
+	}
+	return nil
 }
+
+// classifyTransport returns err as an unsupported reason when cause is a
+// connection that drydock refused, else err.
+func classifyTransport(err, cause error) error {
+	if errors.Is(cause, errRefusedAddress) || IsUnsupported(cause) {
+		return &unsupportedError{message: err.Error()}
+	}
+	return err
+}
+
+// idleReader cancels a download when its body sends nothing for idle.
+type idleReader struct {
+	reader io.Reader
+	idle   time.Duration
+	timer  *time.Timer
+	fired  atomic.Bool
+}
+
+func newIdleReader(reader io.Reader, idle time.Duration, cancel context.CancelFunc) *idleReader {
+	r := &idleReader{reader: reader, idle: idle}
+	r.timer = time.AfterFunc(idle, func() {
+		r.fired.Store(true)
+		cancel()
+	})
+	return r
+}
+
+func (r *idleReader) Read(data []byte) (int, error) {
+	n, err := r.reader.Read(data)
+	if n > 0 {
+		r.timer.Reset(r.idle)
+	}
+	return n, err
+}
+
+func (r *idleReader) stop() { r.timer.Stop() }
+
+func (r *idleReader) stalled() bool { return r.fired.Load() }
 
 // actionRedirectPolicy follows a redirect of an object download. When the
 // redirect leaves the scheme, host, or port of the requests before it, the
@@ -70,7 +119,7 @@ func actionRedirectPolicy(request *http.Request, via []*http.Request) error {
 	}
 	for _, hop := range via {
 		if hop.URL.Scheme == "https" && request.URL.Scheme != "https" {
-			return errors.New("a redirect leads from https to plain http, which drydock refuses")
+			return unsupportedf("a redirect leads from https to plain http, which drydock refuses")
 		}
 	}
 	if !credhost.SameOrigin(request, via) {
@@ -83,14 +132,14 @@ func actionRedirectPolicy(request *http.Request, via []*http.Request) error {
 // invalid header name or value itself.
 func checkActionHeaders(header map[string]string) error {
 	if len(header) > maxActionHeaders {
-		return fmt.Errorf("the batch response gives more than %d headers for a download", maxActionHeaders)
+		return unsupportedf("the batch response gives more than %d headers for a download", maxActionHeaders)
 	}
 	total := 0
 	for name, value := range header {
 		total += len(name) + len(value)
 	}
 	if total > maxActionHeaderBytes {
-		return fmt.Errorf("the batch response gives more than %d bytes of headers for a download", maxActionHeaderBytes)
+		return unsupportedf("the batch response gives more than %d bytes of headers for a download", maxActionHeaderBytes)
 	}
 	return nil
 }
@@ -148,7 +197,7 @@ func (s store) put(want objectRef, body io.Reader) error {
 	case closeErr != nil:
 		return closeErr
 	case written != want.Size:
-		return fmt.Errorf("the download has %s bytes, but the pointer names %d", sizeText(written, want.Size), want.Size)
+		return errors.New("the size of the download does not match the pointer")
 	case hex.EncodeToString(sum.Sum(nil)) != want.OID:
 		return errors.New("the SHA-256 of the download does not match the pointer")
 	}
@@ -160,15 +209,6 @@ func (s store) put(want objectRef, body io.Reader) error {
 		return fmt.Errorf("publish the Git LFS cache object: %w", err)
 	}
 	return nil
-}
-
-// sizeText is the size of a download for a message: "more than size"
-// when the download did not end after size+1 bytes.
-func sizeText(written, size int64) string {
-	if written > size {
-		return fmt.Sprintf("more than %d", size)
-	}
-	return fmt.Sprintf("%d", written)
 }
 
 func (s store) objectPath(oid string) string {

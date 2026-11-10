@@ -33,19 +33,35 @@ func TestDefaultGitAcquirerDownloadsLFSObjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
-	if data, _ := os.ReadFile(filepath.Join(result.Path, "lfs", "cm.yaml")); string(data) != lfsSourceContent || len(result.LFSMissing) != 0 || len(result.LFSPointers) != 1 {
+	if data, _ := os.ReadFile(filepath.Join(result.Path, "lfs", "cm.yaml")); string(data) != lfsSourceContent || len(result.LFS.Pointers()) != 0 || len(result.LFSPointers) != 1 {
 		t.Fatalf("Acquire() = %+v, lfs/cm.yaml = %q; want the downloaded content", result, data)
 	}
 	requireTokenOnlyOnBatch(t, server, "Bearer lfs-secret")
 
+	requireOfflineLFS(t, server, repo, cacheDir, opts, pointer)
+}
+
+// requireOfflineLFS runs the offline steps of
+// TestDefaultGitAcquirerDownloadsLFSObjects.
+func requireOfflineLFS(t *testing.T, server *lfstest.Server, repo lfstest.Repo, cacheDir string, opts GitOptions, pointer string) {
+	t.Helper()
 	opts.AllowNetwork = false
 	before := len(server.Requests())
-	result, err = DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: repo.URL, Revision: "HEAD"}, opts)
-	if err != nil || len(result.LFSMissing) != 0 || len(server.Requests()) != before {
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: repo.URL, Revision: "HEAD"}, opts)
+	if err != nil || len(result.LFS.Pointers()) != 0 || len(server.Requests()) != before {
 		t.Fatalf("Acquire(offline) = %+v, %v, requests %d -> %d; want the cached object", result, err, before, len(server.Requests()))
 	}
 
 	if err := os.RemoveAll(gitlfs.StoreDir(cacheDir)); err != nil {
+		t.Fatal(err)
+	}
+	// The checkout still holds the verified content, which stays without a
+	// store. A file that does not match gets the pointer back.
+	result, err = DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: repo.URL, Revision: "HEAD"}, opts)
+	if err != nil || len(result.LFS.Pointers()) != 0 {
+		t.Fatalf("Acquire(offline, matching checkout) = %+v, %v; want the content kept", result, err)
+	}
+	if err := os.WriteFile(filepath.Join(result.Path, "lfs", "cm.yaml"), []byte("edited\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	result, err = DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: repo.URL, Revision: "HEAD"}, opts)
@@ -55,7 +71,7 @@ func TestDefaultGitAcquirerDownloadsLFSObjects(t *testing.T) {
 	if data, _ := os.ReadFile(filepath.Join(result.Path, "lfs", "cm.yaml")); string(data) != pointer {
 		t.Fatalf("lfs/cm.yaml = %q, want the pointer back when the object is gone", data)
 	}
-	if len(result.LFSMissing) != 1 || !strings.Contains(strings.Join(result.LFSReasons, ";"), "--offline") {
+	if len(result.LFS.Missing) != 1 || !strings.Contains(strings.Join(result.LFS.Reasons, ";"), "--offline") {
 		t.Fatalf("Acquire(offline, no cache) = %+v, want the missing pointer and the offline reason", result)
 	}
 }
@@ -69,7 +85,7 @@ func TestDefaultGitAcquirerSendsNoLFSTokenToUnlistedHost(t *testing.T) {
 	repo := lfstest.ServeRepo(t, server, map[string]string{"lfs/cm.yaml": pointer})
 	opts := GitOptions{AllowNetwork: true, CacheDir: t.TempDir(), LFS: true, Credentials: GitCredentials{BearerToken: "lfs-secret", Hosts: []string{"git.example.test"}}}
 	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: repo.URL, Revision: "HEAD"}, opts)
-	if err != nil || len(result.LFSMissing) != 0 {
+	if err != nil || len(result.LFS.Pointers()) != 0 {
 		t.Fatalf("Acquire() = %+v, %v", result, err)
 	}
 	for _, request := range server.Requests() {

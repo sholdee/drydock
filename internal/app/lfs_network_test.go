@@ -3,12 +3,14 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/gitlfs"
 	"github.com/sholdee/drydock/internal/gitlfs/lfstest"
 	"github.com/sholdee/drydock/internal/gittree"
@@ -303,4 +305,89 @@ spec:
 			t.Fatalf("enableLfs on HEAD %t: Results = %#v; want the ConfigMap as a change between the sides", enabledOnHead, result.Results)
 		}
 	}
+}
+
+// TestBuildFetchedSourceFailsWhenTheLFSServerFails pins that a Git LFS
+// server that refuses the batch request fails the source, as `git lfs
+// fetch --all` fails the manifest request of the Argo CD repo-server, and
+// that the render cache keeps nothing for it: once the server works, the
+// content renders.
+func TestBuildFetchedSourceFailsWhenTheLFSServerFails(t *testing.T) {
+	root, server := fetchedLFSRoot(t)
+	server.BatchStatus = http.StatusInternalServerError
+	cacheDir := t.TempDir()
+	request := persistentBuildRequest(root, cacheDir)
+	request.GitCacheDir = t.TempDir()
+	result, err := Orchestrator{}.Build(context.Background(), request)
+	if err == nil && !hasErrorDiagnostic(result.Diagnostics, "HTTP 500") {
+		t.Fatalf("Build() = %v, Diagnostics %#v; want the source to fail with the batch status", renderedConfigMapNames(result), result.Diagnostics)
+	}
+	if buildHasConfigMap(result, "fetched-lfs") || countRenderCacheEntries(t, cacheDir) != 0 {
+		t.Fatalf("Build() rendered %v and stored %d render cache entries, want nothing", renderedConfigMapNames(result), countRenderCacheEntries(t, cacheDir))
+	}
+	server.BatchStatus = 0
+	result, err = Orchestrator{}.Build(context.Background(), request)
+	if err != nil || !buildHasConfigMap(result, "fetched-lfs") || countRenderCacheEntries(t, cacheDir) == 0 {
+		t.Fatalf("Build() after the fix = %v, %v, %d entries; want the content stored", renderedConfigMapNames(result), err, countRenderCacheEntries(t, cacheDir))
+	}
+}
+
+// TestBuildFetchedSourceWarnsForUnsupportedLFS pins that a pointer that
+// drydock itself cannot fill, here because .lfsconfig names a local store,
+// stays with the render.lfs-unsupported warning and does not fail the
+// source.
+func TestBuildFetchedSourceWarnsForUnsupportedLFS(t *testing.T) {
+	server := lfstest.New(t, false, false)
+	_, pointer := server.Add(fetchedLFSConfigMap)
+	repo := lfstest.ServeRepo(t, server, map[string]string{"lfs/cm.yaml": pointer, ".lfsconfig": "[lfs]\n\turl = file:///srv/lfs\n"})
+	root := t.TempDir()
+	submoduletest.WriteFile(t, root, "argocd/repo.yaml", lfsRepoSecret(repo.URL))
+	submoduletest.WriteFile(t, root, "apps/fetched.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fetched
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+repo.URL+`
+    targetRevision: main
+    path: lfs
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, GitCacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if buildHasConfigMap(result, "fetched-lfs") || !hasDiagnosticCode(result.Diagnostics, lfsUnsupportedCode) || hasDiagnosticCode(result.Diagnostics, lfsPointerCode) {
+		t.Fatalf("Diagnostics = %#v; want only %s", result.Diagnostics, lfsUnsupportedCode)
+	}
+	if len(server.Requests()) != 0 {
+		t.Fatalf("requests = %d, want none for a refused endpoint", len(server.Requests()))
+	}
+}
+
+// TestDiffRefSnapshotFailsWhenTheLFSServerFails pins that a --ref snapshot
+// whose object the server does not have fails its sources online.
+func TestDiffRefSnapshotFailsWhenTheLFSServerFails(t *testing.T) {
+	root, base, server := lfsServedSnapshotRepo(t, false)
+	server.BatchStatus = http.StatusForbidden
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base,
+		GitCacheDir: t.TempDir(),
+	})
+	if err == nil && !hasErrorDiagnostic(result.Diagnostics, "HTTP 403") {
+		t.Fatalf("DiffApps() = %#v, Diagnostics %#v; want the source to fail", result.Results, result.Diagnostics)
+	}
+}
+
+func hasErrorDiagnostic(diags []diagnostic.Diagnostic, text string) bool {
+	for _, diag := range diags {
+		if diag.Severity == diagnostic.SeverityError && strings.Contains(diag.Message, text) {
+			return true
+		}
+	}
+	return false
 }

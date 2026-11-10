@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/credhost"
@@ -61,45 +62,91 @@ type errorBody struct {
 	Message string `json:"message"`
 }
 
-// batch asks the batch API at endpoint for the download actions of
-// objects. It sends the HTTP credentials only when the scheme, host, and
-// port of the batch URL match a --git-auth-host entry, and it removes them
-// from a redirect that leaves that origin.
-func (c *client) batch(ctx context.Context, endpoint string, objects []objectRef) (map[string]batchObject, error) {
+// batch asks the batch API for the download actions of objects. It sends
+// the --git-* HTTP credentials only when the scheme, host, and port of the
+// batch URL match a --git-auth-host entry, and never for an SSH remote,
+// whose batch request gets the headers of git-lfs-authenticate instead. A
+// redirect that leaves the origin of the request loses the credentials and
+// those headers.
+func (c *client) batch(ctx context.Context, objects []objectRef) (map[string]batchObject, *url.URL, error) {
 	body, err := json.Marshal(batchRequest{Operation: "download", Transfers: []string{"basic"}, Objects: objects, HashAlgo: "sha256"})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.limits.BatchTimeout)
 	defer cancel()
-	batchURL := BatchURL(endpoint)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, batchURL, bytes.NewReader(body))
+	endpoint, header, err := c.batchEndpoint(ctx)
 	if err != nil {
-		return nil, errors.New("the Git LFS endpoint is not a valid URL")
+		return nil, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, BatchURL(endpoint), bytes.NewReader(body))
+	if err != nil {
+		return nil, nil, errors.New("the Git LFS endpoint is not a valid URL")
+	}
+	names := make([]string, 0, len(header))
+	for name, value := range header {
+		request.Header.Set(name, value)
+		names = append(names, name)
 	}
 	request.Header.Set("Accept", mediaType)
 	request.Header.Set("Content-Type", mediaType)
-	httpClient := &http.Client{Transport: c.transport}
-	if c.credentials.AuthorizesHTTP(batchURL) {
+	httpClient := &http.Client{Transport: c.transport, CheckRedirect: dropHeadersOffOrigin(names)}
+	if c.endpoint.SSH == nil && c.credentials.AuthorizesHTTP(request.URL.String()) {
 		applyAuth(request, c.credentials)
-		httpClient = credhost.ScopeRedirects(httpClient)
 	}
+	httpClient = credhost.ScopeRedirects(httpClient)
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("the batch request to %s failed: %s", hostOf(request.URL), transportError(err))
+		return nil, nil, classifyTransport(fmt.Errorf("the batch request to %s failed: %s", hostOf(request.URL), transportError(err)), err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, c.limits.MaxBatchResponseBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read the batch response of %s: %s", hostOf(request.URL), transportError(err))
+		return nil, nil, fmt.Errorf("read the batch response of %s: %s", hostOf(request.URL), transportError(err))
 	}
 	if int64(len(data)) > c.limits.MaxBatchResponseBytes {
-		return nil, fmt.Errorf("the batch response of %s is larger than %d bytes", hostOf(request.URL), c.limits.MaxBatchResponseBytes)
+		return nil, nil, fmt.Errorf("the batch response of %s is larger than %d bytes", hostOf(request.URL), c.limits.MaxBatchResponseBytes)
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("the Git LFS server %s answered the batch request with HTTP %d%s", hostOf(request.URL), response.StatusCode, serverMessage(data))
+		message := serverMessage(data)
+		for _, value := range header {
+			if value = strings.TrimSpace(value); value != "" {
+				message = strings.ReplaceAll(message, value, "[redacted]")
+			}
+		}
+		return nil, nil, fmt.Errorf("the Git LFS server %s answered the batch request with HTTP %d%s", hostOf(request.URL), response.StatusCode, message)
 	}
-	return parseBatchResponse(data, objects)
+	parsed, err := parseBatchResponse(data, objects)
+	return parsed, request.URL, err
+}
+
+// batchEndpoint returns the endpoint of the batch request and its headers:
+// for an SSH remote, those of git-lfs-authenticate.
+func (c *client) batchEndpoint(ctx context.Context) (string, map[string]string, error) {
+	if c.endpoint.SSH == nil {
+		return c.endpoint.URL, nil, nil
+	}
+	auth, err := authenticateSSH(ctx, *c.endpoint.SSH, c.endpoint.URL, c.ssh, c.guard)
+	if err != nil {
+		return "", nil, err
+	}
+	return auth.href, auth.header, nil
+}
+
+// dropHeadersOffOrigin removes the named headers from a redirected request
+// that leaves the scheme, host, or port of the requests before it.
+func dropHeadersOffOrigin(names []string) func(*http.Request, []*http.Request) error {
+	return func(request *http.Request, via []*http.Request) error {
+		if !credhost.SameOrigin(request, via) {
+			for _, name := range names {
+				request.Header.Del(name)
+			}
+		}
+		if len(via) >= credhost.MaxRedirects {
+			return fmt.Errorf("stopped after %d redirects", credhost.MaxRedirects)
+		}
+		return nil
+	}
 }
 
 // parseBatchResponse reads the objects of a batch response. It keeps only
@@ -110,10 +157,10 @@ func parseBatchResponse(data []byte, requested []objectRef) (map[string]batchObj
 		return nil, errors.New("the batch response is not valid JSON")
 	}
 	if parsed.Transfer != "" && parsed.Transfer != "basic" {
-		return nil, fmt.Errorf("the batch response asks for the transfer adapter %q; drydock supports only basic", sanitize(parsed.Transfer))
+		return nil, unsupportedf("the batch response asks for the transfer adapter %q; drydock supports only basic", sanitize(parsed.Transfer))
 	}
 	if parsed.HashAlgo != "" && parsed.HashAlgo != "sha256" {
-		return nil, fmt.Errorf("the batch response uses the hash algorithm %q; drydock supports only sha256", sanitize(parsed.HashAlgo))
+		return nil, unsupportedf("the batch response uses the hash algorithm %q; drydock supports only sha256", sanitize(parsed.HashAlgo))
 	}
 	want := make(map[string]int64, len(requested))
 	for _, object := range requested {

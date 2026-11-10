@@ -2,6 +2,7 @@ package gitlfs
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,19 +66,38 @@ func (c fillCase) options(server *lfstest.Server, credentials gitauth.Credential
 	return Options{
 		CacheDir:     c.store,
 		AllowNetwork: true,
-		Endpoint:     server.Batch.URL + "/org/repo.git/info/lfs",
+		Endpoint:     Endpoint{URL: server.Batch.URL + "/org/repo.git/info/lfs", RepoHost: "127.0.0.1"},
 		Credentials:  credentials,
-		Transport:    server.Transport(),
+		TLSConfig:    server.TLSConfig(),
 	}
 }
 
+// fill runs Fill and fails the test on an error.
 func (c fillCase) fill(t *testing.T, opts Options) Result {
 	t.Helper()
-	result, err := Fill(context.Background(), c.root, []gittree.LFSPointer{c.pointer}, opts)
+	result, err := c.try(opts)
 	if err != nil {
 		t.Fatalf("Fill() error = %v", err)
 	}
 	return result
+}
+
+// fail runs Fill, fails the test unless it fails with ErrFetch, and
+// returns the error text.
+func (c fillCase) fail(t *testing.T, opts Options) string {
+	t.Helper()
+	result, err := c.try(opts)
+	if !errors.Is(err, ErrFetch) {
+		t.Fatalf("Fill() = %+v, %v; want ErrFetch", result, err)
+	}
+	if c.file(t) != c.text {
+		t.Fatalf("file = %q after a failed Fill, want the pointer", c.file(t))
+	}
+	return err.Error()
+}
+
+func (c fillCase) try(opts Options) (Result, error) {
+	return Fill(context.Background(), c.root, []gittree.LFSPointer{c.pointer}, opts)
 }
 
 func hostEntry(t *testing.T, rawURL string) string {
@@ -218,25 +238,25 @@ func TestFillKeepsActionHeadersOnSameOriginRedirect(t *testing.T) {
 	}
 }
 
-// TestFillRejectsObjectsThatDoNotMatchThePointer pins that a download
+// TestFillFailsForObjectsThatDoNotMatchThePointer pins that a download
 // whose SHA-256 or size differs from the pointer never fills it and never
-// enters the store.
-func TestFillRejectsObjectsThatDoNotMatchThePointer(t *testing.T) {
+// enters the store, and fails the fill, as `git lfs fetch` fails.
+func TestFillFailsForObjectsThatDoNotMatchThePointer(t *testing.T) {
 	for name, tc := range map[string]struct {
 		body   func(string, []byte) []byte
 		reason string
 	}{
 		"sha":    {func(_ string, content []byte) []byte { return []byte(strings.ToUpper(string(content))) }, "SHA-256"},
-		"longer": {func(_ string, content []byte) []byte { return append(content, []byte("extra")...) }, "bytes"},
-		"short":  {func(_ string, content []byte) []byte { return content[:5] }, "bytes"},
+		"longer": {func(_ string, content []byte) []byte { return append(content, []byte("extra")...) }, "size"},
+		"short":  {func(_ string, content []byte) []byte { return content[:5] }, "size"},
 	} {
 		server := lfstest.New(t, false, false)
 		server.Add(testContent)
 		server.Body = tc.body
 		c := newFillCase(t, testContent)
-		result := c.fill(t, c.options(server, gitauth.Credentials{}))
-		if len(result.Missing) != 1 || c.file(t) != c.text || !strings.Contains(strings.Join(result.Reasons, ";"), tc.reason) {
-			t.Fatalf("%s: Fill() = %+v, file = %q; want the pointer kept and a reason about %s", name, result, c.file(t), tc.reason)
+		message := c.fail(t, c.options(server, gitauth.Credentials{}))
+		if !strings.Contains(message, tc.reason) || strings.Contains(message, "62") {
+			t.Fatalf("%s: error %q, want a reason about %s without a byte count", name, message, tc.reason)
 		}
 		if _, err := os.Stat((store{dir: c.store}).objectPath(c.pointer.OID)); !os.IsNotExist(err) {
 			t.Fatalf("%s: the store holds the bad object (stat error %v)", name, err)
@@ -244,10 +264,10 @@ func TestFillRejectsObjectsThatDoNotMatchThePointer(t *testing.T) {
 	}
 }
 
-// TestFillRefusesObjectsOverTheLimits pins that an object larger than the
-// limit for one object, or past the limit for the tree, is never
-// requested.
-func TestFillRefusesObjectsOverTheLimits(t *testing.T) {
+// TestFillLeavesObjectsOverTheLimitsUnsupported pins that an object larger
+// than the limit for one object, or past the limit for the tree, is never
+// requested and stays a pointer as unsupported, not as a failure.
+func TestFillLeavesObjectsOverTheLimitsUnsupported(t *testing.T) {
 	for name, limits := range map[string]Limits{
 		"object": {MaxObjectBytes: 10},
 		"total":  {MaxTotalBytes: 10},
@@ -258,7 +278,7 @@ func TestFillRefusesObjectsOverTheLimits(t *testing.T) {
 		opts := c.options(server, gitauth.Credentials{})
 		opts.Limits = limits
 		result := c.fill(t, opts)
-		if len(result.Missing) != 1 || len(server.Requests()) != 0 || !strings.Contains(strings.Join(result.Reasons, ";"), "limit") {
+		if len(result.Unsupported) != 1 || len(server.Requests()) != 0 || !strings.Contains(strings.Join(result.UnsupportedReasons, ";"), "limit") {
 			t.Fatalf("%s: Fill() = %+v, requests = %d; want the object refused before any request", name, result, len(server.Requests()))
 		}
 	}
@@ -306,7 +326,7 @@ func TestFillReadsLocalStoreThenCacheThenNetwork(t *testing.T) {
 	writeFile(t, (store{dir: cacheDir}).objectPath(pointers[1].OID), contents[1])
 	result, err := Fill(context.Background(), root, pointers, Options{
 		LocalStores: []string{local}, CacheDir: cacheDir, AllowNetwork: true,
-		Endpoint: server.Batch.URL + "/repo.git/info/lfs", Transport: server.Transport(),
+		Endpoint: Endpoint{URL: server.Batch.URL + "/repo.git/info/lfs"},
 	})
 	if err != nil || len(result.Missing) != 0 || result.Downloaded != 1 {
 		t.Fatalf("Fill() = %+v, %v; want one download", result, err)
@@ -335,14 +355,14 @@ func TestFillReplacesACorruptCacheObject(t *testing.T) {
 	}
 }
 
-// TestFillKeepsThePointerWhenTheServerLacksTheObject pins that an object
-// error of the batch response keeps the pointer with a reason.
-func TestFillKeepsThePointerWhenTheServerLacksTheObject(t *testing.T) {
+// TestFillFailsWhenTheServerLacksTheObject pins that an object error of
+// the batch response fails the fill with its code, as `git lfs fetch`
+// fails the manifest request of the repo-server.
+func TestFillFailsWhenTheServerLacksTheObject(t *testing.T) {
 	server := lfstest.New(t, false, false)
 	c := newFillCase(t, testContent)
-	result := c.fill(t, c.options(server, gitauth.Credentials{}))
-	if len(result.Missing) != 1 || c.file(t) != c.text || !strings.Contains(strings.Join(result.Reasons, ";"), "error 404") {
-		t.Fatalf("Fill() = %+v, want the pointer and the 404 reason", result)
+	if message := c.fail(t, c.options(server, gitauth.Credentials{})); !strings.Contains(message, "error 404") {
+		t.Fatalf("error %q, want the 404 reason", message)
 	}
 }
 
@@ -353,18 +373,18 @@ func TestFillReportsARefusedBatchWithoutSecrets(t *testing.T) {
 	server := lfstest.New(t, false, false)
 	server.BatchStatus = http.StatusForbidden
 	c := newFillCase(t, testContent)
-	result := c.fill(t, c.options(server, gitauth.Credentials{BearerToken: gitSecret, Hosts: []string{hostEntry(t, server.Batch.URL)}}))
-	reasons := strings.Join(result.Reasons, ";")
-	if len(result.Missing) != 1 || !strings.Contains(reasons, "HTTP 403") || strings.Contains(reasons, gitSecret) {
-		t.Fatalf("Fill() = %+v, want the 403 reason without the token", result)
+	message := c.fail(t, c.options(server, gitauth.Credentials{BearerToken: gitSecret, Hosts: []string{hostEntry(t, server.Batch.URL)}}))
+	if !strings.Contains(message, "HTTP 403") || strings.Contains(message, gitSecret) {
+		t.Fatalf("error %q, want the 403 reason without the token", message)
 	}
 }
 
-// TestFillIgnoresMaliciousBatchObjects pins that Fill uses only the
+// TestFillFailsForMaliciousBatchObjects pins that Fill uses only the
 // objects that it asked for, with the size of the pointer: an oid with a
 // path in it, a wrong oid, or a huge size never names a file or a
-// download.
-func TestFillIgnoresMaliciousBatchObjects(t *testing.T) {
+// download, and the fill fails because the server did not give the
+// object.
+func TestFillFailsForMaliciousBatchObjects(t *testing.T) {
 	cases := map[string]func(lfstest.Object) lfstest.Object{
 		"traversal oid": func(object lfstest.Object) lfstest.Object {
 			object.OID = "../../../../escape"
@@ -389,9 +409,9 @@ func TestFillIgnoresMaliciousBatchObjects(t *testing.T) {
 			return objects
 		}
 		c := newFillCase(t, testContent)
-		result := c.fill(t, c.options(server, gitauth.Credentials{}))
-		if len(result.Missing) != 1 || c.file(t) != c.text || len(server.RequestsTo("objects")) != 0 {
-			t.Fatalf("%s: Fill() = %+v, object requests = %d; want the object ignored", name, result, len(server.RequestsTo("objects")))
+		c.fail(t, c.options(server, gitauth.Credentials{}))
+		if len(server.RequestsTo("objects")) != 0 {
+			t.Fatalf("%s: object requests = %d; want the object ignored", name, len(server.RequestsTo("objects")))
 		}
 		if _, err := os.Stat(filepath.Join(filepath.Dir(c.store), "escape")); !os.IsNotExist(err) {
 			t.Fatalf("%s: a file escaped the store", name)
@@ -406,7 +426,7 @@ func TestFillRefusesPlainHTTPFromHTTPSBatch(t *testing.T) {
 	server.Add(testContent)
 	c := newFillCase(t, testContent)
 	result := c.fill(t, c.options(server, gitauth.Credentials{}))
-	if len(result.Missing) != 1 || len(server.RequestsTo("objects")) != 0 || !strings.Contains(strings.Join(result.Reasons, ";"), "plain http") {
+	if len(result.Unsupported) != 1 || len(server.RequestsTo("objects")) != 0 || !strings.Contains(strings.Join(result.UnsupportedReasons, ";"), "plain http") {
 		t.Fatalf("Fill(https batch, http href) = %+v, object requests = %d", result, len(server.RequestsTo("objects")))
 	}
 
@@ -417,18 +437,24 @@ func TestFillRefusesPlainHTTPFromHTTPSBatch(t *testing.T) {
 	secure.RedirectObjects = plain.Objects.URL
 	c = newFillCase(t, testContent)
 	result = c.fill(t, c.options(secure, gitauth.Credentials{}))
-	if len(result.Missing) != 1 || len(plain.RequestsTo("objects")) != 0 {
+	if len(result.Unsupported) != 1 || len(plain.RequestsTo("objects")) != 0 {
 		t.Fatalf("Fill(https href, redirect to http) = %+v, http requests = %d", result, len(plain.RequestsTo("objects")))
 	}
 }
 
-// TestFillSkipsTheNetworkWithoutEndpoint pins that an endpoint error, such
-// as an SSH remote, keeps the pointers with its reason.
-func TestFillSkipsTheNetworkWithoutEndpoint(t *testing.T) {
+// TestFillTreatsEndpointErrorsByCause pins that an endpoint that drydock
+// refuses, such as a local store, keeps the pointers as unsupported, and
+// that an endpoint that git-lfs cannot use either, such as an empty
+// lfs.url, fails the fill.
+func TestFillTreatsEndpointErrorsByCause(t *testing.T) {
 	c := newFillCase(t, testContent)
-	_, err := Endpoint("git@github.com:org/repo.git", nil)
+	_, err := FindEndpoint("https://git.example.test/r.git", []byte("[lfs]\n\turl = file:///srv/lfs\n"))
 	result := c.fill(t, Options{CacheDir: c.store, AllowNetwork: true, EndpointErr: err})
-	if len(result.Missing) != 1 || !strings.Contains(result.Reasons[0], "SSH") {
-		t.Fatalf("Fill(ssh) = %+v, want the SSH reason", result)
+	if len(result.Unsupported) != 1 || !strings.Contains(result.UnsupportedReasons[0], "local Git LFS store") {
+		t.Fatalf("Fill(file lfs.url) = %+v, want it unsupported", result)
+	}
+	_, err = FindEndpoint("https://git.example.test/r.git", []byte("[lfs]\n\turl =\n"))
+	if message := c.fail(t, Options{CacheDir: c.store, AllowNetwork: true, EndpointErr: err}); !strings.Contains(message, "empty") {
+		t.Fatalf("Fill(empty lfs.url) error %q, want the empty lfs.url", message)
 	}
 }

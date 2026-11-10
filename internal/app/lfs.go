@@ -12,6 +12,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/gitlfs"
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/pathsafety"
@@ -22,6 +23,11 @@ import (
 // lfsPointerCode identifies the warning for Git LFS pointer files that
 // drydock renders where the Argo CD repo-server renders their content.
 const lfsPointerCode = "render.lfs-pointer"
+
+// lfsUnsupportedCode identifies the warning for Git LFS pointer files that
+// drydock renders as pointers because it does not support them, such as
+// an object over a size limit or a Git LFS server that drydock refuses.
+const lfsUnsupportedCode = "render.lfs-unsupported"
 
 // lfsRepositoryKeys maps the URL keys of the repository Secrets that set
 // enableLfs to their URLs. The Argo CD repo-server then fetches Git LFS
@@ -78,16 +84,7 @@ func (p localProvider) lfsEnabled(repoURL string) bool {
 	return ok
 }
 
-// lfsMissing is the Git LFS state of a checkout whose repository sets
-// enableLfs: the pointer files that it still holds where Argo CD holds
-// their content, and why.
-type lfsMissing struct {
-	paths   []string
-	reasons []string
-}
-
-// lfsMissingHint is the end of the render.lfs-pointer warning for the
-// reasons of gitlfs.Result.
+// lfsMissingHint is the end of a Git LFS warning for reasons.
 func lfsMissingHint(reasons []string) string {
 	if len(reasons) == 0 {
 		return "drydock could not get their Git LFS objects"
@@ -95,14 +92,26 @@ func lfsMissingHint(reasons []string) string {
 	return "drydock could not get their Git LFS objects: " + strings.Join(reasons, "; ")
 }
 
+// lfsResultDiagnostics warns for the pointers that a fill left: the
+// render.lfs-pointer warning for those that a run with the network can
+// fill, and the render.lfs-unsupported warning for those that drydock does
+// not support.
+func lfsResultDiagnostics(repoURL string, result gitlfs.Result) []diagnostic.Diagnostic {
+	diags := lfsPointerDiagnostics(lfsPointerCode, repoURL, result.Missing, lfsMissingHint(result.Reasons))
+	unsupportedHint := "drydock does not support them: " + strings.Join(result.UnsupportedReasons, "; ")
+	return append(diags, lfsPointerDiagnostics(lfsUnsupportedCode, repoURL, result.Unsupported, unsupportedHint)...)
+}
+
 // rootLFSState is the Git LFS state of the tree at a provider root whose
 // repository sets enableLfs: the pointer files that it still holds where
 // Argo CD holds their content.
 type rootLFSState struct {
 	snapshot bool
-	missing  []string
-	reasons  []string
-	err      error
+	// missing are the pointers of a working tree.
+	missing []string
+	// result is the fill of a snapshot.
+	result gitlfs.Result
+	err    error
 }
 
 // snapshotLFSStates keeps, per snapshot root, the result of replacing its
@@ -144,8 +153,8 @@ func prepareRootLFS(ctx context.Context, root string, request BuildRequest, prov
 	entry.once.Do(func() {
 		entry.state = snapshotLFSState(ctx, root, request, provider.rootLFSURL())
 	})
-	if len(entry.state.missing) > 0 {
-		provider.rootIdentity.Digest = lfsMissingDigest(entry.state.missing)
+	if pointers := entry.state.result.Pointers(); len(pointers) > 0 {
+		provider.rootIdentity.Digest = lfsMissingDigest(pointers)
 	}
 	return &entry.state
 }
@@ -197,7 +206,7 @@ func snapshotLFSState(ctx context.Context, root string, request BuildRequest, re
 		state.err = err
 		return state
 	}
-	state.missing, state.reasons = result.Missing, result.Reasons
+	state.result = result
 	return state
 }
 
@@ -247,8 +256,8 @@ func (p localProvider) lfsRenderDiagnostics(source render.ResolvedSource) ([]dia
 	if !ok {
 		return nil, nil
 	}
-	missing, _ := value.(lfsMissing)
-	return lfsPointerDiagnostics(source.RepoURL, missing.paths, lfsMissingHint(missing.reasons)), nil
+	result, _ := value.(gitlfs.Result)
+	return lfsResultDiagnostics(source.RepoURL, result), nil
 }
 
 func (p localProvider) rootLFSDiagnostics(source render.ResolvedSource) ([]diagnostic.Diagnostic, error) {
@@ -258,14 +267,13 @@ func (p localProvider) rootLFSDiagnostics(source render.ResolvedSource) ([]diagn
 	if p.rootLFS.err != nil {
 		return nil, fmt.Errorf("check Git LFS pointers of repository %s: %w", source.RepoURL, p.rootLFS.err)
 	}
-	hint := "run git lfs pull in the working tree"
 	if p.rootLFS.snapshot {
-		hint = lfsMissingHint(p.rootLFS.reasons)
+		return lfsResultDiagnostics(source.RepoURL, p.rootLFS.result), nil
 	}
-	return lfsPointerDiagnostics(source.RepoURL, p.rootLFS.missing, hint), nil
+	return lfsPointerDiagnostics(lfsPointerCode, source.RepoURL, p.rootLFS.missing, "run git lfs pull in the working tree"), nil
 }
 
-func lfsPointerDiagnostics(repoURL string, paths []string, hint string) []diagnostic.Diagnostic {
+func lfsPointerDiagnostics(code, repoURL string, paths []string, hint string) []diagnostic.Diagnostic {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -274,7 +282,7 @@ func lfsPointerDiagnostics(repoURL string, paths []string, hint string) []diagno
 		shown = shown[:3]
 	}
 	return []diagnostic.Diagnostic{{
-		Code:     lfsPointerCode,
+		Code:     code,
 		Severity: diagnostic.SeverityWarning,
 		Category: "render",
 		Message: fmt.Sprintf("repository %s sets enableLfs, so the Argo CD repo-server renders the content of its Git LFS files, but drydock renders %d of them as pointer files (%s); %s",
@@ -310,5 +318,5 @@ func fetchedLFSDigest(acquired sourcepkg.GitResult) string {
 	if len(acquired.LFSPointers) == 0 {
 		return ""
 	}
-	return lfsMissingDigest(acquired.LFSMissing)
+	return lfsMissingDigest(acquired.LFS.Pointers())
 }

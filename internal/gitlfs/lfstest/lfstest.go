@@ -4,6 +4,7 @@ package lfstest
 
 import (
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Request is one request that a Server received.
@@ -64,6 +66,8 @@ type Server struct {
 	// RedirectObjects, when set, makes Objects answer with a 302 redirect
 	// to the same path below this base.
 	RedirectObjects string
+	// ObjectDelay makes Objects wait before it answers.
+	ObjectDelay time.Duration
 
 	mu       sync.Mutex
 	objects  map[string][]byte
@@ -91,20 +95,18 @@ func start(t testing.TB, handler http.Handler, secure bool) *httptest.Server {
 	return server
 }
 
-// Transport returns a transport that trusts the TLS certificates of both
-// hosts.
-func (s *Server) Transport() http.RoundTripper {
-	base := &http.Transport{Proxy: http.ProxyFromEnvironment}
+// TLSConfig returns a TLS configuration that trusts the certificates of
+// both hosts. httptest gives every server the same certificate.
+func (s *Server) TLSConfig() *tls.Config {
 	for _, server := range []*httptest.Server{s.Batch, s.Objects} {
 		if server.TLS == nil {
 			continue
 		}
-		trusted, _ := server.Client().Transport.(*http.Transport)
-		if trusted != nil {
-			base.TLSClientConfig = trusted.TLSClientConfig.Clone()
+		if trusted, ok := server.Client().Transport.(*http.Transport); ok && trusted.TLSClientConfig != nil {
+			return trusted.TLSClientConfig.Clone()
 		}
 	}
-	return base
+	return nil
 }
 
 // Add stores content and returns its oid and the text of its pointer.
@@ -211,6 +213,9 @@ func (s *Server) batchObject(oid string, size int64) Object {
 
 func (s *Server) serveObject(writer http.ResponseWriter, request *http.Request) {
 	s.record("objects", request)
+	if s.ObjectDelay > 0 {
+		time.Sleep(s.ObjectDelay)
+	}
 	if s.RedirectObjects != "" {
 		http.Redirect(writer, request, strings.TrimSuffix(s.RedirectObjects, "/")+request.URL.RequestURI(), http.StatusFound)
 		return

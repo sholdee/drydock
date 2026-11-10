@@ -19,6 +19,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/cache"
 	"github.com/sholdee/drydock/internal/gitauth"
+	"github.com/sholdee/drydock/internal/gitlfs"
 	"github.com/sholdee/drydock/internal/gittree"
 	"github.com/sholdee/drydock/internal/giturl"
 )
@@ -81,11 +82,9 @@ type GitResult struct {
 	// LFSPointers are the Git LFS pointer files of the checked-out commit
 	// when GitOptions.LFS is set, outside submodules.
 	LFSPointers []gittree.LFSPointer
-	// LFSMissing are the paths of the pointers that the checkout still
-	// holds as pointers, because drydock could not get their objects, and
-	// LFSReasons say why.
-	LFSMissing []string
-	LFSReasons []string
+	// LFS says which pointers the checkout still holds as pointers, and
+	// why (gitlfs.Result).
+	LFS gitlfs.Result
 }
 
 type GitAcquirer interface {
@@ -169,7 +168,7 @@ func acquireOnlineGitRepository(ctx context.Context, cachePath, key string, requ
 
 	network := cloned || refreshed || fetched || submoduleNetwork || lfs.Downloaded > 0
 	writeGitMetadata(cachePath, key, request, revision)
-	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: !network, Network: network, LFSPointers: pointers, LFSMissing: lfs.Missing, LFSReasons: lfs.Reasons}, nil
+	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: !network, Network: network, LFSPointers: pointers, LFS: lfs}, nil
 }
 
 func acquireCachedGitRepository(ctx context.Context, cachePath, key string, request GitRequest, opts GitOptions) (GitResult, error) {
@@ -200,7 +199,7 @@ func acquireCachedGitRepository(ctx context.Context, cachePath, key string, requ
 		return GitResult{}, fmt.Errorf("check out Git LFS content of repository %s: %w", RedactURL(request.URL), err)
 	}
 	writeGitMetadata(cachePath, key, request, revision)
-	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: true, Network: false, LFSPointers: pointers, LFSMissing: lfs.Missing, LFSReasons: lfs.Reasons}, nil
+	return GitResult{Path: cachePath, Revision: revision, LsRemoteRevision: LsRemoteRevision(repo, request.Revision, revision, request.URL), FromCache: true, Network: false, LFSPointers: pointers, LFS: lfs}, nil
 }
 
 func gitCacheDir(configured string) (string, error) {

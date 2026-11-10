@@ -36,14 +36,17 @@ type LFSFill struct {
 // opts.AllowNetwork, from the Git LFS server of the repository
 // (gitlfs.Fill). The --git-* HTTP credentials go only to a batch endpoint
 // that a --git-auth-host entry names, and a user and password in
-// fill.RepoURL go only to the scheme, host, and port of that URL.
+// fill.RepoURL go only to the scheme, host, and port of that URL. An SSH
+// remote uses the --git-ssh-* credentials for git-lfs-authenticate and
+// never the HTTP ones. It fails with gitlfs.ErrFetch when the server does
+// not give an object, as `git lfs fetch` fails the repo-server's request.
 func FillLFS(ctx context.Context, fill LFSFill, opts GitOptions) (gitlfs.Result, error) {
 	cacheDir, err := gitCacheDir(opts.CacheDir)
 	if err != nil {
 		cacheDir = ""
 	}
 	cleanURL, credentials := cloneURLAndCredentials(fill.RepoURL, opts.Credentials)
-	endpoint, endpointErr := gitlfs.Endpoint(cleanURL, fill.LFSConfig)
+	endpoint, endpointErr := gitlfs.FindEndpoint(cleanURL, fill.LFSConfig)
 	storeDir := ""
 	if cacheDir != "" {
 		storeDir = gitlfs.StoreDir(cacheDir)
@@ -55,6 +58,15 @@ func FillLFS(ctx context.Context, fill LFSFill, opts GitOptions) (gitlfs.Result,
 		Endpoint:     endpoint,
 		EndpointErr:  endpointErr,
 		Credentials:  gitauth.Credentials(credentials),
+		SSH: gitlfs.SSHOptions{
+			Credentials: gitauth.SSHCredentials{
+				PrivateKeyPath: credentials.SSHPrivateKeyPath,
+				PrivateKey:     credentials.SSHPrivateKey,
+				Passphrase:     credentials.SSHPassphrase,
+				KnownHostsPath: credentials.SSHKnownHostsPath,
+			},
+			Environment: newSSHEnvironment(),
+		},
 	})
 }
 
@@ -112,7 +124,7 @@ func checkoutLFS(ctx context.Context, repo *git.Repository, cachePath, commit, r
 	if err != nil {
 		return nil, gitlfs.Result{}, err
 	}
-	return pointers, result, restorePointers(cachePath, tree, pointers, result.Missing)
+	return pointers, result, restorePointers(cachePath, tree, pointers, result.Pointers())
 }
 
 func commitTree(repo *git.Repository, commit string) (*object.Tree, error) {

@@ -2,11 +2,12 @@ package gitlfs
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -28,6 +29,8 @@ const (
 	DefaultConcurrency                 = 8
 	DefaultBatchTimeout                = 2 * time.Minute
 	DefaultDownloadTimeout             = 10 * time.Minute
+	DefaultFillTimeout                 = 15 * time.Minute
+	DefaultIdleTimeout                 = time.Minute
 	DefaultMaxBatchResponseBytes int64 = 10 << 20
 )
 
@@ -42,35 +45,39 @@ type Limits struct {
 	BatchSize int
 	// Concurrency is the most downloads at the same time.
 	Concurrency int
-	// BatchTimeout bounds one batch request, DownloadTimeout one object.
+	// BatchTimeout bounds one batch request, DownloadTimeout one object,
+	// and FillTimeout all the network work of one Fill.
 	BatchTimeout    time.Duration
 	DownloadTimeout time.Duration
+	FillTimeout     time.Duration
+	// IdleTimeout stops a download whose body sends nothing for so long.
+	IdleTimeout time.Duration
 	// MaxBatchResponseBytes is the largest batch response that Fill reads.
 	MaxBatchResponseBytes int64
 }
 
 func (l Limits) withDefaults() Limits {
-	if l.MaxObjectBytes <= 0 {
-		l.MaxObjectBytes = DefaultMaxObjectBytes
+	positive := func(value, fallback int64) int64 {
+		if value <= 0 {
+			return fallback
+		}
+		return value
 	}
-	if l.MaxTotalBytes <= 0 {
-		l.MaxTotalBytes = DefaultMaxTotalBytes
+	duration := func(value, fallback time.Duration) time.Duration {
+		if value <= 0 {
+			return fallback
+		}
+		return value
 	}
-	if l.BatchSize <= 0 {
-		l.BatchSize = DefaultBatchSize
-	}
-	if l.Concurrency <= 0 {
-		l.Concurrency = DefaultConcurrency
-	}
-	if l.BatchTimeout <= 0 {
-		l.BatchTimeout = DefaultBatchTimeout
-	}
-	if l.DownloadTimeout <= 0 {
-		l.DownloadTimeout = DefaultDownloadTimeout
-	}
-	if l.MaxBatchResponseBytes <= 0 {
-		l.MaxBatchResponseBytes = DefaultMaxBatchResponseBytes
-	}
+	l.MaxObjectBytes = positive(l.MaxObjectBytes, DefaultMaxObjectBytes)
+	l.MaxTotalBytes = positive(l.MaxTotalBytes, DefaultMaxTotalBytes)
+	l.MaxBatchResponseBytes = positive(l.MaxBatchResponseBytes, DefaultMaxBatchResponseBytes)
+	l.BatchSize = int(positive(int64(l.BatchSize), DefaultBatchSize))
+	l.Concurrency = int(positive(int64(l.Concurrency), DefaultConcurrency))
+	l.BatchTimeout = duration(l.BatchTimeout, DefaultBatchTimeout)
+	l.DownloadTimeout = duration(l.DownloadTimeout, DefaultDownloadTimeout)
+	l.FillTimeout = duration(l.FillTimeout, DefaultFillTimeout)
+	l.IdleTimeout = duration(l.IdleTimeout, DefaultIdleTimeout)
 	return l
 }
 
@@ -86,29 +93,45 @@ type Options struct {
 	// AllowNetwork lets Fill download what the stores lack. --offline
 	// turns it off.
 	AllowNetwork bool
-	// Endpoint is the Git LFS API endpoint (Endpoint), or empty with
-	// EndpointErr set when the repository has none that drydock can use.
-	Endpoint    string
+	// Endpoint is the Git LFS endpoint (FindEndpoint), unless EndpointErr
+	// says why the repository has none.
+	Endpoint    Endpoint
 	EndpointErr error
 	// Credentials are the --git-* credentials. Fill sends the HTTP
 	// credentials to the batch endpoint only, and only when a Hosts entry
 	// names its scheme, host, and port.
 	Credentials gitauth.Credentials
-	// Transport replaces the default HTTP transport. Only tests set it.
-	Transport http.RoundTripper
+	// SSH is the SSH side of an SSH remote (git-lfs-authenticate).
+	SSH SSHOptions
+	// TLSConfig replaces the default TLS configuration. Only tests set it.
+	TLSConfig *tls.Config
 	Limits    Limits
 }
 
+// ErrFetch reports that the Git LFS server did not give drydock an object,
+// as `git lfs fetch` fails in the Argo CD repo-server.
+var ErrFetch = errors.New("git LFS fetch failed")
+
 // Result is what Fill did.
 type Result struct {
-	// Missing are the paths of the pointers that stay pointers, sorted.
+	// Missing are the paths of the pointers that stay pointers because
+	// drydock had no network, sorted, and Reasons say why.
 	Missing []string
-	// Reasons say why, at most a few distinct ones, for a warning. They
-	// never hold a credential, a header, or a URL path or query.
 	Reasons []string
-	// Downloaded counts the objects that Fill downloaded, or that another
-	// Fill of the process downloaded while this one waited for it.
+	// Unsupported are the paths of the pointers that stay pointers because
+	// drydock does not support them, sorted, and UnsupportedReasons say
+	// why. No reason holds a credential, a header, or a URL path or query.
+	Unsupported        []string
+	UnsupportedReasons []string
+	// Downloaded counts the objects that Fill downloaded itself.
 	Downloaded int
+}
+
+// Pointers are Missing and Unsupported, sorted: every pointer that stays.
+func (r Result) Pointers() []string {
+	out := append(slices.Clone(r.Missing), r.Unsupported...)
+	sort.Strings(out)
+	return out
 }
 
 // StoreDir is the Git LFS store of the drydock Git cache at gitCacheDir.
@@ -116,136 +139,178 @@ func StoreDir(gitCacheDir string) string {
 	return filepath.Join(gitCacheDir, "lfs")
 }
 
-// maxReasons bounds Result.Reasons.
+// maxReasons bounds the reasons of a Result and of an ErrFetch error.
 const maxReasons = 3
 
 // Fill puts, at the path of each pointer below root, the content of its
 // object, as `git lfs checkout` does. It reads the object from
 // opts.LocalStores, then from the drydock store, then, with the network,
 // downloads it into the drydock store. Every object must match the size
-// and SHA-256 of its pointer. A pointer that Fill cannot fill stays as it
-// is and goes to Result.Missing with a reason. Fill fails only for a local
+// and SHA-256 of its pointer.
+//
+// A pointer stays as it is in Result.Missing when the network is off, and
+// in Result.Unsupported when drydock does not support it, such as a size
+// over a limit or an endpoint that drydock refuses. When the server fails
+// to give an object, Fill fails with ErrFetch, as `git lfs fetch` fails
+// the manifest request of the repo-server. It also fails for a local
 // problem, such as an unsafe pointer path or a write error.
 func Fill(ctx context.Context, root string, pointers []gittree.LFSPointer, opts Options) (Result, error) {
-	var result Result
-	sources := slices.Clone(opts.LocalStores)
-	if opts.CacheDir != "" {
-		sources = append(sources, opts.CacheDir)
-	}
-	pending, err := fillFromStores(root, pointers, sources, &result)
+	f := &filler{root: root, opts: opts, outcomes: map[string]outcome{}}
+	pending, err := f.fillFromStores(pointers, f.stores())
 	if err != nil || len(pending) == 0 {
-		return result.finish(), err
+		return f.result.finish(), err
 	}
-	if err := downloadPending(ctx, pending, opts, &result); err != nil {
-		return result.finish(), err
+	if reason, unsupported, ok := networkOff(opts); !ok {
+		f.leave(pending, reason, unsupported)
+		return f.result.finish(), nil
 	}
-	if result.Downloaded > 0 {
-		pending, err = fillFromStores(root, pending, []string{opts.CacheDir}, nil)
+	if err := f.download(ctx, pending); err != nil {
+		return f.result.finish(), err
 	}
-	for _, pointer := range pending {
-		result.Missing = append(result.Missing, pointer.Path)
+	pending, err = f.fillFromStores(pending, []string{opts.CacheDir})
+	if err != nil {
+		return f.result.finish(), err
 	}
-	return result.finish(), err
+	return f.settle(pending)
+}
+
+// filler is the state of one Fill.
+type filler struct {
+	root     string
+	opts     Options
+	result   Result
+	mu       sync.Mutex
+	outcomes map[string]outcome
+	failures []string
+}
+
+// outcome is what the network gave for one object: nothing, an
+// unsupported reason, or a failure.
+type outcome struct {
+	unsupported string
+	failure     string
+}
+
+func (f *filler) stores() []string {
+	stores := slices.Clone(f.opts.LocalStores)
+	if f.opts.CacheDir != "" {
+		stores = append(stores, f.opts.CacheDir)
+	}
+	return stores
 }
 
 // fillFromStores fills each pointer from the first store that holds its
 // object and returns the pointers that no store holds. A pointer that uses
-// Git LFS extensions goes to result as missing.
-func fillFromStores(root string, pointers []gittree.LFSPointer, stores []string, result *Result) ([]gittree.LFSPointer, error) {
+// Git LFS extensions is unsupported. An object of the drydock store gets a
+// new modification time, which the cache commands read as its last use.
+func (f *filler) fillFromStores(pointers []gittree.LFSPointer, stores []string) ([]gittree.LFSPointer, error) {
 	var pending []gittree.LFSPointer
 	for _, pointer := range pointers {
-		if pointer.Extensions && result != nil {
-			result.Missing = append(result.Missing, pointer.Path)
-			result.addReason("the pointer uses Git LFS extensions, whose content drydock does not rebuild")
+		if pointer.Extensions {
+			f.result.Unsupported = append(f.result.Unsupported, pointer.Path)
+			f.result.UnsupportedReasons = addReason(f.result.UnsupportedReasons, "the pointer uses Git LFS extensions, whose content drydock does not rebuild")
 			continue
 		}
-		err := gittree.ReplaceLFSPointer(root, pointer, stores)
+		used, err := gittree.ReplaceLFSPointerFrom(f.root, pointer, stores)
 		switch {
 		case errors.Is(err, gittree.ErrLFSObjectMissing):
 			pending = append(pending, pointer)
 		case err != nil:
 			return nil, err
+		case used != "" && used == f.opts.CacheDir:
+			now := time.Now()
+			_ = os.Chtimes(gittree.LFSObjectPath(used, pointer.OID), now, now)
 		}
 	}
 	return pending, nil
 }
 
-// downloadPending downloads the objects of pending into the drydock store.
-// It records a reason for each object it does not download.
-func downloadPending(ctx context.Context, pending []gittree.LFSPointer, opts Options, result *Result) error {
-	endpoint, reason := networkEndpoint(opts)
-	if reason != "" {
-		result.addReason(reason)
+// networkOff returns why Fill does not use the network, and ok when it
+// does. unsupported reports a reason where drydock is the limit.
+func networkOff(opts Options) (string, bool, bool) {
+	switch {
+	case !opts.AllowNetwork:
+		return "--offline is set, and neither the local Git LFS store nor the drydock Git LFS cache holds the objects", false, false
+	case opts.CacheDir == "":
+		return "drydock has no Git LFS cache directory", true, false
+	}
+	return "", false, true
+}
+
+// leave keeps every pending pointer with reason.
+func (f *filler) leave(pending []gittree.LFSPointer, reason string, unsupported bool) {
+	for _, pointer := range pending {
+		if unsupported {
+			f.result.Unsupported = append(f.result.Unsupported, pointer.Path)
+		} else {
+			f.result.Missing = append(f.result.Missing, pointer.Path)
+		}
+	}
+	if unsupported {
+		f.result.UnsupportedReasons = addReason(f.result.UnsupportedReasons, reason)
+	} else {
+		f.result.Reasons = addReason(f.result.Reasons, reason)
+	}
+}
+
+// download downloads the objects of pending into the drydock store within
+// limits.FillTimeout, and records the outcome of each object.
+func (f *filler) download(ctx context.Context, pending []gittree.LFSPointer) error {
+	if f.opts.EndpointErr != nil {
+		f.recordAll(pending, f.opts.EndpointErr)
 		return nil
 	}
-	c := newClient(opts)
-	wanted := c.selectObjects(pending, result)
+	c := newClient(f.opts)
+	ctx, cancel := context.WithTimeout(ctx, c.limits.FillTimeout)
+	defer cancel()
+	wanted := f.selectObjects(c.limits, pending)
 	for start := 0; start < len(wanted); start += c.limits.BatchSize {
-		if err := ctx.Err(); err != nil {
-			return err
+		if ctx.Err() != nil {
+			break
 		}
-		chunk := wanted[start:min(start+c.limits.BatchSize, len(wanted))]
-		c.fetchChunk(ctx, endpoint, chunk, result)
+		f.fetchChunk(ctx, c, wanted[start:min(start+c.limits.BatchSize, len(wanted))])
 	}
-	return ctx.Err()
+	if ctx.Err() != nil && parentDone(ctx) {
+		return ctx.Err()
+	}
+	if ctx.Err() != nil {
+		f.failures = addReason(f.failures, fmt.Sprintf("the Git LFS downloads took longer than %s", c.limits.FillTimeout))
+	}
+	return nil
 }
 
-// networkEndpoint returns the batch endpoint of opts, or the reason why
-// Fill does not use the network.
-func networkEndpoint(opts Options) (*url.URL, string) {
-	switch {
-	case opts.CacheDir == "":
-		return nil, "drydock has no Git LFS cache directory"
-	case !opts.AllowNetwork:
-		return nil, "--offline is set, and neither the local Git LFS store nor the drydock Git LFS cache holds the objects"
-	case opts.EndpointErr != nil:
-		return nil, opts.EndpointErr.Error()
-	}
-	endpoint, err := url.Parse(opts.Endpoint)
-	if err != nil || endpoint.Host == "" {
-		return nil, "the Git LFS endpoint is not a valid URL"
-	}
-	return endpoint, ""
+// parentDone reports whether the caller's context ended, not only the
+// deadline of the Fill.
+func parentDone(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), context.Canceled)
 }
 
-// client is the network side of one Fill.
-type client struct {
-	transport   http.RoundTripper
-	credentials gitauth.Credentials
-	limits      Limits
-	store       store
-}
-
-func newClient(opts Options) *client {
-	transport := opts.Transport
-	if transport == nil {
-		transport = defaultTransport
-	}
-	return &client{
-		transport:   transport,
-		credentials: opts.Credentials,
-		limits:      opts.Limits.withDefaults(),
-		store:       store{dir: opts.CacheDir},
+// recordAll records err for the objects of every pending pointer.
+func (f *filler) recordAll(pending []gittree.LFSPointer, err error) {
+	for _, pointer := range pending {
+		f.record(pointer.OID, err)
 	}
 }
 
-// defaultTransport bounds the connection, the TLS handshake, and the wait
-// for response headers. It reads the proxy from the environment, as git
-// and go-git do.
-var defaultTransport http.RoundTripper = &http.Transport{
-	Proxy:                 http.ProxyFromEnvironment,
-	DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-	ForceAttemptHTTP2:     true,
-	MaxIdleConns:          100,
-	IdleConnTimeout:       90 * time.Second,
-	TLSHandshakeTimeout:   10 * time.Second,
-	ResponseHeaderTimeout: time.Minute,
-	ExpectContinueTimeout: time.Second,
+// record records the outcome of an object: err nil is no outcome.
+func (f *filler) record(oid string, err error) {
+	if err == nil {
+		return
+	}
+	message := redact(err.Error(), f.opts.Credentials)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if IsUnsupported(err) {
+		f.outcomes[oid] = outcome{unsupported: message}
+		return
+	}
+	f.outcomes[oid] = outcome{failure: message}
+	f.failures = addReason(f.failures, message)
 }
 
 // selectObjects lists the objects of pending once each, in path order, and
-// keeps those within the size limits. The others get a reason.
-func (c *client) selectObjects(pending []gittree.LFSPointer, result *Result) []objectRef {
+// keeps those within the size limits. The others are unsupported.
+func (f *filler) selectObjects(limits Limits, pending []gittree.LFSPointer) []objectRef {
 	sorted := slices.Clone(pending)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
 	seen := map[string]bool{}
@@ -256,12 +321,12 @@ func (c *client) selectObjects(pending []gittree.LFSPointer, result *Result) []o
 			continue
 		}
 		seen[pointer.OID] = true
-		if pointer.Size > c.limits.MaxObjectBytes {
-			result.addReason(fmt.Sprintf("an object is larger than the limit of %d bytes for one Git LFS object", c.limits.MaxObjectBytes))
+		if pointer.Size > limits.MaxObjectBytes {
+			f.record(pointer.OID, unsupportedf("an object is larger than the limit of %d bytes for one Git LFS object", limits.MaxObjectBytes))
 			continue
 		}
-		if total+pointer.Size > c.limits.MaxTotalBytes {
-			result.addReason(fmt.Sprintf("the objects are larger than the limit of %d bytes of Git LFS downloads for one tree", c.limits.MaxTotalBytes))
+		if total+pointer.Size > limits.MaxTotalBytes {
+			f.record(pointer.OID, unsupportedf("the objects are larger than the limit of %d bytes of Git LFS downloads for one tree", limits.MaxTotalBytes))
 			continue
 		}
 		total += pointer.Size
@@ -272,62 +337,122 @@ func (c *client) selectObjects(pending []gittree.LFSPointer, result *Result) []o
 
 // fetchChunk runs one batch request and downloads its objects, at most
 // limits.Concurrency at a time.
-func (c *client) fetchChunk(ctx context.Context, endpoint *url.URL, chunk []objectRef, result *Result) {
-	objects, err := c.batch(ctx, endpoint.String(), chunk)
+func (f *filler) fetchChunk(ctx context.Context, c *client, chunk []objectRef) {
+	objects, batchURL, err := c.batch(ctx, chunk)
 	if err != nil {
-		result.addReason(c.redact(err.Error()))
-		return
-	}
-	var mu sync.Mutex
-	record := func(err error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			result.addReason(c.redact(err.Error()))
-			return
+		for _, want := range chunk {
+			f.record(want.OID, err)
 		}
-		result.Downloaded++
+		return
 	}
 	limit := make(chan struct{}, c.limits.Concurrency)
 	var wg sync.WaitGroup
 	for _, want := range chunk {
 		object, ok := objects[want.OID]
 		if !ok {
-			record(errors.New("the batch response does not list an object, or lists it with another size"))
+			f.record(want.OID, errors.New("the batch response does not list an object, or lists it with another size"))
 			continue
 		}
 		wg.Go(func() {
 			limit <- struct{}{}
 			defer func() { <-limit }()
-			record(c.fetchObject(ctx, endpoint, want, object))
+			downloaded, err := c.fetchObject(ctx, batchURL, want, object)
+			f.record(want.OID, err)
+			if downloaded {
+				f.mu.Lock()
+				f.result.Downloaded++
+				f.mu.Unlock()
+			}
 		})
 	}
 	wg.Wait()
 }
 
+// settle sorts the pointers that the stores still lack after the
+// downloads: unsupported, or failed. A failure fails the Fill.
+func (f *filler) settle(pending []gittree.LFSPointer) (Result, error) {
+	for _, pointer := range pending {
+		result := f.outcomes[pointer.OID]
+		switch {
+		case result.unsupported != "":
+			f.result.Unsupported = append(f.result.Unsupported, pointer.Path)
+			f.result.UnsupportedReasons = addReason(f.result.UnsupportedReasons, result.unsupported)
+		case result.failure == "":
+			f.failures = addReason(f.failures, "no Git LFS store holds an object that matches the pointer")
+		}
+	}
+	if len(f.failures) > 0 {
+		return f.result.finish(), fmt.Errorf("%w: %s", ErrFetch, strings.Join(f.failures, "; "))
+	}
+	return f.result.finish(), nil
+}
+
+// client is the network side of one Fill.
+type client struct {
+	transport   http.RoundTripper
+	credentials gitauth.Credentials
+	endpoint    Endpoint
+	ssh         SSHOptions
+	guard       *dialGuard
+	limits      Limits
+	store       store
+}
+
+func newClient(opts Options) *client {
+	guard := newDialGuard(opts.Endpoint)
+	return &client{
+		transport:   newTransport(guard, opts.TLSConfig),
+		credentials: opts.Credentials,
+		endpoint:    opts.Endpoint,
+		ssh:         opts.SSH,
+		guard:       guard,
+		limits:      opts.Limits.withDefaults(),
+		store:       store{dir: opts.CacheDir},
+	}
+}
+
+// newTransport bounds the connection, the TLS handshake, and the wait for
+// response headers, and dials through guard. It reads the proxy from the
+// environment, as git and go-git do. Each Fill has its own transport, so
+// no connection outlives the guard of its Fill.
+func newTransport(guard *dialGuard, tlsConfig *tls.Config) *http.Transport {
+	return &http.Transport{
+		Proxy:                 guard.proxy,
+		DialContext:           guard.dialContext,
+		TLSClientConfig:       tlsConfig,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: time.Minute,
+		ExpectContinueTimeout: time.Second,
+	}
+}
+
 // fetchObject downloads one object of a batch response, once per process
 // for an object ID: a second Fill that needs the same object waits, then
-// finds it in the store.
-func (c *client) fetchObject(ctx context.Context, endpoint *url.URL, want objectRef, object batchObject) error {
+// finds it in the store. downloaded reports a download of its own.
+func (c *client) fetchObject(ctx context.Context, batchURL *url.URL, want objectRef, object batchObject) (bool, error) {
 	if object.Error != nil {
-		return fmt.Errorf("the Git LFS server reports error %d for an object: %s", object.Error.Code, sanitize(object.Error.Message))
+		return false, fmt.Errorf("the Git LFS server reports error %d for an object: %s", object.Error.Code, sanitize(object.Error.Message))
 	}
 	action, ok := object.Actions["download"]
 	if !ok {
-		return errors.New("the batch response gives no download action for an object")
+		return false, errors.New("the batch response gives no download action for an object")
 	}
 	unlock := objectLocks.lock(c.store.dir, want.OID)
 	defer unlock()
 	if c.store.has(want) {
-		return nil
+		return false, nil
 	}
-	return c.download(ctx, endpoint, want, action)
+	err := c.download(ctx, batchURL, want, action)
+	return err == nil, err
 }
 
 // redact removes the --git-* secret values from a message, should a server
 // echo one.
-func (c *client) redact(message string) string {
-	for _, secret := range []string{c.credentials.Password, c.credentials.BearerToken} {
+func redact(message string, credentials gitauth.Credentials) string {
+	for _, secret := range []string{credentials.Password, credentials.BearerToken} {
 		if secret = strings.TrimSpace(secret); secret != "" {
 			message = strings.ReplaceAll(message, secret, "[redacted]")
 		}
@@ -335,20 +460,22 @@ func (c *client) redact(message string) string {
 	return message
 }
 
-func (r *Result) addReason(reason string) {
-	if slices.Contains(r.Reasons, reason) || len(r.Reasons) >= maxReasons {
-		return
+// addReason adds reason to reasons once, up to maxReasons.
+func addReason(reasons []string, reason string) []string {
+	if slices.Contains(reasons, reason) || len(reasons) >= maxReasons {
+		return reasons
 	}
-	r.Reasons = append(r.Reasons, reason)
+	return append(reasons, reason)
 }
 
 func (r Result) finish() Result {
 	sort.Strings(r.Missing)
-	switch {
-	case len(r.Missing) == 0:
+	sort.Strings(r.Unsupported)
+	if len(r.Missing) == 0 {
 		r.Reasons = nil
-	case len(r.Reasons) == 0:
-		r.Reasons = []string{"no Git LFS store holds an object that matches the pointer"}
+	}
+	if len(r.Unsupported) == 0 {
+		r.UnsupportedReasons = nil
 	}
 	return r
 }
