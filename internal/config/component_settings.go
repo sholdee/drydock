@@ -205,8 +205,10 @@ func componentCommandLine(command, args []string) []string {
 // componentProgramIndex returns the index of the program of component in
 // line, or -1. The Argo CD image starts the program through tini (its
 // ENTRYPOINT is /usr/bin/tini --), so a line that names tini first runs
-// the program after the options of tini, up to "--". The -p and -e options
-// of tini take a value.
+// the program after the options of tini, up to "--". tini reads its
+// options with getopt, so options group, as in -sp, and the -p and -e
+// options take the rest of their group as their value, or else the next
+// item (tiniOptionTakesNext).
 func componentProgramIndex(component ArgoCDComponent, line []string) int {
 	index := 0
 	if len(line) > 0 && path.Base(line[0]) == "tini" {
@@ -217,7 +219,7 @@ func componentProgramIndex(component ArgoCDComponent, line []string) int {
 			if option == "--" {
 				break
 			}
-			if option == "-p" || option == "-e" {
+			if tiniOptionTakesNext(option) {
 				index++
 			}
 		}
@@ -226,6 +228,19 @@ func componentProgramIndex(component ArgoCDComponent, line []string) int {
 		return index
 	}
 	return -1
+}
+
+// tiniOptionTakesNext reports whether a tini option group, such as -s,
+// -sp, or -pSIGTERM, takes the next item as its value: its first -p or -e
+// ends the group, with no value attached.
+func tiniOptionTakesNext(option string) bool {
+	letters := strings.TrimPrefix(option, "-")
+	for i := range len(letters) {
+		if letters[i] == 'p' || letters[i] == 'e' {
+			return i == len(letters)-1
+		}
+	}
+	return false
 }
 
 // ComponentFlag is the value of a setting flag on the command line of a
