@@ -175,10 +175,26 @@ Supported:
     `--offline` fails on a cache miss.
 
   drydock cannot run the hydrator offline. So a change to the dry source
-  shows only after the hydrator commits it to the sync branch. Each such
-  Application gets the `source.hydrator-sync-source` warning, which
-  `--strict` does not fail on, because the render is the one that Argo CD
-  compares. The hydrator checks of the controller apply:
+  shows only after the hydrator commits it to the sync branch. A diff gives
+  the `source.hydrator-sync-source` warning for such an Application only
+  when both of these are true:
+
+  - The dry source is the repository under diff, by the same self-repo
+    revision match and `--repo-map` rules as the sync source.
+  - The diff changes a file under `drySource.path`. The path `.` covers the
+    whole repository.
+
+  drydock lists the changed files from Git between `--ref-orig` and `--ref`
+  or the working tree, from the changed-only set, or from a compare of the
+  two trees for a path diff. The changed-only include and ignore globs do
+  not apply to this list. If drydock cannot list the files, the warning
+  stays and says so. A dry source in another repository gives no warning,
+  because its changes are not part of the diff. `build`, `test`, `get`, and
+  `diag` never give the warning. `--strict` does not fail on it, because the
+  render is the one that Argo CD compares. Earlier drydock releases gave the
+  warning on every run for every such Application.
+
+  The hydrator checks of the controller apply:
   `drySource.repoURL`, `syncSource.targetBranch`, and
   `hydrateTo.targetBranch` when `hydrateTo` is set. The CRD schema of
   `syncSource.path` applies too: the API server rejects an empty path, `.`,
@@ -2385,10 +2401,10 @@ Supported:
   `.json` suffix still follows the single-object JSON rule, and every other
   file, such as a README or `.libsonnet` library that `include` admits, is
   read as a YAML/JSON stream under the skip-or-fail rule above. Enabling it
-  with neither `include` nor `exclude` renders every file and emits the
-  `directory.extension-filter-disabled` warning, where the repo-server logs a
-  warning. Upstream calls this a valid configuration, so `--strict` keeps the
-  warning advisory.
+  with neither `include` nor `exclude` renders every file. The repo-server
+  logs a warning for this, but drydock reports nothing, because upstream
+  calls this a valid configuration and the output is the same. Earlier
+  drydock releases gave the `directory.extension-filter-disabled` warning.
 - `kustomize.buildOptions` as Argo CD v3.6.1 and kustomize v5.8.3 read it.
   Argo CD splits the value at white space, with no quoting, and passes the
   words after `kustomize build <path>`
@@ -3150,13 +3166,15 @@ Supported:
   an Application, and of two Application renders the first one found wins.
   It reports the other one as a duplicate. The values files of
   both renders stay out of the settings sources.
-- `ignoreResourceUpdates` customizations. Argo CD uses them only to skip
-  reconciles when a live resource changes. They never change desired output
-  or a desired-vs-desired diff. The argo-cd chart sets eight of them by
-  default. drydock parses them and reports one
+- `ignoreResourceUpdates` customizations. Argo CD v3.6.1 uses them only to
+  skip reconciles when a live resource changes (`controller/cache`). They
+  never change desired output, a desired-vs-desired diff, or sync status, so
+  they have no offline effect. The argo-cd chart sets eight of them by
+  default. drydock parses and validates them. A malformed rule is an error,
+  and drydock keeps no resource customizations from that ConfigMap. A valid
+  rule gives no diagnostic. Earlier drydock releases gave a
   `settings.ignore-resource-updates` warning for each settings source that
-  names their keys. A diff reports each distinct warning once, not once for
-  each side. `--strict` does not fail on this warning.
+  set them.
 - `configs.cm` in an Argo CD Helm values file that drydock reads on its own,
   as the argo-helm `argo-cd` chart 10.14.0 turns it into `argocd-cm`. This
   applies when no install that drydock renders reads the file. The chart
