@@ -147,11 +147,8 @@ func commandFlagHelpers(t *testing.T, file string) []string {
 		if !ok || pkg.Name == "command" {
 			return true
 		}
-		for _, arg := range call.Args {
-			if commandArgument(arg) {
-				found[pkg.Name+"."+selector.Sel.Name] = struct{}{}
-				break
-			}
+		if slices.ContainsFunc(call.Args, commandArgument) {
+			found[pkg.Name+"."+selector.Sel.Name] = struct{}{}
 		}
 		return true
 	})
