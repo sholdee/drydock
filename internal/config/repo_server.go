@@ -128,34 +128,44 @@ func RepoServerHelmNamespace(deployment *unstructured.Unstructured, serviceAccou
 	return podNamespace, notes
 }
 
-// repoServerContainer returns the container of a sanitized pod spec whose
-// command line runs argocd-repo-server (ComponentRunsProgramKey): the one
-// named argocd-repo-server (upstream install.yaml) or repo-server (argo-cd
-// Helm chart) first, else the first one that runs it. It returns nil when
-// no container runs the program, such as in a CMP sidecar patch, and
-// drydock does not read another container instead.
+// repoServerContainer returns the container of a sanitized pod spec that
+// runs helm for the repo-server: the one whose command line runs
+// argocd-repo-server (ComponentRunsProgramKey), the one named
+// argocd-repo-server (upstream install.yaml) or repo-server (argo-cd Helm
+// chart) first. Without such a container, it returns the container with
+// one of these names, because a shell can start the program and the env
+// and the service account token reach helm whatever starts it. It never
+// returns another container, such as a CMP sidecar, and returns nil
+// without one.
 func repoServerContainer(podSpec map[string]any) map[string]any {
 	containers, _, _ := unstructured.NestedSlice(podSpec, "containers")
-	var first map[string]any
+	var running, named map[string]any
 	for _, item := range containers {
 		container, ok := item.(map[string]any)
-		if !ok || container[ComponentRunsProgramKey] != true {
+		if !ok {
 			continue
 		}
-		if first == nil {
-			first = container
-		}
-		switch container["name"] {
-		case "argocd-repo-server", "repo-server":
+		isNamed := container["name"] == "argocd-repo-server" || container["name"] == "repo-server"
+		runs := container[ComponentRunsProgramKey] == true
+		switch {
+		case runs && isNamed:
 			return container
+		case runs && running == nil:
+			running = container
+		case isNamed && named == nil:
+			named = container
 		}
 	}
-	return first
+	if running != nil {
+		return running
+	}
+	return named
 }
 
-// RepoServerRunsProgram reports whether a sanitized repo-server Deployment
-// has a container whose command line runs argocd-repo-server.
-func RepoServerRunsProgram(deployment *unstructured.Unstructured) bool {
+// RepoServerHelmContainer reports whether a sanitized repo-server
+// Deployment has a container that runs helm for the repo-server
+// (repoServerContainer).
+func RepoServerHelmContainer(deployment *unstructured.Unstructured) bool {
 	podSpec, _, _ := unstructured.NestedMap(deployment.Object, "spec", "template", "spec")
 	return repoServerContainer(podSpec) != nil
 }

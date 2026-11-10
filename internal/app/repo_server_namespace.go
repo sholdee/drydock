@@ -53,18 +53,21 @@ type repoServerCandidate struct {
 // one from the same install as an argocd-cm, then a rendered one, then by
 // path and document index. Another one that gives a different namespace
 // adds a warning. As for the workload settings, a committed file that a
-// kustomization lists as a patch does not count, and drydock reads only a
-// container whose command line runs argocd-repo-server.
+// kustomization lists as a patch does not count. drydock reads the
+// container whose command line runs argocd-repo-server, else the one with
+// the repo-server name, which a shell can start, and never another one.
 func repoServerHelmNamespace(root string, workloads workloadCandidates) (*config.Value[string], []diagnostic.Diagnostic) {
 	deployments := workloads.byKind[discovery.RepoServerDeploymentKind]
 	serviceAccounts := workloads.serviceAccounts
 	diags := append([]diagnostic.Diagnostic(nil), workloads.diags...)
 	var out *config.Value[string]
 	for _, item := range deployments {
-		// The rules of the workload settings: a listed Kustomize patch is
-		// not a workload, and only a container that runs the program
-		// counts (applyComponentWorkloadSettings).
-		if !config.RepoServerRunsProgram(item.candidate.Object) || (item.candidate.Tier == discovery.SourceTierStatic && committedKustomizePatch(root, item.candidate.Path)) {
+		// As for the workload settings, a listed Kustomize patch is not a
+		// workload (applyComponentWorkloadSettings). Helm reads the env and
+		// the token of the repo-server container also when a shell starts
+		// the program, so a container with the repo-server name counts
+		// too (config.RepoServerHelmContainer).
+		if !config.RepoServerHelmContainer(item.candidate.Object) || (item.candidate.Tier == discovery.SourceTierStatic && committedKustomizePatch(root, item.candidate.Path)) {
 			continue
 		}
 		var accounts []*unstructured.Unstructured

@@ -89,3 +89,33 @@ func TestRepoServerHelmNamespaceLiteralNeedsNoPodNamespace(t *testing.T) {
 		}
 	}
 }
+
+// A shell can start argocd-repo-server, so no container runs the program
+// by its command line. The env and the service account token still reach
+// helm, so the Helm namespace reads the container named
+// argocd-repo-server: here the pod namespace through the mounted token.
+// A sidecar-only file, whose container has another name, still does not
+// count.
+func TestRepoServerHelmNamespaceReadsAShellWrappedRepoServer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		container string
+		want      string
+	}{
+		{name: "shell wrapper", container: "        - name: argocd-repo-server\n          command: [sh, -c]\n          args: [\"exec /usr/local/bin/argocd-repo-server\"]\n", want: "argocd"},
+		{name: "chart container name", container: "        - name: repo-server\n          command: [sh, -c]\n          args: [\"exec /usr/local/bin/argocd-repo-server\"]\n", want: "argocd"},
+		{name: "sidecar only", container: "        - name: avp\n          command: [/var/run/argocd/argocd-cmp-server]\n", want: "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, filepath.Join(root, "bootstrap", "argocd", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: argocd\nresources:\n  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/install.yaml\n  - argocd-cmd-params-cm.yaml\n  - repo-server.yaml\n")
+			writeTestFile(t, filepath.Join(root, "bootstrap", "argocd", "argocd-cmd-params-cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argocd-cmd-params-cm\ndata:\n  reposerver.include.hidden.directories: \"true\"\n")
+			writeTestFile(t, filepath.Join(root, "bootstrap", "argocd", "repo-server.yaml"), "# reads argocd-cmd-params-cm\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: argocd-repo-server\nspec:\n  template:\n    spec:\n      automountServiceAccountToken: true\n      containers:\n"+tc.container)
+			writeDiffApplication(t, root, "other", "other", "same")
+			result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+			if got := result.Settings.HelmNamespace(); got != tc.want {
+				t.Fatalf("HelmNamespace = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

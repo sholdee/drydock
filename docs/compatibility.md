@@ -1330,10 +1330,14 @@ Supported:
   A Deployment without containers is a patch and does not count. Neither
   does a committed file that a kustomization in its directory or in a
   directory above it lists under `patches`, `patchesStrategicMerge`, or
-  `patchesJson6902`, nor a Deployment without a container whose command
-  line runs `argocd-repo-server` (see "Settings from the Argo CD
-  workloads"). drydock reads only that container, never another one, such
-  as a CMP sidecar. Earlier drydock releases read the first container. A
+  `patchesJson6902`. drydock reads the container whose command line runs
+  `argocd-repo-server` (see "Settings from the Argo CD workloads"). Without
+  one, it reads the container named `argocd-repo-server` or `repo-server`,
+  because a shell can start the program, such as
+  `sh -c "exec argocd-repo-server"`, and the env and the service account
+  token reach helm all the same. It never reads another container, such
+  as a CMP sidecar, and a Deployment without either container does not
+  count. Earlier drydock releases read the first container. A
   repo-server counts when it comes from the same install as a discovered
   `argocd-cm`, or when it runs in the Argo CD namespace. When several
   count, drydock uses the first in this order: from the same install as an
