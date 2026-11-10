@@ -102,20 +102,14 @@ func clonePluginExecutions(input []PluginExecution) []PluginExecution {
 }
 
 // renderApplicationCached renders application through the run-scoped cache.
-// It first runs the Argo CD spec checks (validateApplicationSpecSources),
-// and it adds the source hydrator advisory to every result of an
-// Application with spec.sourceHydrator, cached or not.
+// It first runs the Argo CD spec checks (validateApplicationSpecSources).
 func renderApplicationCached(ctx renderContext, application argoappv1.Application) (RenderResult, error) {
 	if !ctx.syntheticApplication {
 		if err := validateApplicationSpecSources(application.Spec); err != nil {
 			return RenderResult{}, err
 		}
 	}
-	result, err := renderApplicationCachedResult(ctx, application)
-	if diag, ok := sourceHydratorDiagnostic(application); ok {
-		result.Diagnostics = append([]diagnostic.Diagnostic{diag}, result.Diagnostics...)
-	}
-	return result, err
+	return renderApplicationCachedResult(ctx, application)
 }
 
 func renderApplicationCachedResult(ctx renderContext, application argoappv1.Application) (RenderResult, error) {

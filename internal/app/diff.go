@@ -234,6 +234,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (resu
 	rightBuild.result.CacheEvents = append(append([]cacheevent.Event(nil), rightList.result.CacheEvents...), rightBuild.result.CacheEvents...)
 	diagnostics = append(diagnostics, leftBuild.result.Diagnostics...)
 	diagnostics = append(diagnostics, rightBuild.result.Diagnostics...)
+	diagnostics = append(diagnostics, request.hydratorDryChangeDiagnostics(ctx, leftBuildRequest, rightBuildRequest, leftBuild.result, rightBuild.result)...)
 	cacheEvents := cacheEventsFromBuilds(leftBuild.result, rightBuild.result)
 	if err := errors.Join(leftBuild.err, rightBuild.err); err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, err
