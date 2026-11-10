@@ -282,6 +282,18 @@ jobs:
             fi
           fi
 
+      - name: Check the action archive for symlinks
+        shell: bash
+        run: |
+          # setup-action and pr-action users download this archive. The runner
+          # fails to unpack a dangling symlink, so the archive must hold none.
+          links="$(git archive HEAD | tar -tvf - | awk '$1 ~ /^l/')"
+          if [ -n "${links}" ]; then
+            echo "::error::The repository archive holds symlinks. Add their folders to export-ignore in .gitattributes."
+            printf '%s\n' "${links}"
+            exit 1
+          fi
+
   image:
     needs: detect
     if: github.event_name != 'pull_request' || needs.detect.outputs.image == 'true' || needs.detect.outputs.workflow == 'true'
