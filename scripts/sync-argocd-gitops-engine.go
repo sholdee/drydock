@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,7 +29,47 @@ const (
 	// requires: releases change how patterns parse, such as braces in
 	// {c,[a,b]}.yaml.
 	doublestarModule = "github.com/bmatcuk/doublestar/v4"
+	// argoToolVersionsFile is the file in the Argo CD module that names the
+	// helm and kustomize binaries of the Argo CD image.
+	argoToolVersionsFile = "hack/tool-versions.sh"
 )
+
+// argoToolModule is a binary of the Argo CD image that drydock builds in as
+// a Go module: the module, the variable of argoToolVersionsFile that holds
+// its version, and the modules it must share with that binary.
+type argoToolModule struct {
+	module   string
+	variable string
+	pinned   []string
+}
+
+// argoToolModules are the helm and kustomize binaries of the Argo CD image.
+// drydock renders with their Go modules, and it reads helm and kustomize
+// arguments as their command lines do, so each module must be the version of
+// the binary, and the modules in pinned must be the versions that the
+// binary's go.mod requires. pflag and cobra parse the arguments (pflag error
+// text changes between releases), and kustomize api and kyaml are the
+// kustomize code that renders.
+var argoToolModules = []argoToolModule{
+	{
+		module:   "sigs.k8s.io/kustomize/kustomize/v5",
+		variable: "KUSTOMIZE_VERSION",
+		pinned: []string{
+			"sigs.k8s.io/kustomize/api",
+			"sigs.k8s.io/kustomize/kyaml",
+			"github.com/spf13/pflag",
+			"github.com/spf13/cobra",
+		},
+	},
+	{
+		module:   "helm.sh/helm/v4",
+		variable: "HELM_VERSION",
+		pinned: []string{
+			"github.com/spf13/pflag",
+			"github.com/spf13/cobra",
+		},
+	},
+}
 
 var argoCompatibilityReplaceModules = []string{
 	"k8s.io/api",
@@ -67,6 +109,7 @@ type moduleInfo struct {
 	Path    string `json:"Path"`
 	Version string `json:"Version"`
 	GoMod   string `json:"GoMod"`
+	Dir     string `json:"Dir"`
 }
 
 type goModFile struct {
@@ -152,15 +195,8 @@ func syncArgoCompatibilityStack() error {
 	); err != nil {
 		return fmt.Errorf("update GitOps Engine requirement: %w", err)
 	}
-	if err := requireGojqModules(argoGoMod); err != nil {
+	if err := requireArgoPinnedModules(argoGoMod, argo.Dir); err != nil {
 		return err
-	}
-	doublestarVersion, err := argoRequirement(argoGoMod, doublestarModule)
-	if err != nil {
-		return err
-	}
-	if err := runGo("mod", "edit", "-require="+doublestarModule+"@"+doublestarVersion); err != nil {
-		return fmt.Errorf("update doublestar requirement: %w", err)
 	}
 
 	replacements, err := compatibilityReplacements(argoGoMod, argoCompatibilityReplaceModules)
@@ -179,6 +215,23 @@ func syncArgoCompatibilityStack() error {
 
 	fmt.Printf("Aligned Argo CD compatibility stack for %s %s\n", argoCDModule, argo.Version)
 	return nil
+}
+
+// requireArgoPinnedModules requires the modules that must be the versions
+// the selected Argo CD uses: gojq and the modules it compiles in, doublestar,
+// and the modules of the helm and kustomize binaries in the Argo CD image.
+func requireArgoPinnedModules(argoGoMod goModFile, argoDir string) error {
+	if err := requireGojqModules(argoGoMod); err != nil {
+		return err
+	}
+	doublestarVersion, err := argoRequirement(argoGoMod, doublestarModule)
+	if err != nil {
+		return err
+	}
+	if err := runGo("mod", "edit", "-require="+doublestarModule+"@"+doublestarVersion); err != nil {
+		return fmt.Errorf("update doublestar requirement: %w", err)
+	}
+	return requireArgoToolModules(argoDir)
 }
 
 func gitopsEngineRequirement(source goModFile) (string, error) {
@@ -243,6 +296,12 @@ func gojqModules(mod string) ([]string, error) {
 // argoRequirement returns the version at which the selected Argo CD go.mod
 // requires module.
 func argoRequirement(source goModFile, module string) (string, error) {
+	return goModRequirement(source, "selected Argo CD", module)
+}
+
+// goModRequirement returns the version at which the go.mod of owner
+// requires module.
+func goModRequirement(source goModFile, owner, module string) (string, error) {
 	for _, requirement := range source.Require {
 		if requirement.Path == module {
 			version := strings.TrimSpace(requirement.Version)
@@ -252,7 +311,102 @@ func argoRequirement(source goModFile, module string) (string, error) {
 			return version, nil
 		}
 	}
-	return "", fmt.Errorf("selected Argo CD go.mod does not require %s at a version", module)
+	return "", fmt.Errorf("%s go.mod does not require %s at a version", owner, module)
+}
+
+// argoToolVersions reads the versions of the binaries in the Argo CD image
+// from argoToolVersionsFile in the Argo CD module directory argoDir. It
+// returns each variable of argoToolModules with a "v" in front of its value,
+// as a Go module version.
+func argoToolVersions(argoDir string) (map[string]string, error) {
+	if strings.TrimSpace(argoDir) == "" {
+		return nil, errors.New("selected Argo CD module has no source directory")
+	}
+	path := filepath.Join(argoDir, argoToolVersionsFile)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("read Argo CD tool versions: %w", err)
+	}
+	defer file.Close()
+	values := map[string]string{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		name, value, ok := strings.Cut(strings.TrimSpace(scanner.Text()), "=")
+		if ok {
+			values[name] = strings.TrimSpace(value)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read Argo CD tool versions: %w", err)
+	}
+	versions := make(map[string]string, len(argoToolModules))
+	for _, tool := range argoToolModules {
+		value := values[tool.variable]
+		if value == "" {
+			return nil, fmt.Errorf("%s does not set %s", path, tool.variable)
+		}
+		versions[tool.variable] = "v" + strings.TrimPrefix(value, "v")
+	}
+	return versions, nil
+}
+
+// argoToolRequirements returns the version of every module that drydock
+// must require for the binaries of the Argo CD image in argoDir: each tool
+// module at the version of its binary, and each pinned module at the version
+// the tool's go.mod requires. Two tools that require one module at different
+// versions are an error, because drydock can follow only one of them.
+func argoToolRequirements(argoDir string) (map[string]string, error) {
+	versions, err := argoToolVersions(argoDir)
+	if err != nil {
+		return nil, err
+	}
+	requirements := map[string]string{}
+	owners := map[string]string{}
+	for _, tool := range argoToolModules {
+		version := versions[tool.variable]
+		requirements[tool.module] = version
+		info, err := goListModule(tool.module + "@" + version)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s %s: %w", tool.module, version, err)
+		}
+		if strings.TrimSpace(info.GoMod) == "" {
+			return nil, fmt.Errorf("%s %s did not report a go.mod path", tool.module, version)
+		}
+		toolGoMod, err := readGoMod(info.GoMod)
+		if err != nil {
+			return nil, fmt.Errorf("read %s go.mod: %w", tool.module, err)
+		}
+		owner := tool.module + " " + version
+		for _, module := range tool.pinned {
+			required, err := goModRequirement(toolGoMod, owner, module)
+			if err != nil {
+				return nil, err
+			}
+			if previous, ok := requirements[module]; ok && previous != required {
+				return nil, fmt.Errorf("%s requires %s %s, but %s requires %s", owners[module], module, previous, owner, required)
+			}
+			requirements[module] = required
+			owners[module] = owner
+		}
+	}
+	return requirements, nil
+}
+
+// requireArgoToolModules requires the modules of argoToolRequirements.
+func requireArgoToolModules(argoDir string) error {
+	requirements, err := argoToolRequirements(argoDir)
+	if err != nil {
+		return err
+	}
+	for _, tool := range argoToolModules {
+		modules := append([]string{tool.module}, tool.pinned...)
+		for _, module := range modules {
+			if err := runGo("mod", "edit", "-require="+module+"@"+requirements[module]); err != nil {
+				return fmt.Errorf("update %s requirement: %w", module, err)
+			}
+		}
+	}
+	return nil
 }
 
 func compatibilityReplacements(source goModFile, modules []string) ([]goModReplace, error) {
