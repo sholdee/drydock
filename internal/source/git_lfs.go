@@ -79,12 +79,14 @@ const lfsFilledMarker = "drydock-lfs-filled"
 // them in the checkout at cachePath (FillLFS). A pointer that it cannot
 // fill holds the pointer blob again, also when an earlier run filled it.
 //
-// Without opts.LFS, a checkout that an earlier run filled gets every
+// Without opts.LFS, a checkout that a run with it filled gets every
 // pointer blob back, as the repo-server, which runs git with
 // GIT_LFS_SKIP_SMUDGE=1, holds them. A checkout of HEAD is not checked out
 // again, so its files would keep the content otherwise. The marker goes in
 // place before drydock writes any content, so a run that stops halfway
-// leaves it.
+// leaves it. It stays for good: another process with enableLfs can fill
+// the checkout while a run without it restores the pointers, so each run
+// without enableLfs scans the tree of an entry that has the marker.
 func checkoutLFS(ctx context.Context, repo *git.Repository, cachePath, commit, repoURL string, opts GitOptions) ([]gittree.LFSPointer, gitlfs.Result, error) {
 	marker := filepath.Join(cachePath, git.GitDirName, lfsFilledMarker)
 	_, markerErr := os.Lstat(marker)
@@ -101,10 +103,7 @@ func checkoutLFS(ctx context.Context, repo *git.Repository, cachePath, commit, r
 		return nil, gitlfs.Result{}, err
 	}
 	if !opts.LFS {
-		if err := restorePointers(cachePath, tree, pointers, pointerPaths(pointers)); err != nil {
-			return nil, gitlfs.Result{}, err
-		}
-		return nil, gitlfs.Result{}, os.Remove(marker)
+		return nil, gitlfs.Result{}, restorePointers(cachePath, tree, pointers, pointerPaths(pointers))
 	}
 	if len(pointers) == 0 {
 		return pointers, gitlfs.Result{}, nil
