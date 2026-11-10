@@ -531,7 +531,9 @@ rules, and the changed files of the diff include a path under
 `drySource.path`. The changed files come from `request.changedPaths`, from
 `gitRefChangedPaths`, or from `change.Detect` for a path diff, without the
 changed-only globs. When they are unknown, the warning stays. Build, test,
-get, and diag never give it.
+get, and diag never give it. Changed-only selection owns the local dry path
+too (`hydratorDrySelectionPaths` in `internal/app/select_kustomize.go`), so
+a dry-only change selects the Application as the full diff reports it.
 
 drydock has no info severity and no diagnostic list that only `diag` shows.
 Every diagnostic is a warning or an error. `diag` reports the diagnostics of

@@ -402,3 +402,84 @@ func TestDiffChangedFilesComparesTreesForAPathDiff(t *testing.T) {
 		t.Fatalf("diffChangedFiles() = %#v, want only dry/cm.yaml", files)
 	}
 }
+
+// writeDiffDryOwnerApp writes an Application whose own source is the dry
+// path of the hydrator Application, so it owns that path in changed-only
+// selection.
+func writeDiffDryOwnerApp(t *testing.T, root string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "owner.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: owner
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+selfRepoSpecURL+`
+    targetRevision: HEAD
+    path: dry
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: owner
+`)
+}
+
+// TestDiffRefChangedOnlySelectsHydratorOnADryOnlyChange pins changed-only
+// selection for a change under the local dry source path only. The
+// hydrator Application owns that path (hydratorDrySelectionPaths), so it is
+// selected and warns as in the full diff, also when another Application
+// owns the same path. The change is never unowned, so changed-only does not
+// fall back to rendering every Application, and --strict-changed-only
+// passes.
+func TestDiffRefChangedOnlySelectsHydratorOnADryOnlyChange(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		owner  bool
+		strict bool
+	}{
+		{name: "no other owner"},
+		{name: "no other owner strict", strict: true},
+		{name: "another owner", owner: true},
+		{name: "another owner strict", owner: true, strict: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root, fixture := initSelfRepoDiffGitRepo(t, selfRepoRemoteURL)
+			writeDiffHydratorApp(t, root)
+			if tt.owner {
+				writeDiffDryOwnerApp(t, root)
+			}
+			writeDiffHydratedConfigMap(t, root, "same")
+			writeTestFile(t, filepath.Join(root, "dry", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry\ndata:\n  value: old\n")
+			commitDiffGitRepo(t, fixture.repo, fixture.wt, "baseline")
+			checkoutDiffGitBranch(t, fixture.wt, "feature")
+			writeTestFile(t, filepath.Join(root, "dry", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry\ndata:\n  value: new\n")
+			commitDiffGitRepo(t, fixture.repo, fixture.wt, "feature dry")
+
+			result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+				Repo:              root,
+				RefOrig:           "master",
+				Ref:               "feature",
+				Unified:           3,
+				Parallelism:       1,
+				ChangedOnly:       true,
+				StrictChangedOnly: tt.strict,
+				Offline:           true,
+			})
+			if err != nil {
+				t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
+			}
+			if !hasDiagnosticCode(result.Diagnostics, sourceHydratorCode) {
+				t.Fatalf("Diagnostics = %#v, want %s", result.Diagnostics, sourceHydratorCode)
+			}
+			if hasDiagnosticMessage(result.Diagnostics, "changed-only could not map") {
+				t.Fatalf("Diagnostics = %#v, want the dry path owned", result.Diagnostics)
+			}
+			if tt.owner {
+				assertSingleDiffContains(t, result, "-  value: old", "+  value: new")
+			} else if len(result.Results) != 0 {
+				t.Fatalf("Results = %#v, want no diff", result.Results)
+			}
+		})
+	}
+}

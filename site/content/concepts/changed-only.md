@@ -209,6 +209,15 @@ so a change to the target of the symlink selects it. The same holds for the Kust
 file adds: drydock reads every source with its override files merged in, as the
 render does.
 
+An Application with `spec.sourceHydrator` owns its sync path only when the
+render reads the sync branch from the local tree. It also owns
+`drySource.path` when the dry source is the local repository, by the same
+self-repository and `--repo-map` rules. The render never reads the dry source,
+but a diff that changes a file there warns `source.hydrator-sync-source`. So a
+change only under the dry path selects the Application, also when another
+Application owns the same path. Such a change is not unowned, and
+`--strict-changed-only` passes. A dry path of `.` owns every path.
+
 An Application's `argocd.argoproj.io/manifest-generate-paths` annotation adds
 ownership that drydock cannot infer, such as the files an exec or container
 plugin reads. Entries use Argo CD's syntax and never own the repository root.

@@ -170,7 +170,10 @@ Supported:
     `--repo-map` to a directory that is no Git repository fails, because
     drydock cannot read the branch from it.
   - Changed-only selection owns the sync path only when the render reads
-    the tree under analysis, in the first case.
+    the tree under analysis, in the first case. It also owns
+    `drySource.path` when the dry source is the repository under analysis,
+    so a change only there selects the Application and gives the warning
+    below, as a full diff does.
   - Any other sync source comes from the Git cache or a fetch, and
     `--offline` fails on a cache miss.
 
