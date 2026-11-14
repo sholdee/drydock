@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.3](https://github.com/sholdee/drydock/compare/v0.4.2...v0.4.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/crypto to v0.59.0 ([#536](https://github.com/sholdee/drydock/issues/536)) ([d2e37b7](https://github.com/sholdee/drydock/commit/d2e37b75301511c0b0058e9959d20b630f68c010))
+* **deps:** update module golang.org/x/term to v0.48.0 ([#531](https://github.com/sholdee/drydock/issues/531)) ([1b0cde2](https://github.com/sholdee/drydock/commit/1b0cde2755b9db802344b911739ade23ac288d99))
+* **deps:** update module golang.org/x/text to v0.44.0 ([#532](https://github.com/sholdee/drydock/issues/532)) ([3b756e2](https://github.com/sholdee/drydock/commit/3b756e29f86792f2f5be4b3a690e4eb4fb32d8af))
+
+
+### Miscellaneous Chores
+
+* **deps:** pin kustomize, helm and their flag parsers to the Argo CD image ([#526](https://github.com/sholdee/drydock/issues/526)) ([6c60279](https://github.com/sholdee/drydock/commit/6c6027951fa2a4203e6ee3d312dce6f3faace4d4))
+* **deps:** update dependency go to v1.27.4 ([#534](https://github.com/sholdee/drydock/issues/534)) ([29cb43d](https://github.com/sholdee/drydock/commit/29cb43d00b09c908d5e1ad8ed9fc372599181db4))
+
 ## [0.4.2](https://github.com/sholdee/drydock/compare/v0.4.1...v0.4.2) (2026-11-10)
 
 
