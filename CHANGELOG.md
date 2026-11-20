@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.3](https://github.com/sholdee/drydock/compare/v0.4.2...v0.4.3) (2026-11-19)
+
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/crypto to v0.59.0 ([#536](https://github.com/sholdee/drydock/issues/536)) ([d2e37b7](https://github.com/sholdee/drydock/commit/d2e37b75301511c0b0058e9959d20b630f68c010))
+* **deps:** update module golang.org/x/term to v0.48.0 ([#531](https://github.com/sholdee/drydock/issues/531)) ([1b0cde2](https://github.com/sholdee/drydock/commit/1b0cde2755b9db802344b911739ade23ac288d99))
+* **deps:** update module golang.org/x/text to v0.44.0 ([#532](https://github.com/sholdee/drydock/issues/532)) ([3b756e2](https://github.com/sholdee/drydock/commit/3b756e29f86792f2f5be4b3a690e4eb4fb32d8af))
+
+
+### Miscellaneous Chores
+
+* **deps:** pin kustomize, helm and their flag parsers to the Argo CD image ([#526](https://github.com/sholdee/drydock/issues/526)) ([6c60279](https://github.com/sholdee/drydock/commit/6c6027951fa2a4203e6ee3d312dce6f3faace4d4))
+* **deps:** update dependency go to v1.27.4 ([#534](https://github.com/sholdee/drydock/issues/534)) ([29cb43d](https://github.com/sholdee/drydock/commit/29cb43d00b09c908d5e1ad8ed9fc372599181db4))
+* **deps:** update dependency hugo to v0.170.0 ([#539](https://github.com/sholdee/drydock/issues/539)) ([ce72cc4](https://github.com/sholdee/drydock/commit/ce72cc454bc503260da1c10abcf2722a63946f92))
+* **deps:** update dependency shinagawa-web/gomarklint to v3.3.3 ([#540](https://github.com/sholdee/drydock/issues/540)) ([c033e57](https://github.com/sholdee/drydock/commit/c033e57be20774f1d0e855789f799efd697a64fa))
+* **deps:** update docker/dockerfile docker tag to v1.29 ([#537](https://github.com/sholdee/drydock/issues/537)) ([ed0ed2f](https://github.com/sholdee/drydock/commit/ed0ed2ff69d71a36662b1a472f4460734200537e))
+* **deps:** update go module directive to v1.27.4 ([#533](https://github.com/sholdee/drydock/issues/533)) ([7476740](https://github.com/sholdee/drydock/commit/7476740ce44bcf72d47a63bb91e79a5c230dc94f))
+* **deps:** update golang docker tag to v1.27.4 ([#538](https://github.com/sholdee/drydock/issues/538)) ([66e55b5](https://github.com/sholdee/drydock/commit/66e55b5897d5a075e9968df7cc36574699065316))
+* **deps:** update golang:1.27.4 docker digest to 205c763 ([#542](https://github.com/sholdee/drydock/issues/542)) ([c3bb7c2](https://github.com/sholdee/drydock/commit/c3bb7c212f981d1fb8a7365c2b4c0e2a6459ec00))
+
 ## [0.4.2](https://github.com/sholdee/drydock/compare/v0.4.1...v0.4.2) (2026-11-10)
 
 
