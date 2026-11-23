@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.4](https://github.com/sholdee/drydock/compare/v0.4.3...v0.4.4) (2026-11-23)
+
+
+### Bug Fixes
+
+* align drydock with Argo CD v3.6.2 ([#549](https://github.com/sholdee/drydock/issues/549)) ([db25eea](https://github.com/sholdee/drydock/commit/db25eeab02703f07cf5145009cf8369139933abc))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency hugo to v0.170.1 ([#545](https://github.com/sholdee/drydock/issues/545)) ([a5e3e2f](https://github.com/sholdee/drydock/commit/a5e3e2f83fbf4988ba0cd676a41f31abeb8d24aa))
+* **deps:** update dependency oras to v1.4.0 ([#543](https://github.com/sholdee/drydock/issues/543)) ([2076cd7](https://github.com/sholdee/drydock/commit/2076cd75473f4dc921eb189bfa8f1b1f99960c01))
+* **deps:** update module golang.org/x/net to v0.63.0 ([#546](https://github.com/sholdee/drydock/issues/546)) ([4cbb565](https://github.com/sholdee/drydock/commit/4cbb5657f6044a3b0e00d94f3d734120d5ed5c71))
+
 ## [0.4.3](https://github.com/sholdee/drydock/compare/v0.4.2...v0.4.3) (2026-11-19)
 
 
