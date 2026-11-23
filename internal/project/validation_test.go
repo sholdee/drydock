@@ -234,15 +234,15 @@ func TestValidateApplicationsResolvesDestinationNameToDiscoveredClusterSecretSer
 	assertNoDiagnostic(t, diags, "destination is not permitted")
 }
 
-// A name deny entry with a wildcard server never denies in Argo CD: every
-// resolved cluster has a server, so the entry matches by server first
-// (isDestinationMatched). An unresolved name-only destination is therefore
-// permitted rather than denied.
-func TestValidateApplicationsNameDenyWithWildcardServerMatchesByServer(t *testing.T) {
+// v3.6.2 (4eb468d28): a name deny entry that matches the cluster name denies
+// even when the entry's server also matches (isDestinationMatched). Every
+// cluster named prod is denied, so an unresolved name-only destination is
+// denied rather than deferred.
+func TestValidateApplicationsNameDenyWithWildcardServerDenies(t *testing.T) {
 	diags := ValidateApplications([]argoappv1.Application{nameOnlyApplication("prod", "workloads")}, []argoappv1.AppProject{
 		destinationProject(argoappv1.ApplicationDestination{Name: "!prod", Server: "*", Namespace: "*"}),
 	}, config.DefaultSettings())
-	assertNoDiagnostic(t, diags, "destination is not permitted")
+	assertDiagnostic(t, diags, "destination is not permitted")
 	assertNoDiagnostic(t, diags, "destination name")
 }
 

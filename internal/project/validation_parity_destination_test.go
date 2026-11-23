@@ -258,8 +258,11 @@ func TestValidateApplicationsDestinationParityWithArgoCD(t *testing.T) {
 			},
 			expectDeferred: true,
 		},
+		// Upstream 4eb468d28 (#30884, v3.6.2) regression cases: a name or
+		// server deny entry denies even when the entry's other identifier
+		// matches the cluster.
 		{
-			name: "name deny entry with wildcard server matches by server",
+			name: "name deny entry denies although its wildcard server matches",
 			destinations: []argoappv1.ApplicationDestination{
 				{Name: "!prod", Server: "*", Namespace: "*"},
 			},
@@ -269,7 +272,7 @@ func TestValidateApplicationsDestinationParityWithArgoCD(t *testing.T) {
 			},
 		},
 		{
-			name: "name deny entry with specific server defers an unresolved name",
+			name: "name deny entry with specific server denies an unresolved name",
 			destinations: []argoappv1.ApplicationDestination{
 				{Server: "*", Namespace: "*"},
 				{Name: "!prod", Server: "https://a.example", Namespace: "*"},
@@ -278,6 +281,41 @@ func TestValidateApplicationsDestinationParityWithArgoCD(t *testing.T) {
 			live: [][]destinationParityCluster{
 				{{Name: "prod", Server: "https://a.example"}},
 				{{Name: "prod", Server: "https://b.example"}},
+			},
+		},
+		{
+			name: "name deny entry denies although its server matches",
+			destinations: []argoappv1.ApplicationDestination{
+				{Name: "!bad", Server: "https://api.example", Namespace: "*"},
+			},
+			appDestination: argoappv1.ApplicationDestination{Server: "https://api.example", Namespace: "workloads"},
+			clusters:       []destinationParityCluster{{Name: "bad", Server: "https://api.example"}},
+		},
+		{
+			name: "server deny entry denies although its name matches",
+			destinations: []argoappv1.ApplicationDestination{
+				{Name: "good", Server: "!https://api.example", Namespace: "*"},
+			},
+			appDestination: argoappv1.ApplicationDestination{Name: "good", Namespace: "workloads"},
+			clusters:       []destinationParityCluster{{Name: "good", Server: "https://api.example"}},
+		},
+		{
+			name: "name deny entry for another cluster does not deny",
+			destinations: []argoappv1.ApplicationDestination{
+				{Name: "!other", Server: "https://api.example", Namespace: "*"},
+			},
+			appDestination: argoappv1.ApplicationDestination{Server: "https://api.example", Namespace: "workloads"},
+			clusters:       []destinationParityCluster{{Name: "good", Server: "https://api.example"}},
+		},
+		{
+			name: "name deny entry with matching server defers an unresolved server",
+			destinations: []argoappv1.ApplicationDestination{
+				{Name: "!bad", Server: "https://api.example", Namespace: "*"},
+			},
+			appDestination: argoappv1.ApplicationDestination{Server: "https://api.example", Namespace: "workloads"},
+			live: [][]destinationParityCluster{
+				{{Name: "bad", Server: "https://api.example"}},
+				{{Name: "good", Server: "https://api.example"}},
 			},
 			expectDeferred: true,
 		},
