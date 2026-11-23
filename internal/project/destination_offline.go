@@ -38,7 +38,9 @@ func (t tristate) not() tristate { return tristateTrue - t }
 // discovered cluster Secret describes: a name-only destination, whose server
 // is unknown, or a server-only destination, whose cluster name is unknown.
 // An empty field is unknown. Argo CD itself always evaluates a resolved
-// cluster, which carries a non-empty name and server.
+// cluster, which carries a server. drydock assumes that it carries a name
+// too: a definite permit can be wrong for a cluster Secret with no name
+// field. A definite denial holds for such a cluster as well.
 type offlineDestination struct {
 	name   string
 	server string
@@ -83,17 +85,24 @@ func offlineDestinationPermitted(proj argoappv1.AppProject, dest offlineDestinat
 
 		matched := serverMatched.or(nameMatched).and(namespaceMatched)
 		// v3.6.1 (d9e7e38c6): a name or server deny pattern denies only
-		// when the entry's namespace also matches. v3.6.2 (4eb468d28): it
-		// then denies even when the entry's other identifier matches. A
-		// resolved cluster has a name and a server, so a deny pattern
-		// matches its value exactly when the negated glob does not.
-		nameOrServerDenied := nameMatched.not().and(tristateOf(isDestinationDenyPattern(item.Name))).
-			or(serverMatched.not().and(tristateOf(isDestinationDenyPattern(item.Server)))).
-			and(namespaceMatched)
+		// when the entry's namespace also matches.
+		nameDenied := nameMatched.not().and(tristateOf(isDestinationDenyPattern(item.Name)))
+		serverDenied := serverMatched.not().and(tristateOf(isDestinationDenyPattern(item.Server)))
 		namespaceDenied := namespaceMatched.not().and(tristateOf(isDestinationDenyPattern(item.Namespace))).and(serverMatched)
+		// v3.6.2 (4eb468d28): a deny pattern that matches the cluster name
+		// or server denies even when the entry's other identifier matches.
+		// The name veto needs a cluster name, and a cluster Secret can have
+		// none (util/db SecretToCluster), so it is never definite for an
+		// unknown name.
+		nameVetoed := nameDenied
+		if dest.name == "" {
+			nameVetoed = nameVetoed.and(tristateUnknown)
+		}
+		vetoed := nameVetoed.or(serverDenied).and(namespaceMatched)
+		unmatchedDenied := nameDenied.or(serverDenied).and(namespaceMatched).or(namespaceDenied)
 
 		anyMatched = anyMatched.or(matched)
-		denied = denied.or(nameOrServerDenied).or(matched.not().and(namespaceDenied))
+		denied = denied.or(vetoed).or(matched.not().and(unmatchedDenied))
 	}
 	return denied.not().and(anyMatched.or(tristateUnknown))
 }

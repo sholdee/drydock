@@ -308,6 +308,18 @@ func TestValidateApplicationsDestinationParityWithArgoCD(t *testing.T) {
 			clusters:       []destinationParityCluster{{Name: "good", Server: "https://api.example"}},
 		},
 		{
+			name: "name deny wildcard with matching server defers an unresolved server",
+			destinations: []argoappv1.ApplicationDestination{
+				{Name: "!*", Server: "*", Namespace: "*"},
+			},
+			appDestination: argoappv1.ApplicationDestination{Server: "https://api.example", Namespace: "workloads"},
+			live: [][]destinationParityCluster{
+				{{Name: "prod", Server: "https://api.example"}},
+				{{Server: "https://api.example"}},
+			},
+			expectDeferred: true,
+		},
+		{
 			name: "name deny entry with matching server defers an unresolved server",
 			destinations: []argoappv1.ApplicationDestination{
 				{Name: "!bad", Server: "https://api.example", Namespace: "*"},
