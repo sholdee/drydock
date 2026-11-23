@@ -962,15 +962,13 @@ resources:
 	}
 }
 
-// TestPersistentCacheKustomizeDroppedComponentKustomizationChangeInvalidates
-// pins the render cache key for components that ignoreMissingComponents
-// drops after the first valid one (Argo CD v3.6.1
-// util/kustomize/kustomize.go:366). drydock does not read them, but their
-// kustomization file names decide the dropped-component warning. Changing
-// the bytes of a dropped component's kustomization file, or creating one in
-// a later directory, must rotate the key. A dropped component with invalid
-// YAML must not stop the entry from persisting.
-func TestPersistentCacheKustomizeDroppedComponentKustomizationChangeInvalidates(t *testing.T) {
+// TestPersistentCacheKustomizeLaterComponentChangeInvalidates pins the render
+// cache key for components listed after the first valid one under
+// ignoreMissingComponents. Argo CD v3.6.2 adds every valid component
+// (util/kustomize/kustomize.go:355-372), so the render reads each of them.
+// Changing a file of the second valid component, or creating a kustomization
+// file in a later skipped directory, must rotate the key.
+func TestPersistentCacheKustomizeLaterComponentChangeInvalidates(t *testing.T) {
 	root := t.TempDir()
 	writePersistentCachePlainKustomizeApp(t, root, "alpha")
 	writePersistentCachePlainKustomizeApp(t, root, "beta")
@@ -991,20 +989,20 @@ spec:
         - ../components/first
         - ../components/second
         - ../components/pending
-        - ../components/broken
   destination:
     name: in-cluster
     namespace: default
 `)
 	componentKustomization := "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n"
+	componentConfigMap := func(name, value string) string {
+		return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: component-" + name + "\ndata:\n  value: " + value + "\n"
+	}
 	for _, name := range []string{"first", "second", "pending"} {
-		writeTestFile(t, filepath.Join(root, "manifests", "components", name, "cm.yaml"),
-			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: component-"+name+"\n")
+		writeTestFile(t, filepath.Join(root, "manifests", "components", name, "cm.yaml"), componentConfigMap(name, "one"))
 	}
 	for _, name := range []string{"first", "second"} {
 		writeTestFile(t, filepath.Join(root, "manifests", "components", name, "kustomization.yaml"), componentKustomization)
 	}
-	writeTestFile(t, filepath.Join(root, "manifests", "components", "broken", "kustomization.yaml"), "}{ not: [valid\n")
 	gitCommitAll(t, root, "initial")
 	cacheDir := t.TempDir()
 	request := persistentBuildRequest(root, cacheDir)
@@ -1026,23 +1024,31 @@ spec:
 	}
 
 	cold, _ := build("cold")
-	if _, ok := manifestByName(cold.Manifests, "component-second"); ok {
-		t.Fatalf("cold Manifests include the dropped component-second")
+	if _, ok := manifestByName(cold.Manifests, "component-second"); !ok {
+		t.Fatalf("cold Manifests lack component-second, want every valid component")
 	}
-	if message := ignoreMissingComponentsDroppedMessage(t, cold); strings.Contains(message, "pending") {
-		t.Fatalf("cold warning %q names pending, which has no kustomization file", message)
+	if _, ok := manifestByName(cold.Manifests, "component-pending"); ok {
+		t.Fatalf("cold Manifests include component-pending, which has no kustomization file")
 	}
 	if got := countRenderCacheEntries(t, cacheDir); got != 2 {
-		t.Fatalf("entries after cold run = %d, want 2 (alpha with a broken dropped component persists)", got)
+		t.Fatalf("entries after cold run = %d, want 2", got)
 	}
 	if _, alpha := build("warm"); alpha != 0 {
 		t.Fatalf("warm alpha renders = %d, want 0", alpha)
 	}
 
-	writeTestFile(t, filepath.Join(root, "manifests", "components", "second", "kustomization.yaml"), "# changed\n"+componentKustomization)
-	gitCommitAll(t, root, "change a dropped component's kustomization file")
-	if _, alpha := build("after change"); alpha != 1 {
-		t.Fatalf("alpha renders after a dropped component's kustomization file changed = %d, want 1", alpha)
+	writeTestFile(t, filepath.Join(root, "manifests", "components", "second", "cm.yaml"), componentConfigMap("second", "two"))
+	gitCommitAll(t, root, "change a file of the second valid component")
+	changed, alpha := build("after change")
+	if alpha != 1 {
+		t.Fatalf("alpha renders after a file of the second valid component changed = %d, want 1", alpha)
+	}
+	second, ok := manifestByName(changed.Manifests, "component-second")
+	if !ok {
+		t.Fatalf("Manifests after change lack component-second")
+	}
+	if data, _ := second.Object.Object["data"].(map[string]any); data["value"] != "two" {
+		t.Fatalf("component-second data after change = %#v, want value two", data)
 	}
 
 	writeTestFile(t, filepath.Join(root, "manifests", "components", "pending", "kustomization.yaml"), componentKustomization)
@@ -1051,20 +1057,9 @@ spec:
 	if alpha != 1 {
 		t.Fatalf("alpha renders after a later kustomization file was created = %d, want 1", alpha)
 	}
-	if message := ignoreMissingComponentsDroppedMessage(t, created); !strings.Contains(message, `"../components/pending"`) {
-		t.Fatalf("warning after create %q, want it to name ../components/pending", message)
+	if _, ok := manifestByName(created.Manifests, "component-pending"); !ok {
+		t.Fatalf("Manifests after create lack component-pending")
 	}
-}
-
-func ignoreMissingComponentsDroppedMessage(t *testing.T, result BuildResult) string {
-	t.Helper()
-	for _, diag := range result.Diagnostics {
-		if diag.Code == render.KustomizeIgnoreMissingComponentsDroppedCode {
-			return diag.Message
-		}
-	}
-	t.Fatalf("Diagnostics = %#v, want %s", result.Diagnostics, render.KustomizeIgnoreMissingComponentsDroppedCode)
-	return ""
 }
 
 func TestPersistentCacheKustomizeHelmValuesAndLocalChartInvalidate(t *testing.T) {

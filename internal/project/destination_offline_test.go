@@ -87,3 +87,38 @@ func assertOfflineVerdictsSound(t *testing.T, destinations []argoappv1.Applicati
 	}
 	return definite
 }
+
+// TestOfflineDestinationDenialHoldsForUnnamedCluster checks every definite
+// offline denial of a server-only destination against a cluster with no
+// name. A cluster Secret can lack the name field (util/db SecretToCluster),
+// and the v3.6.2 name veto of isDestinationMatched needs a cluster name.
+func TestOfflineDestinationDenialHoldsForUnnamedCluster(t *testing.T) {
+	patterns := []string{"", "*", "!*", "a", "!a"}
+	denials := 0
+	for _, name := range patterns {
+		for _, server := range patterns {
+			for _, entryNamespace := range []string{"*", "x", "!x"} {
+				proj := argoappv1.AppProject{Spec: argoappv1.AppProjectSpec{Destinations: []argoappv1.ApplicationDestination{
+					{Server: "*", Namespace: "*"},
+					{Name: name, Server: server, Namespace: entryNamespace},
+				}}}
+				for _, namespace := range []string{"x", "y"} {
+					if offlineDestinationPermitted(proj, offlineDestination{server: "a"}, namespace) != tristateFalse {
+						continue
+					}
+					denials++
+					permitted, err := proj.IsDestinationPermitted(&argoappv1.Cluster{Server: "a"}, namespace, nil)
+					if err != nil {
+						t.Fatalf("IsDestinationPermitted() error = %v", err)
+					}
+					if permitted {
+						t.Fatalf("entry %#v namespace %q: offline denial, but Argo CD permits the cluster with no name", proj.Spec.Destinations[1], namespace)
+					}
+				}
+			}
+		}
+	}
+	if denials == 0 {
+		t.Fatal("no definite offline denials were checked")
+	}
+}

@@ -387,13 +387,11 @@ func referencedKustomizeWorkspacePaths(dir string, kustomization types.Kustomiza
 // sourceKustomizeWorkspaceAdditions returns the graph of the
 // spec.source.kustomize components rendering adds, the local component
 // directories and patch files they read, and optional render inputs that are
-// not copied into the workspace. Under ignoreMissingComponents only the
-// first valid component is added (see sourceKustomizeComponents). The
-// optional inputs are then the in-repository directories of the components
-// skipped before it (a kustomization file appearing there changes the
-// render) and the kustomization file names of each component after it (they
-// decide the dropped-component warning). A component after the first valid
-// one is never walked, checked or copied, as the repo-server never reads it.
+// not copied into the workspace. Under ignoreMissingComponents every valid
+// component is added (see sourceKustomizeComponents). The optional inputs
+// are then the in-repository directories of the skipped components (a
+// kustomization file appearing there changes the render) and the
+// kustomization file names of each kept component.
 func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot string, opts RenderOptions) ([]kustomizeGraphNode, []string, []string, error) {
 	if opts.Kustomize == nil {
 		return nil, nil, nil, nil
@@ -445,12 +443,12 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 // sourceKustomizeAddedComponents returns the spec.source.kustomize
 // components that rendering adds and the optional render inputs that decide
 // them. Under ignoreMissingComponents the optional inputs are the
-// in-repository directories skipped before the first valid component, the
-// kustomization file names of the kept component, which decide that it is
-// kept, and the kustomization file names of each component after it. The
-// kept folder itself is not always a glob match, for example when its name
-// holds glob characters, so its own files are inputs. The components
-// then go through the globs of `kustomize edit add component`
+// in-repository directory of each skipped component and the kustomization
+// file names of each kept component, which decide that it is kept. A
+// skipped component inside .git is an optional input that the digest
+// refuses. A kept folder itself is not always a glob match, for example
+// when its name holds glob characters, so its own files are inputs. The
+// components then go through the globs of `kustomize edit add component`
 // (sourceKustomizeComponentMatches).
 //
 // The directories that the globs list are not inputs. Each match is a
@@ -470,13 +468,20 @@ func sourceKustomizeAddedComponents(repoRoot, sourceRoot string, kustomize *argo
 		}
 		for _, skipped := range selection.skipped {
 			optionalRefs = appendNonEmpty(optionalRefs, skipped.probe)
+			if skipped.probe == "" && skipped.rel != "" {
+				// The check looked inside .git, where the digest cannot
+				// record a path. KustomizeInputDigestPaths fails on this
+				// ref, so the source renders without the persistent cache.
+				optionalRefs = append(optionalRefs, filepath.Join(filepath.Clean(repoRoot), skipped.rel))
+			}
 		}
-		optionalRefs = append(optionalRefs, laterIgnoreMissingComponentInputs(sourceRoot, repoRoot, selection.later)...)
-		if !selection.found {
+		for _, keptRel := range selection.keptRels {
+			optionalRefs = append(optionalRefs, keptIgnoreMissingComponentInputs(repoRoot, keptRel)...)
+		}
+		if len(selection.kept) == 0 {
 			return nil, optionalRefs, nil
 		}
-		optionalRefs = append(optionalRefs, keptIgnoreMissingComponentInputs(repoRoot, selection.keptRel)...)
-		components = []string{selection.kept}
+		components = selection.kept
 	}
 	matches, _, err := sourceKustomizeComponentMatches(repoRoot, sourceRoot, components)
 	if err != nil {
@@ -542,7 +547,7 @@ func expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot string, patt
 }
 
 // keptIgnoreMissingComponentInputs returns the kustomization file names in
-// the kept ignoreMissingComponents folder, keptRel under repoRoot.
+// a kept ignoreMissingComponents folder, keptRel under repoRoot.
 func keptIgnoreMissingComponentInputs(repoRoot, keptRel string) []string {
 	if keptRel == "" || pathsafety.RelEntersGit(keptRel) {
 		return nil

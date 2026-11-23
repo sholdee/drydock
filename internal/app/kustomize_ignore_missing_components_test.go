@@ -4,9 +4,6 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-
-	"github.com/sholdee/drydock/internal/diagnostic"
-	"github.com/sholdee/drydock/internal/render"
 )
 
 func writeIgnoreMissingComponentsApplication(t *testing.T, root string) {
@@ -42,47 +39,32 @@ spec:
 	}
 }
 
-// TestOrchestratorBuildIgnoreMissingComponentsDropsLaterValidComponents pins
-// Argo CD v3.6.1 (util/kustomize/kustomize.go:346-372): with
-// ignoreMissingComponents only the first valid component is added. drydock
-// warns about the dropped component-second, and --strict promotes that
-// warning to an error, because the render lacks resources the components
-// list names.
-func TestOrchestratorBuildIgnoreMissingComponentsDropsLaterValidComponents(t *testing.T) {
+// TestOrchestratorBuildIgnoreMissingComponentsAddsEveryValidComponent pins
+// Argo CD v3.6.2 (util/kustomize/kustomize.go:355-372): with
+// ignoreMissingComponents every valid component is added. Argo CD v3.6.1
+// added only the first one, and drydock then warned about component-second.
+// No resource is missing now, so there is no warning and --strict passes.
+func TestOrchestratorBuildIgnoreMissingComponentsAddsEveryValidComponent(t *testing.T) {
 	root := t.TempDir()
 	writeIgnoreMissingComponentsApplication(t, root)
 
-	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	if _, ok := manifestByName(result.Manifests, "component-first"); !ok {
-		t.Errorf("Manifests missing the first valid component")
-	}
-	if _, ok := manifestByName(result.Manifests, "component-second"); ok {
-		t.Errorf("Manifests include component-second, want it dropped as Argo CD v3.6.1 does")
-	}
-	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
-		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
-	})
-	assertDiagnosticSeverity(t, result.Diagnostics, render.KustomizeIgnoreMissingComponentsDroppedCode, diagnostic.SeverityWarning)
-
-	result, err = (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, Strict: true})
-	if err == nil {
-		t.Fatalf("strict Build() error = nil, want the %s warning promoted to an error", render.KustomizeIgnoreMissingComponentsDroppedCode)
-	}
-	assertDiagnosticSeverity(t, result.Diagnostics, render.KustomizeIgnoreMissingComponentsDroppedCode, diagnostic.SeverityError)
-}
-
-func assertDiagnosticSeverity(t *testing.T, diags []diagnostic.Diagnostic, code string, severity diagnostic.Severity) {
-	t.Helper()
-	for _, diag := range diags {
-		if diag.Code == code {
-			if diag.Severity != severity {
-				t.Fatalf("diagnostic = %#v, want severity %s", diag, severity)
+	for _, strict := range []bool{false, true} {
+		result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, Strict: strict})
+		if err != nil {
+			t.Fatalf("Build() strict=%t error = %v", strict, err)
+		}
+		for _, name := range []string{"component-first", "component-second"} {
+			if _, ok := manifestByName(result.Manifests, name); !ok {
+				t.Errorf("strict=%t Manifests missing %s", strict, name)
 			}
-			return
+		}
+		assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+			{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
+		})
+		for _, diag := range result.Diagnostics {
+			if diag.Category == "kustomize" {
+				t.Errorf("strict=%t Diagnostics hold %#v, want no kustomize diagnostic", strict, diag)
+			}
 		}
 	}
-	t.Fatalf("Diagnostics = %#v, want %s", diags, code)
 }

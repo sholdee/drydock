@@ -39,16 +39,13 @@ type kustomizeWorkspace struct {
 	// rewrittenEntries maps the generated files that stand for generators:
 	// and transformers: entries to the entries.
 	rewrittenEntries map[string]string
-	// sourceOptionDiagnostics holds the warnings from merging the
-	// spec.source.kustomize options into the source kustomization.
-	sourceOptionDiagnostics []diagnostic.Diagnostic
 }
 
 // diagnostics surfaces warnings accumulated while preparing the workspace:
-// the source option warnings, then one ksops-compat substitution warning per
-// source, mirroring the avp-compat-substituted pattern.
+// one ksops-compat substitution warning per source, mirroring the
+// avp-compat-substituted pattern.
 func (w *kustomizeWorkspace) diagnostics() []diagnostic.Diagnostic {
-	diags := append([]diagnostic.Diagnostic(nil), w.sourceOptionDiagnostics...)
+	var diags []diagnostic.Diagnostic
 	if w.ksopsSubstitutedFiles != 0 {
 		diags = append(diags, ksopsCompatDiagnostic(w.ksopsSubstitutedFiles))
 	}
@@ -140,11 +137,9 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		if err != nil {
 			return err
 		}
-		diags, err := applySourceKustomizeOptions(&kustomization, kustomizationFile, content, originDir, w.originalRepoRoot, w.opts)
-		if err != nil {
+		if err := applySourceKustomizeOptions(&kustomization, kustomizationFile, content, originDir, w.originalRepoRoot, w.opts); err != nil {
 			return fmt.Errorf("%s: %w", manifestPath, err)
 		}
-		w.sourceOptionDiagnostics = append(w.sourceOptionDiagnostics, diags...)
 	}
 
 	graphIndex := w.nextGraphIndex

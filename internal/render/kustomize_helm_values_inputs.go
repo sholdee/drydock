@@ -83,7 +83,7 @@ func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kusto
 // sourceKustomizeComponentNodes returns the graph of the
 // spec.source.kustomize components that the render adds to the source
 // kustomization (sourceKustomizeWorkspaceAdditions): every component, or
-// under ignoreMissingComponents only the first valid one. Their helmCharts
+// under ignoreMissingComponents every valid one. Their helmCharts
 // entries render with the source, so their values files and chart names
 // count too. When the components cannot be read, the render fails too, and
 // this returns nothing.

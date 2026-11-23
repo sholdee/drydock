@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/gitref"
 )
 
@@ -58,11 +57,9 @@ func renderIgnoreMissingComponents(t *testing.T, root string, ignoreMissing bool
 }
 
 // TestKustomizeRendererIgnoreMissingComponentsRequiresKustomizationFile pins
-// Argo CD v3.6.1 (util/kustomize/kustomize.go:357-368): under
+// Argo CD v3.6.2 (util/kustomize/kustomize.go:357-368): under
 // ignoreMissingComponents a component directory is kept only when it holds a
-// regular kustomization.yaml, kustomization.yml or Kustomization. Each case
-// lists the invalid components first, because the repo-server stops at the
-// first valid one.
+// regular kustomization.yaml, kustomization.yml or Kustomization.
 func TestKustomizeRendererIgnoreMissingComponentsRequiresKustomizationFile(t *testing.T) {
 	root := t.TempDir()
 	writeIgnoreMissingComponentsRepo(t, root, "valid")
@@ -79,15 +76,14 @@ func TestKustomizeRendererIgnoreMissingComponentsRequiresKustomizationFile(t *te
 		t.Fatal(err)
 	}
 
-	invalid := []string{"../components/plain", "./local-plain", "../components/missing", "../components/dirfile"}
-	for _, name := range []string{"valid", "yml", "bare"} {
-		names, err := renderIgnoreMissingComponents(t, root, true, append(append([]string(nil), invalid...), "../components/"+name)...)
-		if err != nil {
-			t.Fatalf("Render() with component %q error = %v", name, err)
-		}
-		if want := []string{"component-" + name, "demo"}; !reflect.DeepEqual(names, want) {
-			t.Fatalf("rendered names with component %q = %#v, want %#v", name, names, want)
-		}
+	names, err := renderIgnoreMissingComponents(t, root, true,
+		"../components/plain", "../components/valid", "./local-plain", "../components/yml",
+		"../components/missing", "../components/bare", "../components/dirfile")
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if want := []string{"component-bare", "component-valid", "component-yml", "demo"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("rendered names = %#v, want %#v", names, want)
 	}
 
 	if _, err := renderIgnoreMissingComponents(t, root, false, "../components/plain"); err == nil {
@@ -95,135 +91,76 @@ func TestKustomizeRendererIgnoreMissingComponentsRequiresKustomizationFile(t *te
 	}
 }
 
-// TestKustomizeRendererIgnoreMissingComponentsStopsAtFirstValidComponent pins
-// Argo CD v3.6.1 (util/kustomize/kustomize.go:346-372): with
-// ignoreMissingComponents the repo-server leaves its component loop with
-// `break component` after the first valid component, so it adds only
-// component-a here and drops component-b without a log line. drydock does the
-// same and warns about component-b. A later component without a
-// kustomization file adds nothing, so the warning does not name it. Without
-// ignoreMissingComponents every component is added.
-func TestKustomizeRendererIgnoreMissingComponentsStopsAtFirstValidComponent(t *testing.T) {
+// TestKustomizeRendererIgnoreMissingComponentsAddsEveryValidComponent pins
+// Argo CD v3.6.2 (util/kustomize/kustomize.go:355-372): with
+// ignoreMissingComponents the repo-server checks every component, adds each
+// one that holds a kustomization file, and skips the others at any position.
+// Argo CD v3.6.1 left the loop after the first valid component and added
+// only component-a here.
+func TestKustomizeRendererIgnoreMissingComponentsAddsEveryValidComponent(t *testing.T) {
 	root := t.TempDir()
 	writeIgnoreMissingComponentsRepo(t, root, "a", "b", "c")
 	writeFile(t, filepath.Join(root, "apps", "components", "plain", "cm.yaml"), directoryConfigMap("component-plain"))
 
-	names, dropped := renderIgnoreMissingComponentsDropped(t, root,
-		"../components/missing", "../components/a", "../components/plain", "../components/b", "../components/c")
-	if want := []string{"component-a", "demo"}; !reflect.DeepEqual(names, want) {
-		t.Fatalf("rendered names = %#v, want only the first valid component %#v", names, want)
-	}
-	if len(dropped) != 1 || dropped[0].Severity != diagnostic.SeverityWarning {
-		t.Fatalf("%s diagnostics = %#v, want one warning", KustomizeIgnoreMissingComponentsDroppedCode, dropped)
-	}
-	message := dropped[0].Message
-	for _, want := range []string{`"../components/a"`, `"../components/b"`, `"../components/c"`} {
-		if !strings.Contains(message, want) {
-			t.Errorf("warning message %q does not name %s", message, want)
-		}
-	}
-	for _, unwanted := range []string{"missing", "plain"} {
-		if strings.Contains(message, unwanted) {
-			t.Errorf("warning message %q names the invalid component %q", message, unwanted)
-		}
-	}
-
-	// One valid component: nothing is dropped, so nothing warns.
-	if _, dropped := renderIgnoreMissingComponentsDropped(t, root, "../components/missing", "../components/a", "../components/plain"); len(dropped) != 0 {
-		t.Fatalf("diagnostics with one valid component = %#v, want no %s warning", dropped, KustomizeIgnoreMissingComponentsDroppedCode)
-	}
-
-	names, err := renderIgnoreMissingComponents(t, root, false, "../components/a", "../components/b")
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{
+		OfflineRemoteResources: true,
+		Kustomize: &argoappv1.ApplicationSourceKustomize{
+			Components: []string{
+				"../components/missing", "../components/a", "../components/plain",
+				"../components/b", "../components/later-missing", "../components/c",
+			},
+			IgnoreMissingComponents: true,
+		},
+	})
 	if err != nil {
-		t.Fatalf("Render() without ignoreMissingComponents error = %v", err)
+		t.Fatalf("Render() error = %v", err)
 	}
-	if want := []string{"component-a", "component-b", "demo"}; !reflect.DeepEqual(names, want) {
-		t.Fatalf("rendered names without ignoreMissingComponents = %#v, want every component %#v", names, want)
+	if names, want := directoryManifestNames(manifests), []string{"component-a", "component-b", "component-c", "demo"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("rendered names = %#v, want every valid component %#v", names, want)
 	}
-}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
 
-// TestKustomizeRendererIgnoreMissingComponentsSkipsCopiesOfKeptComponent
-// checks that the dropped warning does not name a later entry that resolves
-// to the kept component. Argo CD v3.6.1 resolves each entry with
-// filepath.Rel(repoRoot, filepath.Join(path, c))
-// (util/kustomize/kustomize.go:357), so a repeat, a doubled slash, a "./"
-// prefix, a trailing slash and a detour through ".." all name component-a.
-// No resources are missing, so --strict must not fail. A distinct valid
-// component after them still warns.
-func TestKustomizeRendererIgnoreMissingComponentsSkipsCopiesOfKeptComponent(t *testing.T) {
-	root := t.TempDir()
-	writeIgnoreMissingComponentsRepo(t, root, "a", "b")
-
-	for _, copyOfKept := range []string{
-		"../components/a",
-		"../components//a",
-		"./../components/a",
-		"../components/a/",
-		"../components/b/../a",
-	} {
-		names, dropped := renderIgnoreMissingComponentsDropped(t, root, "../components/missing", "../components/a", copyOfKept)
-		if want := []string{"component-a", "demo"}; !reflect.DeepEqual(names, want) {
-			t.Fatalf("rendered names with %q = %#v, want %#v", copyOfKept, names, want)
+	// A repeat goes through `kustomize edit add component` as it does
+	// without ignoreMissingComponents. The command drops an entry with the
+	// same text, and adds an entry with another spelling of the same folder
+	// again, which fails the build.
+	for _, repeat := range []string{"../components/a", "../components//a", "../components/a/"} {
+		components := []string{"../components/a", repeat, "../components/b"}
+		names, err := renderIgnoreMissingComponents(t, root, true, components...)
+		wantNames, wantErr := renderIgnoreMissingComponents(t, root, false, components...)
+		if (err == nil) != (wantErr == nil) || !reflect.DeepEqual(names, wantNames) {
+			t.Fatalf("Render() with repeat %q = %#v, %v, want the result without ignoreMissingComponents %#v, %v", repeat, names, err, wantNames, wantErr)
 		}
-		if len(dropped) != 0 {
-			t.Fatalf("diagnostics with %q = %#v, want no %s warning for a copy of the kept component", copyOfKept, dropped, KustomizeIgnoreMissingComponentsDroppedCode)
+		if repeat == "../components/a" && (err != nil || !reflect.DeepEqual(names, []string{"component-a", "component-b", "demo"})) {
+			t.Fatalf("Render() with an exact repeat = %#v, %v, want each component once", names, err)
 		}
 	}
-
-	_, dropped := renderIgnoreMissingComponentsDropped(t, root, "../components/a", "../components//a", "../components/b")
-	if len(dropped) != 1 {
-		t.Fatalf("%s diagnostics = %#v, want one warning", KustomizeIgnoreMissingComponentsDroppedCode, dropped)
-	}
-	if message := dropped[0].Message; !strings.Contains(message, `"../components/b"`) || strings.Contains(message, `"../components//a"`) {
-		t.Fatalf("warning message %q, want it to name only ../components/b as dropped", message)
-	}
 }
 
-// TestKustomizeRendererIgnoreMissingComponentsNamesEachDroppedDirOnce checks
-// that the dropped warning names a directory once when several later entries
-// resolve to it. Argo CD v3.6.1 resolves each entry with
-// filepath.Rel(repoRoot, filepath.Join(path, c))
-// (util/kustomize/kustomize.go:357), so ../components/b and
-// ../components/b/ are one directory.
-func TestKustomizeRendererIgnoreMissingComponentsNamesEachDroppedDirOnce(t *testing.T) {
-	root := t.TempDir()
-	writeIgnoreMissingComponentsRepo(t, root, "a", "b", "c")
-
-	names, dropped := renderIgnoreMissingComponentsDropped(t, root,
-		"../components/a", "../components/b", "../components/b/", "../components//b", "../components/c")
-	if want := []string{"component-a", "demo"}; !reflect.DeepEqual(names, want) {
-		t.Fatalf("rendered names = %#v, want %#v", names, want)
-	}
-	if len(dropped) != 1 {
-		t.Fatalf("%s diagnostics = %#v, want one warning", KustomizeIgnoreMissingComponentsDroppedCode, dropped)
-	}
-	message := dropped[0].Message
-	if got := strings.Count(message, "components/b"); got != 1 {
-		t.Errorf("warning message %q names components/b %d times, want once", message, got)
-	}
-	if !strings.Contains(message, `"../components/b"`) || !strings.Contains(message, `"../components/c"`) {
-		t.Errorf("warning message %q, want it to name ../components/b and ../components/c", message)
-	}
-}
-
-// TestKustomizeRendererIgnoreMissingComponentsNeverReadsDroppedComponents
-// pins that a component after the first valid one is not read. Argo CD
-// v3.6.1 leaves its component loop with `break component`
-// (util/kustomize/kustomize.go:366) and adds only the components it found
-// (kustomize.go:375-377), so it never reads, checks or copies a later
-// component, and a broken one cannot fail its render. drydock renders only
-// component-a here and still warns about the dropped component, because its
-// directory holds a kustomization file.
-func TestKustomizeRendererIgnoreMissingComponentsNeverReadsDroppedComponents(t *testing.T) {
+// TestKustomizeRendererIgnoreMissingComponentsReadsEveryValidComponent pins
+// that a valid component after the first valid one is read. Argo CD v3.6.2
+// passes every found component to `kustomize edit add component`
+// (util/kustomize/kustomize.go:375-377), so a broken one fails its render at
+// any position. Argo CD v3.6.1 never read it. The symlink case fails on
+// drydock's own rule: drydock refuses a component that it reaches through a
+// symlink, at any position.
+func TestKustomizeRendererIgnoreMissingComponentsReadsEveryValidComponent(t *testing.T) {
 	cases := []struct {
-		name  string
-		write func(t *testing.T, parent, broken string)
+		name    string
+		write   func(t *testing.T, parent, broken string)
+		wantErr string
 	}{
 		{
 			name: "invalid kustomization YAML",
 			write: func(t *testing.T, _, broken string) {
 				writeFile(t, filepath.Join(broken, "kustomization.yaml"), "}{ not: [valid\n")
 			},
+			wantErr: "kustomization.yaml",
 		},
 		{
 			name: "resource escaping the repository",
@@ -232,12 +169,14 @@ func TestKustomizeRendererIgnoreMissingComponentsNeverReadsDroppedComponents(t *
 				writeFile(t, filepath.Join(broken, "kustomization.yaml"),
 					"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - ../../../../outside/cm.yaml\n")
 			},
+			wantErr: "outside",
 		},
 		{
-			name: "in-repository symlink to the kept component",
+			name: "in-repository symlink to another component",
 			write: func(t *testing.T, _, broken string) {
 				symlink(t, "a", broken)
 			},
+			wantErr: "symlink",
 		},
 	}
 	for _, tc := range cases {
@@ -247,42 +186,12 @@ func TestKustomizeRendererIgnoreMissingComponentsNeverReadsDroppedComponents(t *
 			writeIgnoreMissingComponentsRepo(t, root, "a")
 			tc.write(t, parent, filepath.Join(root, "apps", "components", "broken"))
 
-			names, dropped := renderIgnoreMissingComponentsDropped(t, root, "../components/a", "../components/broken")
-			if want := []string{"component-a", "demo"}; !reflect.DeepEqual(names, want) {
-				t.Fatalf("rendered names = %#v, want %#v", names, want)
-			}
-			if len(dropped) != 1 || !strings.Contains(dropped[0].Message, `"../components/broken"`) {
-				t.Fatalf("%s diagnostics = %#v, want one warning naming ../components/broken", KustomizeIgnoreMissingComponentsDroppedCode, dropped)
+			_, err := renderIgnoreMissingComponents(t, root, true, "../components/a", "../components/broken")
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Render() error = %v, want the later component to fail the render with %q", err, tc.wantErr)
 			}
 		})
 	}
-}
-
-// renderIgnoreMissingComponentsDropped renders apps/demo with components
-// under ignoreMissingComponents and returns the rendered names and the
-// kustomize.ignore-missing-components-dropped diagnostics.
-func renderIgnoreMissingComponentsDropped(t *testing.T, root string, components ...string) ([]string, []diagnostic.Diagnostic) {
-	t.Helper()
-	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
-		RepoRoot: root,
-		Path:     filepath.Join("apps", "demo"),
-	}, RenderOptions{
-		OfflineRemoteResources: true,
-		Kustomize: &argoappv1.ApplicationSourceKustomize{
-			Components:              components,
-			IgnoreMissingComponents: true,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Render() error = %v", err)
-	}
-	var dropped []diagnostic.Diagnostic
-	for _, diag := range diags {
-		if diag.Code == KustomizeIgnoreMissingComponentsDroppedCode {
-			dropped = append(dropped, diag)
-		}
-	}
-	return directoryManifestNames(manifests), dropped
 }
 
 // TestKustomizeRendererIgnoreMissingComponentsSkipsRemoteEscapingAndAbsolute
@@ -325,15 +234,11 @@ func TestKustomizeRendererIgnoreMissingComponentsSkipsRemoteEscapingAndAbsolute(
 		t.Fatalf("Render() error = %v, want absolute component rejection", err)
 	}
 
-	// After the first valid component, the repo-server drops a found
-	// absolute ref without a check (`break component` at kustomize.go:366).
-	// drydock drops it too and names it in the warning.
-	names, dropped := renderIgnoreMissingComponentsDropped(t, root, "../components/valid", "/components/absolute")
-	if want := []string{"component-valid", "demo"}; !reflect.DeepEqual(names, want) {
-		t.Fatalf("rendered names with a later absolute ref = %#v, want %#v", names, want)
-	}
-	if len(dropped) != 1 || !strings.Contains(dropped[0].Message, `"/components/absolute"`) {
-		t.Fatalf("%s diagnostics with a later absolute ref = %#v, want one warning naming /components/absolute", KustomizeIgnoreMissingComponentsDroppedCode, dropped)
+	// The repo-server checks a ref after a valid component too, so drydock
+	// refuses a found absolute ref at any position.
+	_, err = renderIgnoreMissingComponents(t, root, true, "../components/valid", "/components/absolute")
+	if err == nil || !strings.Contains(err.Error(), "must be relative") {
+		t.Fatalf("Render() with a later absolute ref error = %v, want absolute component rejection", err)
 	}
 }
 
@@ -407,13 +312,11 @@ func TestKustomizeSelectionPathsOwnSkippedComponentDirectories(t *testing.T) {
 
 // TestKustomizeSelectionPathsOwnAbsoluteComponentOutsideSource pins that
 // changed-only selection owns the directory of an absolute component ref that
-// holds a kustomization file. Argo CD v3.6.1 joins the ref under the source
+// holds a kustomization file. Argo CD v3.6.2 joins the ref under the source
 // directory (util/kustomize/kustomize.go:357), so "/../components/abs" from
-// apps/demo names apps/components/abs, outside spec.source.path. As the first
-// valid component, its kustomization file makes the render fail. After the
-// first valid component, the file decides the dropped-component warning.
-// Either way, editing it changes the result, so the Application must be
-// selected.
+// apps/demo names apps/components/abs, outside spec.source.path. Its
+// kustomization file makes the render fail at any position in the list, so
+// editing it changes the result, and the Application must be selected.
 func TestKustomizeSelectionPathsOwnAbsoluteComponentOutsideSource(t *testing.T) {
 	for name, components := range map[string][]string{
 		"first valid":       {"../components/missing", "/../components/abs", "../components/valid"},
@@ -484,27 +387,24 @@ func TestKustomizeInputDigestPathsKeepSkippedComponentDirectories(t *testing.T) 
 	}
 }
 
-// TestKustomizeInputDigestPathsRecordDroppedComponentKustomizationFiles pins
-// the render cache inputs of a component dropped after the first valid one.
-// Its kustomization file names decide the dropped warning, so each is an
-// optional digest path (existence and bytes). The rest of the component is
-// not read, so a broken dropped component does not fail the digest. A
-// dropped ref that names a file is recorded as that path. A dropped component
-// reached through an in-repository symlink fails the digest, which makes the
-// render skip the persistent cache.
-func TestKustomizeInputDigestPathsRecordDroppedComponentKustomizationFiles(t *testing.T) {
+// TestKustomizeInputDigestPathsCoverComponentsAfterFirstValid pins the render
+// cache inputs of the components listed after the first valid one. Argo CD
+// v3.6.2 checks every component, so a later valid component is read like the
+// first: its directory and files are required digest paths. A later directory
+// without a kustomization file is an optional path, so a kustomization file
+// appearing there rotates the key. A later ref that names a file is recorded
+// as that path. A later valid component reached through an in-repository
+// symlink fails the digest, as it fails the render.
+func TestKustomizeInputDigestPathsCoverComponentsAfterFirstValid(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")
-	writeIgnoreMissingComponentsRepo(t, root, "a")
-	writeFile(t, filepath.Join(root, "apps", "components", "invalid", "kustomization.yaml"), "}{ not: [valid\n")
-	writeFile(t, filepath.Join(root, "apps", "components", "invalid", "cm.yaml"), directoryConfigMap("component-invalid"))
-	writeFile(t, filepath.Join(parent, "outside", "cm.yaml"), directoryConfigMap("outside"))
-	writeFile(t, filepath.Join(root, "apps", "components", "escaping", "kustomization.yaml"),
-		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - ../../../../outside/cm.yaml\n")
+	writeIgnoreMissingComponentsRepo(t, root, "a", "b")
+	writeFile(t, filepath.Join(root, "apps", "components", "plain", "cm.yaml"), directoryConfigMap("component-plain"))
 	writeFile(t, filepath.Join(root, "apps", "components", "file-ref"), "not a directory\n")
+	writeIgnoreMissingComponent(t, filepath.Join(parent, "outside"), "outside")
 	source := ResolvedSource{RepoRoot: root, Path: filepath.Join("apps", "demo")}
 	opts := RenderOptions{Kustomize: &argoappv1.ApplicationSourceKustomize{
-		Components:              []string{"../components/a", "../components/invalid", "../components/escaping", "../components/pending", "../components/file-ref", "../../../outside"},
+		Components:              []string{"../components/a", "../components/plain", "../components/b", "../components/pending", "../components/file-ref", "../../../outside"},
 		IgnoreMissingComponents: true,
 	}}
 
@@ -516,25 +416,22 @@ func TestKustomizeInputDigestPathsRecordDroppedComponentKustomizationFiles(t *te
 	for _, item := range paths {
 		byPath[item.Path] = item
 	}
-	for _, dir := range []string{"invalid", "escaping", "pending"} {
-		for _, name := range kustomizationFileNames {
-			want := gitref.PathDigestPath{Path: "apps/components/" + dir + "/" + name, Optional: true}
-			if got, ok := byPath[want.Path]; !ok || got != want {
-				t.Errorf("digest path %q = %#v (present %t), want %#v; all = %#v", want.Path, got, ok, want, paths)
-			}
+	for _, want := range []gitref.PathDigestPath{
+		{Path: "apps/components/a", Optional: false},
+		{Path: "apps/components/a/kustomization.yaml", Optional: false},
+		{Path: "apps/components/b", Optional: false},
+		{Path: "apps/components/b/kustomization.yaml", Optional: false},
+		{Path: "apps/components/b/kustomization.yml", Optional: true},
+		{Path: "apps/components/b/Kustomization", Optional: true},
+		{Path: "apps/components/plain", Optional: true},
+		{Path: "apps/components/pending", Optional: true},
+		{Path: "apps/components/file-ref", Optional: true},
+	} {
+		if got, ok := byPath[want.Path]; !ok || got != want {
+			t.Errorf("digest path %q = %#v (present %t), want %#v; all = %#v", want.Path, got, ok, want, paths)
 		}
-	}
-	// A ref naming a file is recorded as that path, so it turning into a
-	// component directory changes the key.
-	if got, want := byPath["apps/components/file-ref"], (gitref.PathDigestPath{Path: "apps/components/file-ref", Optional: true}); got != want {
-		t.Errorf("digest path %q = %#v, want %#v", want.Path, got, want)
 	}
 	for path := range byPath {
-		for _, unread := range []string{"apps/components/invalid/cm.yaml", "apps/components/invalid", "apps/components/escaping", "apps/components/pending"} {
-			if path == unread {
-				t.Errorf("digest path %q reads a dropped component beyond its kustomization file names", path)
-			}
-		}
 		if strings.HasPrefix(path, "..") || strings.Contains(path, "outside") {
 			t.Errorf("digest path %q names an out-of-repository path", path)
 		}
@@ -543,6 +440,6 @@ func TestKustomizeInputDigestPathsRecordDroppedComponentKustomizationFiles(t *te
 	symlink(t, "a", filepath.Join(root, "apps", "components", "alias"))
 	opts.Kustomize.Components = []string{"../components/a", "../components/alias"}
 	if _, err := KustomizeInputDigestPaths(context.Background(), source, opts); err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("KustomizeInputDigestPaths() with a symlinked dropped component error = %v, want a symlink error", err)
+		t.Fatalf("KustomizeInputDigestPaths() with a symlinked later component error = %v, want a symlink error", err)
 	}
 }

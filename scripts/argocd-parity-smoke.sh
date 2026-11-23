@@ -265,11 +265,6 @@ OCI_CHART_APPLICATION="parity-oci-helm-nested"
 # source.oci-chart-ignored. parity-oci-helm-chart-ignored is Argo-valid only
 # when applied declaratively (argocd app create would reject it).
 OCI_CHART_IGNORED_APPLICATION="parity-oci-helm-chart-ignored"
-# Lists two valid components under ignoreMissingComponents. Argo CD v3.6.1
-# leaves its component loop after the first valid one
-# (util/kustomize/kustomize.go:346-372) and drops the second. drydock renders
-# the same and warns kustomize.ignore-missing-components-dropped.
-COMPONENTS_DROPPED_APPLICATION="parity-kustomize-generators"
 # Sets spec.sourceHydrator. Argo CD compares only the sync source
 # (ApplicationSpec.GetSources): syncSource.path at syncSource.targetBranch.
 # The hydrator is not enabled in the smoke cluster, so
@@ -2294,14 +2289,6 @@ capture_drydock_manifest() {
     grep -qF "name: ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP}" "${output_dir}/${stem}.yaml" \
       || fail "drydock did not render ${SOURCE_HYDRATOR_BRANCH_CONFIGMAP} from branch ${SOURCE_HYDRATOR_BRANCH} for ${app_ref}"
     # The manifest comparison proves that drydock renders the sync source.
-  fi
-  if [[ "${stem}" == "${COMPONENTS_DROPPED_APPLICATION}" ]]; then
-    # The manifest comparison proves that drydock drops the later valid
-    # component as Argo CD does. The warning is the only evidence that users
-    # see the dropped resources.
-    require_drydock_capture_warning "${app_ref}" "${stderr_file}" \
-      kustomize.ignore-missing-components-dropped \
-      "a valid component after the first valid one under ignoreMissingComponents must warn"
   fi
   rm -f "${stderr_file}"
 }

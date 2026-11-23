@@ -2667,7 +2667,7 @@ Supported:
   substituted it.
 - Kustomize Helm remote HTTP(S) value files through the same remote-resource
   cache path used by Helm sources.
-- Kustomize `ignoreMissingComponents` as in Argo CD v3.6.1: each
+- Kustomize `ignoreMissingComponents` as in Argo CD v3.6.2: each
   `kustomize.components` entry is joined with the source path and kept only
   when that directory holds a regular `kustomization.yaml`,
   `kustomization.yml`, or `Kustomization`, looked up inside the repository
@@ -2676,58 +2676,34 @@ Supported:
   are skipped without reading outside it; an absolute ref is joined under the
   source path. A skipped in-repository directory stays a persistent render
   cache input, so adding a kustomization file there invalidates the entry.
-- Kustomize `ignoreMissingComponents` adds only the first valid component, as
-  in Argo CD v3.6.1. `util/kustomize/kustomize.go:345-372` leaves its
-  component loop with `break component` (line 366) after the first component
-  that has a kustomization file. Invalid components before it are skipped.
-  Every component after it is dropped: the repo-server never reads, checks,
-  or logs it. drydock renders the same. It does not read, validate, or copy a
-  dropped component, so a dropped component with invalid YAML, a resource
-  that escapes the repository, or an in-repository symlink does not fail the
-  render.
-- For the dropped components, drydock emits the
-  `kustomize.ignore-missing-components-dropped` warning. Argo CD has no such
-  check. To build the warning, drydock looks in the original repository for
-  a regular `kustomization.yaml`, `kustomization.yml`, or `Kustomization` in
-  each dropped directory. It looks only inside the repository root, it
-  follows in-repository symlinks but not symlinks that leave the repository,
-  and it does not look at remote refs, refs that escape the repository, or
-  refs inside `.git`. The warning names each dropped directory that has a
-  kustomization file once. drydock compares directories by the cleaned
-  repository-relative path that Argo CD resolves with
-  `filepath.Rel(repoRoot, filepath.Join(path, c))`
-  (`util/kustomize/kustomize.go:357`). So `../c/b` and `../c/b/` are named
-  once, and an entry that resolves to the kept component, such as `../c/a`
-  repeated or written as `../c//a`, is not named, because no resources are
-  missing for it. An in-repository symlink to the kept component has a
-  different path, so the warning names it. Argo CD drops it too. An
-  absolute ref after the kept component is joined under the source path, as
-  Argo CD does, and can be named. The warning is not
-  advisory: `--strict` makes it an error, because resources that the
-  components list names are missing from the render.
-- Without `ignoreMissingComponents`, every component is added. We believe the
-  `ignoreMissingComponents` behavior above is an upstream bug:
-  argoproj/argo-cd#26576 (merge `d631fcdfb`) turned an earlier `continue`
-  into `break component`. drydock mirrors it until upstream fixes it, and
-  then follows the fix.
-- For the persistent render cache, the three kustomization file names in
-  each dropped in-repository directory are optional inputs: the key records
-  whether each file exists and its bytes, so creating, deleting, or changing
-  one invalidates the entry. When a dropped ref names a file, that path is
-  the input instead. The rest of a dropped component is not an input.
-  drydock cannot record these inputs in these cases, so that Application
-  renders without the persistent cache. The render itself still succeeds,
-  as in Argo CD.
-  - A dropped directory is reached through an in-repository symlink.
-  - A dropped kustomization file is a symlink.
-  - A dropped ref is a symlink that points outside the repository.
-  - A dropped ref passes through a regular file, such as
-    `../components/f/sub` when `f` is a file.
-- Recorded divergence from Argo CD v3.6.1: drydock rejects an absolute
-  component ref that has a kustomization file when it is the component that
-  would be added (the first valid one), because drydock never reads absolute
-  paths. An absolute ref after the first valid component is dropped, as in
-  Argo CD.
+- Kustomize `ignoreMissingComponents` adds every valid component, as in
+  Argo CD v3.6.2 (`util/kustomize/kustomize.go:345-372`). The repo-server
+  checks each entry in list order. It adds each entry that has a
+  kustomization file, and it skips each entry that has none, at any position
+  in the list. drydock renders the same. A valid component with invalid
+  YAML, or with a resource that escapes the repository, fails the render at
+  any position.
+- Argo CD v3.6.1 added only the first valid component and dropped every
+  later one (argoproj/argo-cd#26576). Argo CD v3.6.2 fixed this
+  (argoproj/argo-cd#30909). drydock releases that follow Argo CD v3.6.1
+  render only the first valid component and emit the
+  `kustomize.ignore-missing-components-dropped` warning. This release has no
+  such warning, because no component is dropped.
+- Recorded divergence from Argo CD v3.6.2: drydock rejects an absolute
+  component ref that has a kustomization file, because drydock never reads
+  absolute paths.
+- Recorded divergence from Argo CD v3.6.2: under `ignoreMissingComponents`,
+  drydock skips a ref that has the form of a remote ref, such as
+  `github.com/org/x`, without a check. Argo CD keeps such a ref when a
+  local folder of that name holds a kustomization file.
+- Recorded divergence from Argo CD v3.6.2: drydock fails the render for a
+  valid component that it reaches through a symlink, at any position in the
+  list. Argo CD follows a symlink that stays inside the repository.
+- Under `ignoreMissingComponents`, a component ref that enters `.git` is
+  checked for a kustomization file, as in Argo CD. When it has none, it is
+  skipped. The persistent render cache cannot record a path in `.git`, so
+  that Application renders without the persistent cache. When it has one,
+  the render fails, because drydock never reads a component in `.git`.
 - `spec.source.kustomize` options apply as the `kustomize edit` commands
   that Argo CD v3.6.1 runs before `kustomize build`
   (`util/kustomize/kustomize.go:174-401`), with the rules of kustomize
@@ -2786,11 +2762,11 @@ Supported:
   directory, and fails with `has no match` otherwise, with the text of
   kustomize. An empty entry fails with `new root cannot be empty`. An
   absolute entry fails with `new root '...' cannot be absolute`, because
-  drydock never reads absolute paths. Under `ignoreMissingComponents`, the
-  first valid component goes through the same command. Argo CD checks the
+  drydock never reads absolute paths. Under `ignoreMissingComponents`, each
+  valid component goes through the same command. Argo CD checks the
   entry as written, so a folder named `[a]` with a kustomization file is
   kept, and the glob then adds the folder `a`. The kustomization files of
-  the kept folder are render cache inputs, and changed-only selection owns
+  each kept folder are render cache inputs, and changed-only selection owns
   them. drydock lists directories for the globs only inside the
   repository. A directory outside it, or a path whose text enters `.git`,
   adds no matches. The globs resolve each path element in order, as the OS
@@ -3104,8 +3080,8 @@ Supported:
   resolution helpers of the renderer. It does not record the files during
   the render. A `helmCharts` entry inside a component that
   `spec.source.kustomize.components` adds counts too, for the values files
-  and for the chart name. With `ignoreMissingComponents`, only the first
-  valid component counts, as only it renders. Earlier drydock releases did
+  and for the chart name. With `ignoreMissingComponents`, each valid
+  component counts, as each one renders. Earlier drydock releases did
   not read such a component, so they did not render that install for its
   settings and gave no warning.
 
@@ -3562,7 +3538,7 @@ after the selected project diagnostic mode is applied.
 | Field | Upstream owner | drydock status | Current diagnostic | Offline input and next phase |
 | --- | --- | --- | --- | --- |
 | `spec.sourceRepos` | `types.go`, `IsSourcePermitted`, Argo repo metadata merge | Supported | `project` warning for denied sources; `repository` warning for mismatched repository Secret project metadata | Application sources plus redacted repository metadata; parity fixtures present, future gaps Phase 3 |
-| `spec.destinations` | `app_project_types.go`, `IsDestinationPermitted`, `isDestinationMatched` | Supported with named-cluster metadata caveats | `project` warning for denied destinations; deferred `project` warning when the decision depends on an unresolved cluster's server (name-only destination) or name (server-only destination) | Application destination plus redacted cluster metadata. A name or server deny entry denies only when its namespace also matches (v3.6.1, #28854). A server-only `https://kubernetes.default.svc` or name-only `in-cluster` destination with no cluster Secret is the built-in `in-cluster` cluster. With `cluster.inClusterEnabled` `"false"`, a destination at that address, directly or through a cluster Secret name, is denied whatever the project permits (util/db `GetCluster`). Other unresolved destinations are evaluated in three-valued logic: drydock denies or permits only when every cluster the unknown name or server could be, scoped to the project or not, gives the same answer, and otherwise defers. Because an unseen project-scoped cluster adds an implicit destination for its server, only a matching deny entry denies an unresolved destination. Parity fixtures resolve clusters as Argo CD does |
+| `spec.destinations` | `app_project_types.go`, `IsDestinationPermitted`, `isDestinationMatched` | Supported with named-cluster metadata caveats | `project` warning for denied destinations; deferred `project` warning when the decision depends on an unresolved cluster's server (name-only destination) or name (server-only destination) | Application destination plus redacted cluster metadata. A name or server deny entry denies only when its namespace also matches (v3.6.1, #28854). A deny entry that matches the cluster name or server then denies even when the other identifier of the same entry matches (v3.6.2, #30884). A cluster Secret can have no `name` field, and Argo CD applies a name deny entry to a cluster name only when the cluster has one. So for a server-only destination with no cluster Secret, a name deny entry in an entry that matches the server defers. drydock assumes that an unseen cluster has a name when it reports a permit. A server-only `https://kubernetes.default.svc` or name-only `in-cluster` destination with no cluster Secret is the built-in `in-cluster` cluster. With `cluster.inClusterEnabled` `"false"`, a destination at that address, directly or through a cluster Secret name, is denied whatever the project permits (util/db `GetCluster`). Other unresolved destinations are evaluated in three-valued logic: drydock denies or permits only when every cluster the unknown name or server could be, scoped to the project or not, gives the same answer, and otherwise defers. Because an unseen project-scoped cluster adds an implicit destination for its server, only a matching deny entry denies an unresolved destination. Parity fixtures resolve clusters as Argo CD does |
 | Implicit project-scoped cluster destinations | `util/argo` `GetAppProjectByName` | Supported | Same as `spec.destinations`; deny entries still win | A cluster Secret with `project: <name>` adds `{server, namespace: "*"}`, or one destination per `namespaces` value, to that AppProject, for Application destinations and rendered-resource namespaces alike |
 | argocd-cm `globalProjects` | `util/argo` `GetAppVirtualProject`, `GetGlobalProjects` | Unsupported | None | Global project settings are not parsed and their policy is not merged into matching AppProjects |
 | `spec.description` | `types.go` | Metadata-only | None | Decoded as typed metadata |

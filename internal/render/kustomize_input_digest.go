@@ -53,6 +53,11 @@ func KustomizeInputDigestPaths(ctx context.Context, source ResolvedSource, opts 
 		}
 	}
 	for _, path := range sourceOptionalPaths {
+		// The ignoreMissingComponents check of a component inside .git
+		// reads a path that no digest can record.
+		if pathEntersGit(collector.repoRoot, path) {
+			return nil, gitPathRefError("kustomize components", path)
+		}
 		if err := collector.addAbsPath(ctx, path, true); err != nil {
 			return nil, err
 		}
@@ -112,10 +117,7 @@ func kustomizeSelectionGraph(ctx context.Context, repoRoot, sourcePath string, k
 // patch files that rendering merges into the source kustomization
 // (applySourceKustomizeOptions). The digest collects the same refs through
 // sourceKustomizeWorkspaceAdditions; this best-effort form keeps a
-// component's own directory when its graph cannot be read. Under
-// ignoreMissingComponents it also owns the graphs of the components dropped
-// after the first valid one, which the digest does not walk. That
-// over-selects, which is safe for changed-only selection.
+// component's own directory when its graph cannot be read.
 func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context, sourceRoot string, kustomize *argoappv1.ApplicationSourceKustomize) error {
 	if kustomize == nil {
 		return nil
@@ -260,8 +262,7 @@ func (c *kustomizeInputCollector) collectSkippedComponent(ctx context.Context, s
 	if err != nil {
 		// An absolute ref that holds a kustomization file fails the check,
 		// but its directory still decides the render: the render fails
-		// while the file is there, and a later absolute ref's file decides
-		// the dropped-component warning. The ref is joined under the source
+		// while the file is there. The ref is joined under the source
 		// directory and can resolve outside spec.source.path, as
 		// "/../components/x" does, so own the directory before dropping the
 		// error.

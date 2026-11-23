@@ -248,7 +248,7 @@ func TestRenderApplicationStoreSkipsOnMidRenderEdit(t *testing.T) {
 
 // TestRenderApplicationStoreSkipsWhenSkippedComponentGainsKustomization
 // guards the optional digest path of a component that ignoreMissingComponents
-// skips (kustomizeInputCollector.collectSkippedComponent). The key is
+// skips (sourceKustomizeAddedComponents). The key is
 // computed while the component's directory holds no kustomization file; one
 // that lands there before the renderer reads it makes the render include the
 // component, and only that optional path's store-time verification stops the
@@ -256,7 +256,26 @@ func TestRenderApplicationStoreSkipsOnMidRenderEdit(t *testing.T) {
 // key, as TestPersistentCacheKustomizeSkippedComponentGainingKustomizationInvalidates
 // pins, does not need the optional path: the kept component adds its own.
 func TestRenderApplicationStoreSkipsWhenSkippedComponentGainsKustomization(t *testing.T) {
-	repoRoot := t.TempDir()
+	// Argo CD v3.6.2 checks a component after a valid one too, so the
+	// skipped directory is guarded at each position.
+	t.Run("only component", func(t *testing.T) {
+		testStoreSkipsWhenSkippedComponentGainsKustomization(t, t.TempDir(), []string{"../components/pending"}, 1)
+	})
+	t.Run("after a valid component", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		writeTestFile(t, filepath.Join(repoRoot, "manifests", "components", "valid", "kustomization.yaml"),
+			"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+		writeTestFile(t, filepath.Join(repoRoot, "manifests", "components", "valid", "cm.yaml"),
+			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: valid-component\n")
+		testStoreSkipsWhenSkippedComponentGainsKustomization(t, repoRoot, []string{"../components/valid", "../components/pending"}, 2)
+	})
+}
+
+// testStoreSkipsWhenSkippedComponentGainsKustomization renders manifests/demo
+// in repoRoot with components. wantControl is the manifest count while
+// ../components/pending is skipped.
+func testStoreSkipsWhenSkippedComponentGainsKustomization(t *testing.T, repoRoot string, components []string, wantControl int) {
+	t.Helper()
 	writeTestFile(t, filepath.Join(repoRoot, "manifests", "demo", "kustomization.yaml"),
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cm.yaml\n")
 	writeTestFile(t, filepath.Join(repoRoot, "manifests", "demo", "cm.yaml"),
@@ -275,7 +294,7 @@ func TestRenderApplicationStoreSkipsWhenSkippedComponentGainsKustomization(t *te
 				TargetRevision: "main",
 				Kustomize: &argoappv1.ApplicationSourceKustomize{
 					IgnoreMissingComponents: true,
-					Components:              []string{"../components/pending"},
+					Components:              components,
 				},
 			},
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
@@ -304,8 +323,8 @@ func TestRenderApplicationStoreSkipsWhenSkippedComponentGainsKustomization(t *te
 	if err != nil {
 		t.Fatalf("control RenderApplicationWithOptions() error = %v", err)
 	}
-	if got := len(control.Manifests); got != 1 {
-		t.Fatalf("control phase: %d manifests, want 1 (component skipped)", got)
+	if got := len(control.Manifests); got != wantControl {
+		t.Fatalf("control phase: %d manifests, want %d (component skipped)", got, wantControl)
 	}
 	if got := controlHandle.store.Writes(); got != 1 {
 		t.Fatalf("control phase: store.Writes() = %d, want 1", got)
@@ -331,8 +350,8 @@ func TestRenderApplicationStoreSkipsWhenSkippedComponentGainsKustomization(t *te
 	if err != nil {
 		t.Fatalf("dirty RenderApplicationWithOptions() error = %v", err)
 	}
-	if got := len(dirty.Manifests); got != 2 {
-		t.Fatalf("dirty phase: %d manifests, want 2 (the mutation must land before the component check)", got)
+	if got := len(dirty.Manifests); got != wantControl+1 {
+		t.Fatalf("dirty phase: %d manifests, want %d (the mutation must land before the component check)", got, wantControl+1)
 	}
 	if got := dirtyHandle.store.Writes(); got != 0 {
 		t.Fatalf("dirty phase: store.Writes() = %d, want 0: a render with the component must not be stored under the key computed without it", got)
