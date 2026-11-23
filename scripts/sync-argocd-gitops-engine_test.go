@@ -253,3 +253,11 @@ func TestArgoToolVersionsReadsToolVersionsFile(t *testing.T) {
 		t.Fatalf("argoToolVersions() error = %v, want missing KUSTOMIZE_VERSION error", err)
 	}
 }
+
+// A module that go list reports with a directory needs no download.
+func TestModuleSourceDirKeepsReportedDirectory(t *testing.T) {
+	got, err := moduleSourceDir(moduleInfo{Path: argoCDModule, Version: "v0.0.0", Dir: "/cache/argo-cd"})
+	if err != nil || got != "/cache/argo-cd" {
+		t.Fatalf("moduleSourceDir() = %q, %v, want the reported directory", got, err)
+	}
+}

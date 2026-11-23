@@ -195,7 +195,11 @@ func syncArgoCompatibilityStack() error {
 	); err != nil {
 		return fmt.Errorf("update GitOps Engine requirement: %w", err)
 	}
-	if err := requireArgoPinnedModules(argoGoMod, argo.Dir); err != nil {
+	argoDir, err := moduleSourceDir(argo)
+	if err != nil {
+		return err
+	}
+	if err := requireArgoPinnedModules(argoGoMod, argoDir); err != nil {
 		return err
 	}
 
@@ -485,6 +489,30 @@ func goListModule(query string) (moduleInfo, error) {
 		return moduleInfo{}, fmt.Errorf("parse go list output for %s: %w", query, err)
 	}
 	return info, nil
+}
+
+// moduleSourceDir returns the directory that holds the source of module. go
+// list reports a directory only when the module cache holds the source. A
+// Renovate run starts with a cache that holds only go.mod files, so the
+// helper downloads the source when go list reports no directory.
+func moduleSourceDir(module moduleInfo) (string, error) {
+	if strings.TrimSpace(module.Dir) != "" {
+		return module.Dir, nil
+	}
+	query := module.Path + "@" + module.Version
+	cmd := exec.Command("go", "mod", "download", "-json", query)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("go mod download -json %s: %w\n%s", query, err, strings.TrimSpace(string(output)))
+	}
+	var downloaded moduleInfo
+	if err := json.Unmarshal(output, &downloaded); err != nil {
+		return "", fmt.Errorf("parse go mod download output for %s: %w", query, err)
+	}
+	if strings.TrimSpace(downloaded.Dir) == "" {
+		return "", fmt.Errorf("go mod download %s did not report a source directory", query)
+	}
+	return downloaded.Dir, nil
 }
 
 func readGoMod(path string) (goModFile, error) {
