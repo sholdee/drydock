@@ -94,8 +94,8 @@ func TestKustomizeHelmValuesSplitsFilesByParser(t *testing.T) {
 
 // A helmCharts entry in a component that spec.source.kustomize.components
 // adds renders with the source, so its chart name and values files count.
-// Under ignoreMissingComponents the render adds only the first valid
-// component, so a later one does not count.
+// Under ignoreMissingComponents the render adds every valid component, so
+// each one counts.
 func TestKustomizeHelmValuesReadsSourceKustomizeComponents(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -104,7 +104,7 @@ func TestKustomizeHelmValuesReadsSourceKustomizeComponents(t *testing.T) {
 		wantValues    []string
 	}{
 		{name: "every component", wantCharts: []string{"argo-cd", "other"}, wantValues: []string{"components/a/values.yaml", "components/b/values.yaml"}},
-		{name: "first valid component under ignoreMissingComponents", ignoreMissing: true, wantCharts: []string{"argo-cd"}, wantValues: []string{"components/a/values.yaml"}},
+		{name: "every valid component under ignoreMissingComponents", ignoreMissing: true, wantCharts: []string{"argo-cd", "other"}, wantValues: []string{"components/a/values.yaml", "components/b/values.yaml"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

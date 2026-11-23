@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -516,24 +517,22 @@ func TestRenderInputCoverageKustomizeIgnoreMissingComponents(t *testing.T) {
 }
 
 // TestRenderInputCoverageKustomizeIgnoreMissingComponentsAfterFirstValid pins
-// coverage when ignoreMissingComponents drops the components after the first
-// valid one, as Argo CD v3.6.1 does (util/kustomize/kustomize.go:366). The
-// render never reads a dropped component, so a broken one (invalid YAML
-// here) renders. The kustomization file names of each later directory
-// decide the dropped-component warning, so the digest must list each of
-// them as an optional path, including names that do not exist yet: a
-// corruption tripwire cannot see a file being created.
-// TestPersistentCacheKustomizeDroppedComponentKustomizationChangeInvalidates
-// proves that changing or creating one rotates the key.
+// coverage of the components after the first valid one under
+// ignoreMissingComponents. Argo CD v3.6.2 adds every valid component
+// (util/kustomize/kustomize.go:355-372), so the render reads the second
+// component and the base it lists outside its own folder. The digest covers
+// that base only through the graph walk of the second component. A later
+// directory without a kustomization file is an optional path: a corruption
+// tripwire cannot see a file being created.
 func TestRenderInputCoverageKustomizeIgnoreMissingComponentsAfterFirstValid(t *testing.T) {
 	repoRoot := t.TempDir()
 	writeTestFile(t, repoRoot+"/manifests/app/kustomization.yaml", "resources:\n  - cm.yaml\n")
 	writeTestFile(t, repoRoot+"/manifests/app/cm.yaml", renderCoverageDemoConfigMap)
-	for _, name := range []string{"first", "second"} {
-		writeTestFile(t, repoRoot+"/manifests/components/"+name+"/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
-		writeTestFile(t, repoRoot+"/manifests/components/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: component-"+name+"\n")
-	}
-	writeTestFile(t, repoRoot+"/manifests/components/broken/kustomization.yaml", "}{ not: [valid\n")
+	writeTestFile(t, repoRoot+"/manifests/components/first/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+	writeTestFile(t, repoRoot+"/manifests/components/first/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: component-first\n")
+	writeTestFile(t, repoRoot+"/manifests/components/second/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - ../../shared/second\n")
+	writeTestFile(t, repoRoot+"/manifests/shared/second/kustomization.yaml", "resources:\n  - cm.yaml\n")
+	writeTestFile(t, repoRoot+"/manifests/shared/second/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: component-second\n")
 	writeTestFile(t, repoRoot+"/manifests/components/later-plain/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: later-plain\n")
 	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
 	application := argoappv1.Application{
@@ -542,7 +541,7 @@ func TestRenderInputCoverageKustomizeIgnoreMissingComponentsAfterFirstValid(t *t
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/app", TargetRevision: "main",
 				Kustomize: &argoappv1.ApplicationSourceKustomize{
-					Components:              []string{"../components/missing", "../components/first", "../components/second", "../components/broken", "../components/later-plain"},
+					Components:              []string{"../components/missing", "../components/first", "../components/second", "../components/later-plain"},
 					IgnoreMissingComponents: true,
 				},
 			},
@@ -552,23 +551,29 @@ func TestRenderInputCoverageKustomizeIgnoreMissingComponentsAfterFirstValid(t *t
 	assertRenderInputCoverage(t, repoRoot, application)
 
 	provider := renderCoverageFixtureProvider(repoRoot)
+	baseline, err := RenderApplication(context.Background(), application, provider)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	for _, name := range []string{"component-first", "component-second"} {
+		if _, ok := manifestByName(baseline.Manifests, name); !ok {
+			t.Errorf("Manifests lack %s, want every valid component rendered", name)
+		}
+	}
 	plan := mustPlan(t, application)
 	digestPaths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], provider)
 	if err != nil {
 		t.Fatalf("localInputDigestPathsForSource() error = %v", err)
 	}
-	for _, dir := range []string{"second", "broken", "later-plain"} {
-		for _, name := range []string{"kustomization.yaml", "kustomization.yml", "Kustomization"} {
-			want := gitref.PathDigestPath{Path: "manifests/components/" + dir + "/" + name, Optional: true}
-			found := false
-			for _, item := range digestPaths {
-				if item == want {
-					found = true
-				}
-			}
-			if !found {
-				t.Errorf("digest paths %#v, want %#v", digestPaths, want)
-			}
+	for _, want := range []gitref.PathDigestPath{
+		{Path: "manifests/components/second/kustomization.yaml"},
+		{Path: "manifests/shared/second/kustomization.yaml"},
+		{Path: "manifests/shared/second/cm.yaml"},
+		{Path: "manifests/components/later-plain", Optional: true},
+		{Path: "manifests/components/missing", Optional: true},
+	} {
+		if !slices.Contains(digestPaths, want) {
+			t.Errorf("digest paths %#v, want %#v", digestPaths, want)
 		}
 	}
 }

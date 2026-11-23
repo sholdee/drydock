@@ -1575,35 +1575,50 @@ func TestKustomizeSourceComponentGlobOwnsItsDirectory(t *testing.T) {
 // entry as written, and then `kustomize edit add component` reads the entry
 // as a glob. A folder literally named "[a]" is kept, and the glob adds
 // components/a. The kept folder's kustomization file decides the render,
-// so it is a render cache input and owned by changed-only selection.
+// so it is a render cache input and owned by changed-only selection, at the
+// first position and after another valid component.
 func TestKustomizeSourceIgnoreMissingComponentWithGlobCharacters(t *testing.T) {
-	root := writeSourceEditTestRepo(t, "")
-	writeFile(t, filepath.Join(root, "components", "[a]", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
-	writeFile(t, filepath.Join(root, "components", "[a]", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: componentbracket\n")
-	kustomize := argoappv1.ApplicationSourceKustomize{Components: []string{"../../components/[a]"}, IgnoreMissingComponents: true}
-	manifests, err := renderSourceEditTest(t, root, kustomize)
-	if err != nil {
-		t.Fatalf("Render() error = %v", err)
-	}
-	var got []string
-	for _, manifest := range manifests {
-		if manifest.Object.GetKind() == "ConfigMap" {
-			got = append(got, manifest.Object.GetName())
-		}
-	}
-	if want := []string{"componenta"}; !slices.Equal(got, want) {
-		t.Fatalf("ConfigMaps = %q, want %q", got, want)
-	}
-	const keptFile = "components/[a]/kustomization.yaml"
-	if paths, _ := sourceEditTestDigest(t, root, &kustomize); !slices.Contains(paths, keptFile) {
-		t.Fatalf("digest paths = %q, want %q", paths, keptFile)
-	}
-	selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), &kustomize)
-	if err != nil {
-		t.Fatalf("KustomizeSelectionPaths() error = %v", err)
-	}
-	if !slices.Contains(selection, keptFile) {
-		t.Fatalf("selection paths = %q, want %q", selection, keptFile)
+	for _, tc := range []struct {
+		name       string
+		components []string
+		want       []string
+	}{
+		{name: "first", components: []string{"../../components/[a]"}, want: []string{"componenta"}},
+		{name: "after a valid component", components: []string{"../../components/b", "../../components/[a]"}, want: []string{"componenta", "componentb"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeSourceEditTestRepo(t, "")
+			writeFile(t, filepath.Join(root, "components", "[a]", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+			writeFile(t, filepath.Join(root, "components", "[a]", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: componentbracket\n")
+			kustomize := argoappv1.ApplicationSourceKustomize{Components: tc.components, IgnoreMissingComponents: true}
+			manifests, err := renderSourceEditTest(t, root, kustomize)
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			var got []string
+			for _, manifest := range manifests {
+				if manifest.Object.GetKind() == "ConfigMap" {
+					got = append(got, manifest.Object.GetName())
+				}
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("ConfigMaps = %q, want %q", got, tc.want)
+			}
+			paths, _ := sourceEditTestDigest(t, root, &kustomize)
+			for _, name := range kustomizationFileNames {
+				if keptFile := "components/[a]/" + name; !slices.Contains(paths, keptFile) {
+					t.Fatalf("digest paths = %q, want %q", paths, keptFile)
+				}
+			}
+			selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), &kustomize)
+			if err != nil {
+				t.Fatalf("KustomizeSelectionPaths() error = %v", err)
+			}
+			if keptFile := "components/[a]/kustomization.yaml"; !slices.Contains(selection, keptFile) {
+				t.Fatalf("selection paths = %q, want %q", selection, keptFile)
+			}
+		})
 	}
 }
 
@@ -1735,6 +1750,29 @@ func TestKustomizeSourceIgnoreMissingComponentInGit(t *testing.T) {
 	for _, path := range selection {
 		if strings.HasPrefix(path, ".git") {
 			t.Fatalf("selection paths = %q, want nothing in .git", selection)
+		}
+	}
+}
+
+// Under ignoreMissingComponents, a component in .git with no kustomization
+// file is skipped, as in Argo CD. The check reads a path in .git that no
+// digest can record, so the digest fails and the source renders without the
+// persistent render cache.
+func TestKustomizeSourceIgnoreMissingSkippedComponentInGitFailsDigest(t *testing.T) {
+	root := writeSourceEditTestRepo(t, "")
+	writeFile(t, filepath.Join(root, ".git", "sub", "cm.yaml"), "kind: ConfigMap\n")
+	for _, components := range [][]string{
+		{"../../.git/sub", "../../components/b"},
+		{"../../components/b", "../../.git/sub"},
+	} {
+		kustomize := argoappv1.ApplicationSourceKustomize{Components: components, IgnoreMissingComponents: true}
+		if _, err := renderSourceEditTest(t, root, kustomize); err != nil {
+			t.Fatalf("Render() with %q error = %v, want the .git component skipped", components, err)
+		}
+		source := ResolvedSource{RepoRoot: root, Path: filepath.Join("apps", "demo")}
+		_, err := KustomizeInputDigestPaths(context.Background(), source, RenderOptions{Kustomize: &kustomize})
+		if err == nil || !strings.Contains(err.Error(), "enters a .git directory") {
+			t.Fatalf("KustomizeInputDigestPaths() with %q error = %v, want enters a .git directory", components, err)
 		}
 	}
 }
