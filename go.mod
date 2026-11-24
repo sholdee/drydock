@@ -6,8 +6,8 @@ require (
 	dario.cat/mergo v1.0.2
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/Masterminds/sprig/v3 v3.3.0
-	github.com/argoproj/argo-cd/gitops-engine/v3 v3.6.2
-	github.com/argoproj/argo-cd/v3 v3.6.2
+	github.com/argoproj/argo-cd/gitops-engine/v3 v3.6.3
+	github.com/argoproj/argo-cd/v3 v3.6.3
 	github.com/argoproj/pkg v0.13.6
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/distribution/reference v0.6.0
