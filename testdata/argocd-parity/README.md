@@ -1721,8 +1721,9 @@ a `ComparisonError` that contains `argocdMessage`.
 | `parity-decode-kustomize-helm-values-directory` | `valuesFile` names the directory `vals`, which the kustomize file loader cannot load |
 | `parity-decode-kustomize-helm-values-directory-outside-root` | `additionalValuesFiles` names the directory `../kustomize-helm-values-outside-dir`. The restriction checks for a directory before it checks the root, so the text is the directory text |
 | `parity-decode-kustomize-helm-charthome-outside-root` | `helmGlobals.chartHome` is `../kustomize-helm-shared-charts`, and the entry sets no `valuesFile`, so kustomize loads the chart `values.yaml` outside the kustomization directory and fails |
-| `parity-decode-helm-release-name-long` | `helm.releaseName` has 54 characters, and helm allows 53 |
-| `parity-decode-helm-release-name-template` | Argo CD passes the release name as `--name-template`, and `{{ .Missing.Field }` does not parse as a Go template |
+| `parity-decode-helm-release-name-long` | `helm.releaseName` has 54 characters, and Argo CD allows 53 |
+| `parity-decode-helm-app-name-long-aaaaaaaaaaaaaaaaaaaaa` | No `helm.releaseName`, and the Application name, which has 54 characters, is the release name |
+| `parity-decode-helm-release-name-template` | Argo CD v3.6.3 passes the release name as written, so `{{ .Missing.Field }` fails the release name check and is never evaluated |
 | `parity-decode-helm-version` | Argo CD v3.6.1 accepts `helm.version` empty, `v3`, or `v4`, not `v2` |
 | `parity-decode-helm-library` | the chart has `type: library`, and helm template renders only application charts |
 | `parity-decode-helm-kube-version` | the chart needs `kubeVersion: '>=99.0.0-0'`, and the Application sets `helm.kubeVersion: 1.30.0`, so both sides check the same version |
