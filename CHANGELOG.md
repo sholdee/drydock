@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.5](https://github.com/sholdee/drydock/compare/v0.4.4...v0.4.5) (2026-11-25)
+
+
+### Bug Fixes
+
+* align drydock with Argo CD v3.6.3 ([#552](https://github.com/sholdee/drydock/issues/552)) ([b04173d](https://github.com/sholdee/drydock/commit/b04173dd4aada57f83953129fe8fed9ba58a394e))
+
 ## [0.4.4](https://github.com/sholdee/drydock/compare/v0.4.3...v0.4.4) (2026-11-23)
 
 
