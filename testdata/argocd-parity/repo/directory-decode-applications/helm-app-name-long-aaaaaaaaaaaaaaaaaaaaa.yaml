@@ -1,0 +1,17 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-decode-helm-app-name-long-aaaaaaaaaaaaaaaaaaaaa
+  namespace: parity-directory-decode
+spec:
+  project: parity-directory-decode
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    # The path holds a Chart.yaml and the source sets no helm.releaseName,
+    # so Argo CD passes the Application name, which has 54 characters, as
+    # the release name.
+    path: workloads/directory-decode/helm-app-name-long-aaaaaaaaaaaaaaaaaaaaa
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-directory-decode-workloads

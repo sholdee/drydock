@@ -1523,12 +1523,22 @@ Supported:
   changes the persistent render cache keys. The defaults keep the signature
   of settings without the keys. Earlier drydock releases did not read the
   keys.
-- The Helm release name and namespace as Argo CD v3.6.1 passes them to
-  `helm template` (`util/helm/cmd.go:428-440`). The release name is
+- The Helm release name and namespace as Argo CD v3.6.3 passes them to
+  `helm template` (`util/helm/cmd.go:475-496`). The release name is
   `helm.releaseName`, or else the Application name. Argo CD passes it as
-  `--name-template`, so Helm reads it as a Go template with the sprig
-  functions, and a template that does not parse fails the source. The
-  namespace is `helm.namespace`, or else the destination namespace. When
+  the `NAME` argument, so Helm reads it as written. When both names are
+  empty, Argo CD passes no name, and Helm uses `release-name`. Argo CD
+  checks the name before it runs Helm (`ValidateReleaseName`): at most 53
+  characters, and the Helm name pattern. A `helm.releaseName` that fails
+  the check fails the source before the value files resolve
+  (`invalid spec.source.helm.releaseName: invalid helm release name
+  "...": ...`). An Application name that fails the check fails the source
+  after the value file paths resolve, and the error does not name the
+  field (`failed to execute helm template command: invalid helm release
+  name "...": ...`). Argo CD v3.6.2 and earlier passed the name as
+  `--name-template`, and Helm read it as a Go template with the sprig
+  functions (GHSA-v2hj-322q-6cg4). drydock v0.4.4 and earlier read it as
+  a template too. The namespace is `helm.namespace`, or else the destination namespace. When
   both are empty, Argo CD passes no `--namespace`, and Helm picks the
   namespace from the repo-server environment (`EnvSettings.Namespace`,
   `pkg/cli/environment.go:276-286` at Helm v4.3.1, and client-go
@@ -1629,8 +1639,9 @@ Supported:
   templates render, in Helm's order, with Helm's error text: the release
   name must have at most 53 characters and match the Helm name pattern
   (`release name check failed: release name "...": invalid release name,
-  ...`). A long Application name without `helm.releaseName` fails too. A
-  chart must be an application chart (`library charts are not
+  ...`). For a Helm source, the Argo CD release name check above applies
+  the same rule first, so this Helm check fails only a Kustomize
+  `helmCharts` entry. A chart must be an application chart (`library charts are not
   installable`), and its `apiVersion` must be `v1` or `v2` (`invalid chart
   apiVersion`). The chart `kubeVersion` constraint must match the kube
   version (`chart requires kubeVersion: ... which is incompatible with

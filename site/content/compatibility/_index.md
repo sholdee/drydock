@@ -141,7 +141,7 @@ then not read, so a block that does not parse does not fail the source. When
 Jsonnet is off, a directory source skips its `.jsonnet` files.
 
 Helm renders follow `helm template` as Argo CD runs it. The release name is
-`helm.releaseName` or the Application name, read as a Go template. Without
+`helm.releaseName` or the Application name, read as written. Without
 `helm.namespace` and a destination namespace, Helm uses the namespace of
 the repo-server environment. drydock reads it from the repo-server of the
 Argo CD install that it finds on this cluster, rendered or committed: the
@@ -151,7 +151,9 @@ the upstream `install.yaml` does. Without such an install, drydock uses
 `default`. When drydock cannot tell an input, it warns and names the
 namespace that it uses. A Kustomize `helmCharts` entry
 without `releaseName` renders the release `release-name`. drydock fails a
-source where Helm fails it: a release name over 53 characters, a library
+source where Argo CD or Helm fails it: a release name that is not a valid
+Helm release name, such as one over 53 characters or one that holds
+template actions, a library
 chart, a chart of `apiVersion` `v3`, and a `helm.version` other than empty,
 `v3`, or `v4`. It fails a chart `kubeVersion` that the kube version does not
 meet only when the version is explicit (a per-app `kubeVersion` or

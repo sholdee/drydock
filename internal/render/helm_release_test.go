@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	argohelm "github.com/argoproj/argo-cd/v3/util/helm"
 	chartv2util "helm.sh/helm/v4/pkg/chart/v2/util"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -63,7 +64,7 @@ func TestKustomizeHelmChartsDefaultReleaseNameAndNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	assertConfigMapData(t, manifests, "release", kustomizeHelmDefaultReleaseName)
+	assertConfigMapData(t, manifests, "release", helmTemplateDefaultReleaseName)
 	assertConfigMapData(t, manifests, "namespace", "default")
 }
 
@@ -174,54 +175,97 @@ func TestKustomizeHelmChartsRejectFlagLikeNames(t *testing.T) {
 	}
 }
 
-// helm template fails a release name that ValidateReleaseName rejects, in
-// a Helm source and in a helmCharts entry.
-func TestHelmRendererValidatesReleaseNameLikeHelm(t *testing.T) {
+// Argo CD v3.6.3 fails a helm.releaseName that helm would reject, before it
+// runs helm. kustomize leaves the check of a helmCharts entry to helm.
+func TestHelmRendererValidatesReleaseNameLikeArgoCD(t *testing.T) {
 	for _, name := range []string{strings.Repeat("a", 54), "Upper", "under_score"} {
-		upstream := chartv2util.ValidateReleaseName(name)
-		if upstream == nil {
-			t.Fatalf("ValidateReleaseName(%q) = nil, want an error", name)
+		argoErr := argohelm.ValidateReleaseName(name)
+		helmErr := chartv2util.ValidateReleaseName(name)
+		if argoErr == nil || helmErr == nil {
+			t.Fatalf("ValidateReleaseName(%q) = %v, %v, want two errors", name, argoErr, helmErr)
 		}
-		want := `release name check failed: release name "` + name + `": ` + upstream.Error()
+		want := "invalid spec.source.helm.releaseName: " + argoErr.Error()
 		_, err := renderReleaseProbeHelm(t, "", RenderOptions{AppName: "demo", ReleaseName: name})
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("Helm Render(%q) error = %v, want %q", name, err, want)
 		}
+		want = `release name check failed: release name "` + name + `": ` + helmErr.Error()
 		_, err = renderReleaseProbeKustomize(t, "helmCharts:\n  - name: probe\n    releaseName: "+name+"\n", RenderOptions{}, nil)
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("Kustomize Render(%q) error = %v, want %q", name, err, want)
 		}
 	}
 	// The Application name is the release name when helm.releaseName is
-	// empty, so a long Application name fails too.
-	_, err := renderReleaseProbeHelm(t, "", RenderOptions{AppName: strings.Repeat("a", 54)})
-	if err == nil || !strings.Contains(err.Error(), "release name check failed") {
-		t.Fatalf("Render() error = %v, want a release name error", err)
+	// empty. Argo CD checks it right before it runs helm, and the error
+	// does not name the field.
+	long := strings.Repeat("a", 54)
+	want := "failed to execute helm template command: " + argohelm.ValidateReleaseName(long).Error()
+	_, err := renderReleaseProbeHelm(t, "", RenderOptions{AppName: long})
+	if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "spec.source.helm.releaseName") {
+		t.Fatalf("Render() error = %v, want %q", err, want)
 	}
-	// 53 characters is the longest name helm accepts.
+	// 53 characters is the longest name Argo CD and helm accept.
 	if _, err := renderReleaseProbeHelm(t, "", RenderOptions{AppName: strings.Repeat("a", 53)}); err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-}
-
-// Argo CD passes the release name to helm template as --name-template, so
-// helm renders it as a Go template with the sprig functions. kustomize
-// passes it as an argument, which helm reads as written.
-func TestHelmRendererReadsReleaseNameAsTemplate(t *testing.T) {
-	manifests, err := renderReleaseProbeHelm(t, "", RenderOptions{AppName: "demo", ReleaseName: `{{ printf "%s-%s" "tmpl" ("NAME" | lower) }}`})
+	// With no release name and no Application name, Argo CD passes no name,
+	// and helm template uses its default name.
+	manifests, err := renderReleaseProbeHelm(t, "", RenderOptions{})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	assertConfigMapData(t, manifests, "release", "tmpl-name")
+	assertConfigMapData(t, manifests, "release", helmTemplateDefaultReleaseName)
+}
 
-	_, err = renderReleaseProbeHelm(t, "", RenderOptions{AppName: "demo", ReleaseName: "{{ .Missing.Field }"})
-	if err == nil || !strings.Contains(err.Error(), "template: name-template:1: unexpected") {
-		t.Fatalf("Render() error = %v, want the name template parse error", err)
+// Argo CD v3.6.3 passes the release name to helm template as an argument,
+// which helm reads as written. A name with template actions fails the
+// release name check and is never evaluated (GHSA-v2hj-322q-6cg4). Argo CD
+// v3.6.2 and earlier passed it as --name-template, which helm evaluated
+// with the sprig functions, env among them.
+func TestHelmRendererPassesReleaseNameAsWritten(t *testing.T) {
+	t.Setenv("DRYDOCK_RELEASE_NAME_PROBE", "leaked")
+	for _, name := range []string{
+		`{{ env "DRYDOCK_RELEASE_NAME_PROBE" }}`,
+		`{{ printf "%s-%s" "tmpl" ("NAME" | lower) }}`,
+		"{{ .Missing.Field }",
+	} {
+		argoErr := argohelm.ValidateReleaseName(name)
+		if argoErr == nil {
+			t.Fatalf("ValidateReleaseName(%q) = nil, want an error", name)
+		}
+		want := "invalid spec.source.helm.releaseName: " + argoErr.Error()
+		manifests, err := renderReleaseProbeHelm(t, "", RenderOptions{AppName: "demo", ReleaseName: name})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("Render(%q) error = %v, want %q", name, err, want)
+		}
+		if len(manifests) != 0 || strings.Contains(err.Error(), "leaked") {
+			t.Fatalf("Render(%q) = %d manifests, error %v, want no output and no evaluated name", name, len(manifests), err)
+		}
 	}
 
-	_, err = renderReleaseProbeKustomize(t, "helmCharts:\n  - name: probe\n    releaseName: '{{ \"x\" }}'\n", RenderOptions{}, nil)
+	_, err := renderReleaseProbeKustomize(t, "helmCharts:\n  - name: probe\n    releaseName: '{{ \"x\" }}'\n", RenderOptions{}, nil)
 	if err == nil || !strings.Contains(err.Error(), `release name "{{ \"x\" }}"`) {
 		t.Fatalf("Kustomize Render() error = %v, want the release name check of the literal name", err)
+	}
+}
+
+// Argo CD v3.6.3 checks helm.releaseName before it resolves the value files
+// and before helm reads its flags. It checks the Application name as the
+// release name after it resolves the value file paths.
+func TestHelmRendererReleaseNameCheckOrder(t *testing.T) {
+	outside := RenderOptions{AppName: "demo", ValueFiles: []string{"../../../outside.yaml"}}
+	badFlag := RenderOptions{AppName: "demo", APIVersions: []string{`a"b`}}
+	for _, opts := range []RenderOptions{outside, badFlag} {
+		opts.ReleaseName = "Bad_Name"
+		_, err := renderReleaseProbeHelm(t, "", opts)
+		if err == nil || !strings.Contains(err.Error(), "invalid spec.source.helm.releaseName") {
+			t.Fatalf("Render(%+v) error = %v, want the release name error first", opts, err)
+		}
+	}
+	outside.AppName = strings.Repeat("a", 54)
+	_, err := renderReleaseProbeHelm(t, "", outside)
+	if err == nil || !strings.Contains(err.Error(), "resolved to outside repository root") {
+		t.Fatalf("Render() error = %v, want the value file path error before the Application name check", err)
 	}
 }
 

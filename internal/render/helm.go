@@ -44,7 +44,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, err
 	}
 
-	capabilities, err := helmCapabilities(opts)
+	capabilities, err := helmSourceCapabilities(opts, manifestPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -53,7 +53,8 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	// chart (helmTemplate, reposerver/repository/repository.go:1292-1410 at
 	// v3.6.1, and helm pkg/cmd/install.go runInstall), so path and value
 	// errors come before chart errors. The helm version check and the
-	// release name come between the paths and the values.
+	// check of the Application name as the release name come between the
+	// paths and the values.
 	inputValues, releaseName, avpDiags, err := assembleHelmInputValues(ctx, source, manifestPath, opts)
 	if err != nil {
 		return nil, nil, err
@@ -99,6 +100,16 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	return manifests, diags, err
 }
 
+// helmSourceCapabilities checks helm.releaseName and then reads the
+// capabilities. Argo CD v3.6.3 checks helm.releaseName first in
+// helmTemplate, before the value files and before helm reads its flags.
+func helmSourceCapabilities(opts RenderOptions, manifestPath string) (*common.Capabilities, error) {
+	if err := checkHelmSourceReleaseName(opts); err != nil {
+		return nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
+	}
+	return helmCapabilities(opts)
+}
+
 func helmCapabilities(opts RenderOptions) (*common.Capabilities, error) {
 	capabilities := common.DefaultCapabilities.Copy()
 	if opts.KubeVersion != "" {
@@ -141,9 +152,9 @@ func splitHelmAPIVersionsFlag(value string) ([]string, error) {
 //
 // Between the paths and the values, it checks spec.source.helm.version, as
 // the repo-server does when it makes the helm command (NewHelmApp,
-// repository.go:1414 at v3.6.1), and returns the release name, which helm
-// template works out before it reads the values (NameAndChart, runInstall
-// in pkg/cmd/install.go at helm v4.3.1).
+// repository.go:1414 at v3.6.1), and returns the release name. Argo CD
+// v3.6.3 checks that name right before it runs helm template (Cmd.template,
+// util/helm/cmd.go:475-492), and helm reads the values after that.
 func assembleHelmInputValues(ctx context.Context, source ResolvedSource, manifestPath string, opts RenderOptions) (map[string]any, string, []diagnostic.Diagnostic, error) {
 	inlineValues := cloneValues(opts.ValuesObject)
 	loadValueFiles, err := shouldLoadHelmValueFiles(opts.ValuesMergeMode, inlineValues)

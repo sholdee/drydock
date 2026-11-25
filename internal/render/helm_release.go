@@ -1,27 +1,27 @@
 package render
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"text/template"
 
-	"github.com/Masterminds/sprig/v3"
+	argohelm "github.com/argoproj/argo-cd/v3/util/helm"
 	helmchart "helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 	chartv2util "helm.sh/helm/v4/pkg/chart/v2/util"
 )
 
-// kustomizeHelmDefaultReleaseName is the release name of a helmCharts entry
-// without releaseName. kustomize then runs helm template with
-// --generate-name and no name (types.HelmChart.AsHelmArgs,
-// api/types/helmchartargs.go:154-163 at kustomize/api v0.21.3), and helm
-// template presets the name "release-name", which NameAndChart returns
-// before it would generate one (pkg/cmd/template.go:104 and
-// pkg/action/install.go:776-818 at helm v4.3.1).
-const kustomizeHelmDefaultReleaseName = "release-name"
+// helmTemplateDefaultReleaseName is the release name of a helm template
+// run that gets no name. helm template presets the name "release-name",
+// which NameAndChart returns before it would generate one
+// (pkg/cmd/template.go:104 and pkg/action/install.go:776-818 at helm
+// v4.3.2). kustomize runs helm template with --generate-name and no name for
+// a helmCharts entry without releaseName (types.HelmChart.AsHelmArgs,
+// api/types/helmchartargs.go:154-163 at kustomize/api v0.21.3). Argo CD
+// v3.6.3 passes no name when the release name and the Application name are
+// both empty (Cmd.template, util/helm/cmd.go:475-492).
+const helmTemplateDefaultReleaseName = "release-name"
 
 // helmDefaultNamespace is the release namespace helm uses when no
 // --namespace is given and no kubeconfig names one. The Argo CD repo-server
@@ -67,15 +67,32 @@ func checkHelmCommandVersion(version string) error {
 	return fmt.Errorf("failed to create new helm command: helm version '%s' is not supported", version)
 }
 
-// helmReleaseName returns the release name of the render. Argo CD passes
-// the release name, or the Application name, to helm template as
-// --name-template (util/helm/cmd.go:436 at v3.6.1), so helm renders it as a
-// Go template first (action.TemplateName). kustomize passes the name of a
-// helmCharts entry as an argument, which helm reads as written.
+// checkHelmSourceReleaseName is the check that Argo CD v3.6.3 runs on
+// helm.releaseName in helmTemplate (reposerver/repository/repository.go:
+// 1321-1327), before it resolves the value files. It does not apply to a
+// helmCharts entry, which kustomize passes to helm.
+func checkHelmSourceReleaseName(opts RenderOptions) error {
+	if opts.helmOutputForKustomize || opts.ReleaseName == "" {
+		return nil
+	}
+	if err := argohelm.ValidateReleaseName(opts.ReleaseName); err != nil {
+		return fmt.Errorf("invalid spec.source.helm.releaseName: %w", err)
+	}
+	return nil
+}
+
+// helmReleaseName returns the release name of the render. Argo CD v3.6.3
+// passes helm.releaseName, or else the Application name, to helm template
+// as the NAME argument, and it checks the name before it runs helm
+// (Cmd.template, util/helm/cmd.go:475-492). helm reads the argument as
+// written. Argo CD v3.6.2 and earlier passed it as --name-template, which
+// helm evaluates as a Go template with the sprig functions
+// (GHSA-v2hj-322q-6cg4). kustomize passes the name of a helmCharts entry as
+// an argument too, without the Argo CD check.
 func helmReleaseName(opts RenderOptions) (string, error) {
 	if opts.helmOutputForKustomize {
 		if opts.ReleaseName == "" {
-			return kustomizeHelmDefaultReleaseName, nil
+			return helmTemplateDefaultReleaseName, nil
 		}
 		return opts.ReleaseName, nil
 	}
@@ -83,25 +100,13 @@ func helmReleaseName(opts RenderOptions) (string, error) {
 	if name == "" {
 		name = opts.AppName
 	}
-	return helmTemplateName(name)
-}
-
-// helmTemplateName is action.TemplateName (pkg/action/install.go:820-835 at
-// helm v4.3.1). drydock does not import pkg/action, which brings in the
-// Kubernetes client and the release storage drivers.
-func helmTemplateName(nameTemplate string) (string, error) {
-	if nameTemplate == "" {
-		return "", nil
+	if name == "" {
+		return helmTemplateDefaultReleaseName, nil
 	}
-	t, err := template.New("name-template").Funcs(sprig.TxtFuncMap()).Parse(nameTemplate)
-	if err != nil {
-		return "", err
+	if err := argohelm.ValidateReleaseName(name); err != nil {
+		return "", fmt.Errorf("failed to execute helm template command: %w", err)
 	}
-	var b bytes.Buffer
-	if err := t.Execute(&b, nil); err != nil {
-		return "", err
-	}
-	return b.String(), nil
+	return name, nil
 }
 
 // loadInstallableHelmChart loads the chart and checks that helm template
@@ -136,7 +141,9 @@ func checkHelmChartInstallable(chrt helmchart.Charter) error {
 // before the values are coalesced (pkg/action/install.go:296-322 at helm
 // v4.3.1): helm template renders only a chart of apiVersion v1 or v2, and
 // the release name must be valid (availableName,
-// pkg/action/install.go:619-624).
+// pkg/action/install.go:619-624). For a Helm source, the Argo CD check in
+// helmReleaseName already rejected every name that this check rejects, so
+// the release name check fails only for a helmCharts entry.
 func checkHelmChartRelease(chrt helmchart.Charter, releaseName string) (*chartv2.Chart, error) {
 	var v2chart *chartv2.Chart
 	switch typed := chrt.(type) {

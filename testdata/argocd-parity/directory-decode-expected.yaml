@@ -307,19 +307,27 @@ cases:
     source: render
     argocdMessage: "releaseName must not start with '-', got \"-bad\""
     drydockMessage: "releaseName must not start with '-', got \"-bad\""
-  # helm template checks the release name (availableName,
-  # pkg/action/install.go:619-624 at helm v4.3.1). Argo CD passes
-  # helm.releaseName, so 54 characters fail.
+  # Argo CD v3.6.3 checks helm.releaseName before it resolves the value
+  # files (helmTemplate, reposerver/repository/repository.go:1321-1327 and
+  # ValidateReleaseName, util/helm/cmd.go). 54 characters fail.
   - name: parity-decode-helm-release-name-long
     source: render
-    argocdMessage: 'release name check failed: release name "parity-decode-helm-release-name-long-aaaaaaaaaaaaaaaaa": invalid release name, must match regex ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ and the length must not be longer than 53'
-    drydockMessage: 'release name check failed: release name "parity-decode-helm-release-name-long-aaaaaaaaaaaaaaaaa": invalid release name, must match regex ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ and the length must not be longer than 53'
-  # Argo CD passes the release name as --name-template, and helm parses it
-  # as a Go template (action.TemplateName).
+    argocdMessage: "invalid spec.source.helm.releaseName: invalid helm release name \"parity-decode-helm-release-name-long-aaaaaaaaaaaaaaaaa\": must be no more than 53 characters"
+    drydockMessage: "invalid spec.source.helm.releaseName: invalid helm release name \"parity-decode-helm-release-name-long-aaaaaaaaaaaaaaaaa\": must be no more than 53 characters"
+  # Without helm.releaseName, Argo CD v3.6.3 passes the Application name as
+  # the release name and checks it right before it runs helm (Cmd.template,
+  # util/helm/cmd.go:475-492). The message does not name the field.
+  - name: parity-decode-helm-app-name-long-aaaaaaaaaaaaaaaaaaaaa
+    source: render
+    argocdMessage: "failed to execute helm template command: invalid helm release name \"parity-decode-helm-app-name-long-aaaaaaaaaaaaaaaaaaaaa\": must be no more than 53 characters"
+    drydockMessage: "failed to execute helm template command: invalid helm release name \"parity-decode-helm-app-name-long-aaaaaaaaaaaaaaaaaaaaa\": must be no more than 53 characters"
+  # Argo CD v3.6.3 passes the release name to helm as written, so it never
+  # evaluates a template in it (GHSA-v2hj-322q-6cg4). The name fails the
+  # release name check. Argo CD v3.6.2 passed it as --name-template.
   - name: parity-decode-helm-release-name-template
     source: render
-    argocdMessage: 'template: name-template:1: unexpected "}" in operand'
-    drydockMessage: 'template: name-template:1: unexpected "}" in operand'
+    argocdMessage: "invalid spec.source.helm.releaseName: invalid helm release name \"{{ .Missing.Field }\": must consist of lower case alphanumeric characters, '-' or '.', and must start and end with an alphanumeric character"
+    drydockMessage: "invalid spec.source.helm.releaseName: invalid helm release name \"{{ .Missing.Field }\": must consist of lower case alphanumeric characters, '-' or '.', and must start and end with an alphanumeric character"
   # Argo CD v3.6.1 accepts helm.version "", v3, and v4 (NewCmd,
   # util/helm/cmd.go:36-48).
   - name: parity-decode-helm-version

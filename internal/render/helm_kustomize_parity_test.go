@@ -5,42 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 )
-
-// helmTemplateName matches action.TemplateName. The table is
-// TestNameTemplate of helm v4.3.1 (pkg/action/install_test.go:765-818):
-// importing pkg/action would add modules to go.mod.
-func TestHelmTemplateNameMatchesHelm(t *testing.T) {
-	for _, tc := range []struct {
-		tpl, expected, expectedErrorStr string
-	}{
-		{tpl: "foobar", expected: "foobar"},
-		{tpl: "foobar-{{randNumeric 6}}", expected: "foobar-[0-9]{6}$"},
-		{tpl: "foobar-{{randNumeric 4}}-baz", expected: "foobar-[0-9]{4}-baz$"},
-		{tpl: "foobar-{{randInteger}}", expectedErrorStr: "function \"randInteger\" not defined"},
-		{tpl: "foobar-{{", expectedErrorStr: "template: name-template:1: unclosed action"},
-	} {
-		t.Run(tc.tpl, func(t *testing.T) {
-			name, err := helmTemplateName(tc.tpl)
-			if tc.expectedErrorStr == "" {
-				if err != nil {
-					t.Fatalf("helmTemplateName() error = %v", err)
-				}
-			} else if err == nil || !regexp.MustCompile(tc.expectedErrorStr).MatchString(err.Error()) {
-				t.Fatalf("helmTemplateName() error = %v, want %q", err, tc.expectedErrorStr)
-			}
-			if tc.expected != "" && !regexp.MustCompile(tc.expected).MatchString(name) {
-				t.Fatalf("helmTemplateName() = %q, want %q", name, tc.expected)
-			}
-		})
-	}
-}
 
 // With valuesInline and valuesMerge replace, kustomize never loads
 // valuesFile, so a valuesFile that does not exist, with or without glob
