@@ -36,9 +36,9 @@ require (
 	golang.org/x/term v0.48.0
 	golang.org/x/text v0.44.0
 	helm.sh/helm/v4 v4.3.2
-	k8s.io/api v0.37.2
-	k8s.io/apimachinery v0.37.2
-	k8s.io/client-go v0.37.2
+	k8s.io/api v0.37.3
+	k8s.io/apimachinery v0.37.3
+	k8s.io/client-go v0.37.3
 	oras.land/oras-go/v2 v2.7.0
 	sigs.k8s.io/kustomize/api v0.21.3
 	sigs.k8s.io/kustomize/kustomize/v5 v5.8.3
