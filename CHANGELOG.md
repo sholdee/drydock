@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.6](https://github.com/sholdee/drydock/compare/v0.4.5...v0.4.6) (2026-11-28)
+
+
+### Miscellaneous Chores
+
+* **deps:** update actions/create-github-app-token action to v3.4.0 ([#554](https://github.com/sholdee/drydock/issues/554)) ([c4be474](https://github.com/sholdee/drydock/commit/c4be474c91ef3ee3d1700654187b181b21d4bdff))
+* **deps:** update dependency lefthook to v2.2.3 ([#559](https://github.com/sholdee/drydock/issues/559)) ([3132e82](https://github.com/sholdee/drydock/commit/3132e8281ee8e36ec8bde623830984021b0005dc))
+* **deps:** update dependency zizmor to v1.33.0 ([#556](https://github.com/sholdee/drydock/issues/556)) ([f5c8489](https://github.com/sholdee/drydock/commit/f5c848950b7b85bdff4d982575b8181444243fcb))
+* **deps:** update dependency zizmor to v1.33.1 ([#558](https://github.com/sholdee/drydock/issues/558)) ([da9a8f4](https://github.com/sholdee/drydock/commit/da9a8f47a4a38aa1315d09c6cc474d625f6f7af9))
+* **deps:** update golang:1.27.4 docker digest to 5f1b98f ([#560](https://github.com/sholdee/drydock/issues/560)) ([8ab50cd](https://github.com/sholdee/drydock/commit/8ab50cd8b9197f60f4b25217242e21f3b26cae12))
+
 ## [0.4.5](https://github.com/sholdee/drydock/compare/v0.4.4...v0.4.5) (2026-11-25)
 
 
